@@ -25,7 +25,7 @@ impl Analyzer {
             return error_expr();
         }
         if name == "self" && !context.type_substitutions.contains_key("self") {
-            self.error("expression `Self` is only available inside an extend member");
+            self.error("expression `self` is only available inside an extend member");
             return error_expr();
         }
         if groups.is_empty() && self.struct_layouts.contains_key(name) {

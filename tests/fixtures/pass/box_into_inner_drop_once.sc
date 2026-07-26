@@ -18,7 +18,7 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let boxed = box.new(comptime t: resource)(resource { counter: counter })
+    let boxed = box.new(t: resource)(resource { counter: counter })
     let resource = boxed.into_inner()
   }
   let drops = unsafe {

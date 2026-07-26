@@ -382,15 +382,20 @@ impl Analyzer {
                     return self
                         .lower_indirect_function_call(name, &local, &groups, expected, context);
                 }
-                self.error(format!("local value `{name}` is not callable"));
-                return error_expr();
+                let has_top_level_callable = self.function_overloads.contains_key(name)
+                    || self.function_templates.contains_key(name)
+                    || self.functions.contains_key(name);
+                if !has_top_level_callable {
+                    self.error(format!("local value `{name}` is not callable"));
+                    return error_expr();
+                }
             }
             if context.has_type_parameter(name) {
                 self.error(format!("type parameter `{name}` is not callable"));
                 return error_expr();
             }
             if name == "self" {
-                self.error("expression `Self` is only available inside an extend member");
+                self.error("expression `self` is only available inside an extend member");
                 return error_expr();
             }
             if self.empty_struct_candidate(name, &groups, context) {
@@ -522,10 +527,39 @@ impl Analyzer {
                 }
             }
             if let Expr::Name(target_template) = base.as_ref() {
-                if !context.shadows_top_level_name(target_template) {
-                    let explicit_method = groups.first().is_some_and(|group| {
-                        matches!(*group, [CallArg { label: Some(label), .. }] if label == "self")
-                    });
+                let explicit_method = groups.first().is_some_and(|group| {
+                    matches!(*group, [CallArg { label: Some(label), .. }] if label == "self")
+                        || (groups.len() > 1
+                            && group.iter().all(|argument| argument.label.is_none()))
+                });
+                let has_static_member =
+                    self.inherent_members
+                        .get(target_template)
+                        .is_some_and(|members| {
+                            members.functions.contains_key(variant_name)
+                                || members.constants.contains_key(variant_name)
+                        })
+                        || self
+                            .enum_layouts
+                            .get(target_template)
+                            .is_some_and(|layout| {
+                                layout
+                                    .variants
+                                    .iter()
+                                    .any(|variant| variant.name == *variant_name)
+                            })
+                        || self
+                            .generic_inherent_functions
+                            .contains_key(&(target_template.clone(), variant_name.clone()))
+                        || self.inherent_overloads.contains_key(&(
+                            target_template.clone(),
+                            variant_name.clone(),
+                            false,
+                        ));
+                if !context.shadows_top_level_name(target_template)
+                    || has_static_member
+                    || explicit_method
+                {
                     if !explicit_method {
                         let overload_key = (target_template.clone(), variant_name.clone(), false);
                         if (self.struct_templates.contains_key(target_template)
@@ -639,7 +673,17 @@ impl Analyzer {
                 Ok(None) => {}
             }
             if let Expr::Name(enum_name) = base.as_ref() {
-                if !context.shadows_top_level_name(enum_name)
+                let has_static_member =
+                    self.inherent_members.get(enum_name).is_some_and(|members| {
+                        members.functions.contains_key(variant_name)
+                            || members.constants.contains_key(variant_name)
+                    }) || self.enum_layouts.get(enum_name).is_some_and(|layout| {
+                        layout
+                            .variants
+                            .iter()
+                            .any(|variant| variant.name == *variant_name)
+                    });
+                if (!context.shadows_top_level_name(enum_name) || has_static_member)
                     && (self.struct_layouts.contains_key(enum_name)
                         || self.enum_layouts.contains_key(enum_name))
                 {
@@ -663,7 +707,7 @@ impl Analyzer {
                         return error_expr();
                     }
                 }
-                if !context.shadows_top_level_name(enum_name) {
+                if !context.shadows_top_level_name(enum_name) || has_static_member {
                     if let Some(layout) = self.enum_layouts.get(enum_name) {
                         if let Some(variant) = layout
                             .variants

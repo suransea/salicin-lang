@@ -3,7 +3,7 @@ let vec = std.vec.vec
 let read(value: borrow(i32)): i32 = { value }
 
 let main(): i32 = {
-  let mut values = vec.new(i32)()
+  let mut values = vec.new(t: i32)()
   values.push(20)
   values.push(0)
   do {

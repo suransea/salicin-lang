@@ -746,18 +746,18 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use std.Option
+        r#"use std.option
 
-pub let Number = struct { value: i32 }
-let Secret = trait {
-  let reveal(self: borrow(Self))(): i32
+pub let number = struct { value: i32 }
+let secret = trait {
+  let reveal(self: borrow(self))(): i32
 }
-extend Number: Secret {
-  let reveal(self: borrow(Self))(): i32 = { self.value }
+extend number: secret {
+  let reveal(self: borrow(self))(): i32 = { self.value }
 }
-pub let make(): Number = { Number { value: 21 } }
-pub let maybe(): Option(Number) = { Option(Number).Some(make()) }
-pub let reveal(T: type)(move number: Number): i32 = { number.reveal() }
+pub let make(): number = { number { value: 21 } }
+pub let maybe(): option(number) = { option(number).some(make()) }
+pub let reveal(comptime t: type)(move number: number): i32 = { number.reveal() }
 pub let answer(): i32 = {
   let number = make()
   number.reveal()
@@ -847,17 +847,17 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use std.Option
-let Add = std.ops.Add
+        r#"use std.option
+let add = std.ops.add
 
-pub let Number = struct { value: i32 }
-extend Number: Add(Number) {
-  let Output = Number
-  let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }
+pub let number = struct { value: i32 }
+extend number: add(number) {
+  let output = number
+  let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }
 }
-pub let make(value: i32): Number = { Number { value: value } }
-pub let value(move number: Number): i32 = { number.value }
-pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
+pub let make(value: i32): number = { number { value: value } }
+pub let value(move number: number): i32 = { number.value }
+pub let maybe(value: i32): option(i32) = { option(i32).some(value) }
 "#,
     );
     workspace.write(
@@ -879,27 +879,27 @@ pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
 
     workspace.write(
         "app/src/fake.sc",
-        r#"pub let Option(T: type) = enum { Some(T), None }
-pub let make_option(): Option(i32) = { Option(i32).Some(42) }
+        r#"pub let option(comptime t: type) = enum { some(t), none }
+pub let make_option(): option(i32) = { option(i32).some(42) }
 
-pub let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
+pub let add(comptime rhs: type) = trait {
+  let output: type
+  let add(move self)(move rhs: rhs): output
 }
-pub let Sub(Rhs: type) = trait {
-  let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+pub let sub(comptime rhs: type) = trait {
+  let output: type
+  let sub(move self)(move rhs: rhs): output
 }
-pub let Number = struct { value: i32 }
-extend Number: Add(Number) {
-  let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
+pub let number = struct { value: i32 }
+extend number: add(number) {
+  let output = number
+  let add(move self)(move rhs: number): number = { number { value: self.value + rhs.value } }
 }
-extend Number: Sub(Number) {
-  let Output = Number
-  let sub(move self)(move rhs: Number): Number = { Number { value: self.value - rhs.value } }
+extend number: sub(number) {
+  let output = number
+  let sub(move self)(move rhs: number): number = { number { value: self.value - rhs.value } }
 }
-pub let make_number(value: i32): Number = { Number { value: value } }
+pub let make_number(value: i32): number = { number { value: value } }
 "#,
     );
     workspace.write(
@@ -910,7 +910,7 @@ pub let make_number(value: i32): Number = { Number { value: value } }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module type spoofing core Option");
+        .expect("reject a module type spoofing core option");
     assert_eq!(
         fake_option.status.code(),
         Some(1),
@@ -919,7 +919,7 @@ pub let make_number(value: i32): Number = { Number { value: value } }
     );
     assert!(
         String::from_utf8_lossy(&fake_option.stderr)
-            .contains("type `fake::Option(i32)` does not implement `Coalesce`"),
+            .contains("type `fake::option(i32)` does not implement `coalesce`"),
         "{}",
         output_text(&fake_option)
     );
@@ -932,7 +932,7 @@ pub let make_number(value: i32): Number = { Number { value: value } }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module trait spoofing core Add");
+        .expect("reject a module trait spoofing core add");
     assert_eq!(
         fake_add.status.code(),
         Some(1),
@@ -940,7 +940,7 @@ pub let make_number(value: i32): Number = { Number { value: value } }
         output_text(&fake_add)
     );
     assert!(
-        String::from_utf8_lossy(&fake_add.stderr).contains("no matching `Add` implementation"),
+        String::from_utf8_lossy(&fake_add.stderr).contains("no matching `add` implementation"),
         "{}",
         output_text(&fake_add)
     );
@@ -953,7 +953,7 @@ pub let make_number(value: i32): Number = { Number { value: value } }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module trait spoofing core Sub");
+        .expect("reject a module trait spoofing core sub");
     assert_eq!(
         fake_sub.status.code(),
         Some(1),
@@ -961,20 +961,20 @@ pub let make_number(value: i32): Number = { Number { value: value } }
         output_text(&fake_sub)
     );
     assert!(
-        String::from_utf8_lossy(&fake_sub.stderr).contains("no matching `Sub` implementation"),
+        String::from_utf8_lossy(&fake_sub.stderr).contains("no matching `sub` implementation"),
         "{}",
         output_text(&fake_sub)
     );
 
     workspace.write(
         "app/src/main.sc",
-        "use root.fake as Option\nlet main(): i32 = { Option {} }\n",
+        "use root.fake as option\nlet main(): i32 = { option {} }\n",
     );
     let module_option = salic()
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module alias falling back to core Option");
+        .expect("reject a module alias falling back to core option");
     assert_eq!(
         module_option.status.code(),
         Some(1),
@@ -983,27 +983,27 @@ pub let make_number(value: i32): Number = { Number { value: value } }
     );
     assert!(
         String::from_utf8_lossy(&module_option.stderr)
-            .contains("module `Option` cannot be used as a type or compile-time argument"),
+            .contains("module `option` cannot be used as a value or callable"),
         "{}",
         output_text(&module_option)
     );
 
     workspace.write(
         "app/src/main.sc",
-        r#"use root.fake as Add
-let Number = struct { value: i32 }
-extend Number: Add(Number) {
-  let Output = i32
-  let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
+        r#"use root.fake as add
+let number = struct { value: i32 }
+extend number: add(number) {
+  let output = i32
+  let add(move self)(move rhs: number): i32 = { self.value + rhs.value }
 }
-let main(): i32 = { Number { value: 20 } + Number { value: 22 } }
+let main(): i32 = { number { value: 20 } + number { value: 22 } }
 "#,
     );
     let module_add = salic()
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module alias falling back to core Add");
+        .expect("reject a module alias falling back to core add");
     assert_eq!(
         module_add.status.code(),
         Some(1),
@@ -1012,20 +1012,20 @@ let main(): i32 = { Number { value: 20 } + Number { value: 22 } }
     );
     assert!(
         String::from_utf8_lossy(&module_add.stderr)
-            .contains("module `Add` cannot be used as a type"),
+            .contains("module `add` cannot be used as a type"),
         "{}",
         output_text(&module_add)
     );
 
     workspace.write(
         "app/src/main.sc",
-        "use root.fake as Never\nlet stop(): Never = { loop {} }\nlet main(): i32 = { 42 }\n",
+        "use root.fake as never\nlet stop(): never = { loop {} }\nlet main(): i32 = { 42 }\n",
     );
     let module_never = salic()
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject an import alias falling back to core Never");
+        .expect("reject an import alias falling back to core never");
     assert_eq!(
         module_never.status.code(),
         Some(1),
@@ -1034,7 +1034,7 @@ let main(): i32 = { Number { value: 20 } + Number { value: 22 } }
     );
     assert!(
         String::from_utf8_lossy(&module_never.stderr)
-            .contains("module `Never` cannot be used as a type"),
+            .contains("module `never` cannot be used as a type"),
         "{}",
         output_text(&module_never)
     );
@@ -1066,7 +1066,7 @@ pub let make(value: i32): Token = { Token { value: value } }
     );
     workspace.write(
         "app/src/main.sc",
-        r#"extend dep.Token: Copy {}
+        r#"extend dep.Token: copyable {}
 let main(): i32 = { 42 }
 "#,
     );
@@ -1076,11 +1076,11 @@ let main(): i32 = { 42 }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a downstream Copy implementation for an upstream type");
+        .expect("reject a downstream copyable implementation for an upstream type");
     assert_eq!(orphan.status.code(), Some(1), "{}", output_text(&orphan));
     let stderr = String::from_utf8_lossy(&orphan.stderr);
     assert!(
-        stderr.contains("`Copy` for") && stderr.contains("package that defines the type"),
+        stderr.contains("`copyable` for") && stderr.contains("package that defines the type"),
         "{}",
         output_text(&orphan)
     );
@@ -1088,7 +1088,7 @@ let main(): i32 = { 42 }
     workspace.write(
         "dep/src/lib.sc",
         r#"pub let Token = struct { value: i32 }
-extend Token: Copy {}
+extend Token: copyable {}
 pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
 "#,
@@ -1107,7 +1107,7 @@ pub let read(copy token: Token): i32 = { token.value }
         .arg("run")
         .arg(&app)
         .output()
-        .expect("use an upstream Copy implementation in a downstream package");
+        .expect("use an upstream copyable implementation in a downstream package");
     assert_eq!(
         owner_impl.status.code(),
         Some(42),
@@ -1115,14 +1115,14 @@ pub let read(copy token: Token): i32 = { token.value }
         output_text(&owner_impl)
     );
 
-    workspace.write("app/src/fake.sc", "pub let Copy = trait {}\n");
+    workspace.write("app/src/fake.sc", "pub let copyable = trait {}\n");
     workspace.write(
         "app/src/main.sc",
-        r#"use root.fake.Copy as FakeCopy
-let Local = struct { value: i32 }
-extend Local: FakeCopy {}
-let read(copy local: Local): i32 = { local.value }
-let main(): i32 = { read(Local { value: 42 }) }
+        r#"use root.fake.copyable as fake_copy
+let local_type = struct { value: i32 }
+extend local_type: fake_copy {}
+let read(copy local: local_type): i32 = { local.value }
+let main(): i32 = { read(local_type { value: 42 }) }
 "#,
     );
 
@@ -1130,7 +1130,7 @@ let main(): i32 = { read(Local { value: 42 }) }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject an alias of a fake Copy trait as a language marker");
+        .expect("reject an alias of a fake copyable trait as a language marker");
     assert_eq!(
         alias_spoof.status.code(),
         Some(1),
@@ -1139,17 +1139,17 @@ let main(): i32 = { read(Local { value: 42 }) }
     );
     let stderr = String::from_utf8_lossy(&alias_spoof.stderr);
     assert!(
-        stderr.contains("requires `Copy`") && stderr.contains("does not implement Copy"),
+        stderr.contains("requires `copyable`") && stderr.contains("does not implement copyable"),
         "{}",
         output_text(&alias_spoof)
     );
 
     workspace.write(
         "app/src/fake.sc",
-        r#"pub let Copy = trait {}
+        r#"pub let copyable = trait {}
 pub let Token = struct { value: i32 }
 
-extend Token: Copy {}
+extend Token: copyable {}
 
 pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
@@ -1164,11 +1164,11 @@ pub let read(copy token: Token): i32 = { token.value }
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a module trait spoofing core Copy semantics");
+        .expect("reject a module trait spoofing core copyable semantics");
     assert_eq!(spoof.status.code(), Some(1), "{}", output_text(&spoof));
     let stderr = String::from_utf8_lossy(&spoof.stderr);
     assert!(
-        stderr.contains("requires `Copy`") && stderr.contains("does not implement Copy"),
+        stderr.contains("requires `copyable`") && stderr.contains("does not implement copyable"),
         "{}",
         output_text(&spoof)
     );
@@ -1339,17 +1339,17 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"use std.Result
-let Throws = std.error.Throws
-let stop(): Never = { loop {} }
-let absurd(move value: Never): i32 = { value }
-let propagate(move value: Never): Result(())(i32) = { value }
-let raise_unit(): Never with(Throws(())) = { throw(Error: ())(()) }
-let throw_never(): i32 with(Throws(())) = { raise_unit() }
-let Empty = enum {}
-let Holder = struct { value: Empty }
-let project(move holder: Holder): i32 = { holder.value }
-let choose(flag: Bool): i32 = { if flag { 42 } else { stop() } }
+        r#"use std.result
+let throws = std.error.throws
+let stop(): never = { loop {} }
+let absurd(move value: never): i32 = { value }
+let propagate(move value: never): result(())(i32) = { value }
+let raise_unit(): never with(throws(())) = { throw(error: ())(()) }
+let throw_never(): i32 with(throws(())) = { raise_unit() }
+let empty = enum {}
+let holder = struct { value: empty }
+let project(move holder: holder): i32 = { holder.value }
+let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
 let main(): i32 = { choose(true) }
 "#,
     );
@@ -1358,7 +1358,7 @@ let main(): i32 = { choose(true) }
         .arg("run")
         .arg(source)
         .output()
-        .expect("run program with Never coercion");
+        .expect("run program with never coercion");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
@@ -1376,11 +1376,11 @@ edition = "2026"
     project.write(
         "src/main.sc",
         r#"let main(): i32 = {
-  let reply: net.http.Reply = net.http.reply()
-  let status: net.http.Status = net.http.Status.Ok(2)
+  let reply: net.http.reply = net.http.reply()
+  let status: net.http.status = net.http.status.ok(2)
   let extra = status match {
-    net.http.Status.Ok(value) => value,
-    net.http.Status.Err => 0
+    net.http.status.ok(value) => value,
+    net.http.status.err => 0
   }
   math.answer() + reply.value + extra
 }
@@ -1388,27 +1388,27 @@ edition = "2026"
     );
     project.write(
         "src/math.sc",
-        r#"pub(package) let Number = struct { value: i32 }
-let Read = trait {
-  let read(self: borrow(Self))(): i32
+        r#"pub(package) let number = struct { value: i32 }
+let read = trait {
+  let read(self: borrow(self))(): i32
 }
-extend Number: Read {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend number: read {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 pub(package) let answer(): i32 = {
-  let number = Number { value: 40 }
+  let number = number { value: 40 }
   number.read()
 }
 "#,
     );
     project.write(
         "src/net/http.sc",
-        r#"pub(package) let Reply = struct { pub(package) value: i32 }
-pub(package) let Status = enum {
-  Ok(i32),
-  Err,
+        r#"pub(package) let reply = struct { pub(package) value: i32 }
+pub(package) let status = enum {
+  ok(i32),
+  err,
 }
-pub(package) let reply(): Reply = { Reply { value: 0 } }
+pub(package) let reply(): reply = { reply { value: 0 } }
 "#,
     );
 
@@ -1430,7 +1430,7 @@ fn field_visibility_controls_cross_module_and_cross_package_data_access() {
     private_project.write(
         "src/data.sc",
         r#"pub(package) let Record = struct { secret: i32, pub(package) open: i32 }
-pub(package) let Event = enum { Named(secret: i32), Empty }
+pub(package) let Event = enum { Named(secret: i32), empty }
 pub(package) let record(): Record = { Record { secret: 20, open: 22 } }
 pub(package) let event(): Event = { Event.Named(secret: 42) }
 "#,
@@ -1441,7 +1441,7 @@ pub(package) let event(): Event = { Event.Named(secret: 42) }
 let build(): data.Record = { data.Record { secret: 20, open: 22 } }
 let unpack(): i32 = { data.event() match {
   data.Event.Named(secret: value) => value,
-  data.Event.Empty => 0,
+  data.Event.empty => 0,
 } }
 let main(): i32 = { 0 }
 "#,
@@ -1467,7 +1467,7 @@ let main(): i32 = { 0 }
     workspace.write(
         "dep/src/lib.sc",
         r#"pub let Record = struct { pub value: i32 }
-pub let Event = enum { Named(pub value: i32), Empty }
+pub let Event = enum { Named(pub value: i32), empty }
 "#,
     );
     workspace.write(
@@ -1488,7 +1488,7 @@ dep = { path = "../dep" }
   let event = dep.Event.Named(value: 22)
   let extra = event match {
     dep.Event.Named(value: value) => value,
-    dep.Event.Empty => 0,
+    dep.Event.empty => 0,
   }
   record.value + extra
 }
@@ -1640,20 +1640,20 @@ let main(): i32 = { nested.deep.answer() }
     );
     project.write(
         "src/kit.sc",
-        r#"pub(package) let Number = struct { pub(package) value: i32 }
-pub(package) let Outcome = enum {
-  Ready(i32),
-  Empty,
+        r#"pub(package) let number = struct { pub(package) value: i32 }
+pub(package) let outcome = enum {
+  ready(i32),
+  empty,
 }
 pub(package) let zero(): i32 = { 0 }
 pub(package) let increment(value: i32): i32 = { value + 1 }
-pub(package) let make_number(value: i32): Number = { Number { value: value } }
+pub(package) let make_number(value: i32): number = { number { value: value } }
 "#,
     );
     project.write("src/nested.sc", "let parent_bonus(): i32 = { 2 }\n");
     project.write(
         "src/nested/deep.sc",
-        r#"use root.kit.{Number, Outcome, increment}
+        r#"use root.kit.{number, outcome, increment}
 let make = root.kit.make_number
 let utilities = root.kit
 let local = self.local_bonus
@@ -1663,11 +1663,11 @@ let from_root = root.root_bonus
 let local_bonus(): i32 = { 1 }
 
 pub(package) let answer(): i32 = {
-  let number: Number = make(35)
-  let outcome: Outcome = Outcome.Ready(increment(number.value))
+  let number: number = make(35)
+  let outcome: outcome = outcome.ready(increment(number.value))
   let value = outcome match {
-    Outcome.Ready(value) => value,
-    Outcome.Empty => 0
+    outcome.ready(value) => value,
+    outcome.empty => 0
   }
   value + utilities.zero() + local() + parent() + from_root()
 }

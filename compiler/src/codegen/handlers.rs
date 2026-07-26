@@ -2558,7 +2558,11 @@ impl Analyzer {
                     Rc::new(move |analyzer, value| next(analyzer, Expr::Await(Box::new(value)))),
                 )
             }
-            Expr::Match { scrutinee, arms } => {
+            Expr::Match {
+                scrutinee,
+                mut arms,
+            } => {
+                self.disambiguate_handler_unit_variant_patterns(&scrutinee, &mut arms, &handler);
                 let has_effectful_guard = arms.iter().any(|arm| {
                     arm.guard
                         .as_ref()
@@ -2671,6 +2675,77 @@ impl Analyzer {
                 self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed)
             }
             other => continuation(self, other),
+        }
+    }
+
+    #[inline(never)]
+    fn disambiguate_handler_unit_variant_patterns(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &mut [MatchArm],
+        handler: &AlgebraicHandler,
+    ) {
+        let match_probe = self.probe_expr_ty(scrutinee, None, &handler.inference_context);
+        let mut unit_variants = match match_probe {
+            super::lower::TypeProbe::Known(Ty::Enum(name))
+            | super::lower::TypeProbe::KnownSource(Ty::Enum(name), _) => self
+                .enum_layouts
+                .get(&name)
+                .map(|layout| {
+                    layout
+                        .variants
+                        .iter()
+                        .filter(|variant| variant.fields.is_empty())
+                        .map(|variant| (variant.name.clone(), variant.name.clone()))
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default(),
+            _ => HashMap::new(),
+        };
+        if unit_variants.is_empty() {
+            let constructors = arms
+                .iter()
+                .filter_map(|arm| match &arm.pattern {
+                    Pattern::Constructor { path, .. } => path.last(),
+                    _ => None,
+                })
+                .cloned()
+                .collect::<HashSet<_>>();
+            for arm in arms.iter() {
+                let Pattern::Binding(binding) = &arm.pattern else {
+                    continue;
+                };
+                let source_binding = binding.rsplit('$').next().unwrap_or(binding);
+                let candidates = self
+                    .enum_templates
+                    .values()
+                    .filter(|definition| {
+                        definition.variants.iter().any(|variant| {
+                            variant.name == source_binding
+                                && matches!(variant.fields, crate::ast::VariantFields::Unit)
+                        }) && constructors.iter().all(|constructor| {
+                            definition
+                                .variants
+                                .iter()
+                                .any(|variant| variant.name == *constructor)
+                        })
+                    })
+                    .count();
+                if candidates == 1 {
+                    unit_variants.insert(binding.clone(), source_binding.to_owned());
+                }
+            }
+        }
+        for arm in arms {
+            let Pattern::Binding(name) = &arm.pattern else {
+                continue;
+            };
+            if let Some(variant) = unit_variants.get(name) {
+                arm.pattern = Pattern::Constructor {
+                    path: vec![variant.clone()],
+                    fields: crate::ast::PatternFields::Unit,
+                };
+            }
         }
     }
 

@@ -1372,7 +1372,7 @@ pub(super) fn substitute_function_types(
                 return;
             };
             function.return_type = Some(Type::Named(
-                "core::result::Result".to_owned(),
+                "core::result::result".to_owned(),
                 vec![error.clone(), result],
             ));
         }
@@ -2433,7 +2433,7 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
                 if let Some(error) = effects.throws.as_deref() {
                     let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
                     **result = Type::Named(
-                        "core::result::Result".to_owned(),
+                        "core::result::result".to_owned(),
                         vec![error.clone(), logical_result],
                     );
                 }

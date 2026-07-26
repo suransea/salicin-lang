@@ -101,3 +101,23 @@ where t: copyable {
   /// Copies `value` over the current boxed value.
   let write(self: borrow(mut)(self))(copy value: t): () = { box_write(self)(value) }
 }
+
+/// Releases one box allocation after its value has been taken.
+let box_deallocate(comptime t: type)(pointer: ptr(mut)(t)): () = {
+  unsafe {
+    raw_dealloc(pointer, size_of(t), align_of(t))
+  }
+}
+
+/// Drops the owned value and releases its heap allocation.
+extend(comptime t: type) box(t): droppable {
+  let drop(self: borrow(mut)(self))(): () = {
+    let pointer = self.pointer
+    do {
+      let value = unsafe {
+        raw_take(pointer)
+      }
+    }
+    box_deallocate(pointer)
+  }
+}

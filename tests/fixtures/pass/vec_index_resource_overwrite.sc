@@ -23,7 +23,7 @@ let main(): i32 = {
   }
   let mut score = 0
   do {
-    let mut values = vec.new(resource)()
+    let mut values = vec.new(t: resource)()
     values.push(resource { counter: counter, value: 1 })
     values[0] = resource { counter: counter, value: 40 }
     let current = borrow(values[0])

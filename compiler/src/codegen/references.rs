@@ -813,7 +813,7 @@ impl Analyzer {
             if !self.is_copy_type(&parameter.ty) {
                 let ty = self.diagnostic_type_name(&parameter.ty);
                 self.error(format!(
-                    "parameter `{}` requires Copy, but `{}` does not implement Copy",
+                    "parameter `{}` requires copyable, but `{}` does not implement copyable",
                     parameter.name, ty
                 ));
             }

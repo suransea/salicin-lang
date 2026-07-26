@@ -10,10 +10,10 @@ extend number {
 }
 
 let main(): i32 = {
-  let mut number = number { raw: 0 }
-  number.reset(number)(40)
-  let sum = number.add(number)(2)
-  let method = number.value(self: number)()
+  let mut number_value = number { raw: 0 }
+  number.reset(number_value)(40)
+  let sum = number.add(number_value)(2)
+  let method = number.value(self: number_value)()
   let temporary = number.value(self: number { raw: 42 })()
   let associated = number.value()
   sum + method + temporary + associated - 84

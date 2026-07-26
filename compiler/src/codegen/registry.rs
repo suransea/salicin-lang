@@ -495,12 +495,14 @@ pub(super) fn display_parameter_label_shape(groups: &ParameterLabelShape) -> Str
 pub(super) fn top_level_namespace(item: &Item) -> TopLevelNamespace {
     match item {
         Item::Function(_) => TopLevelNamespace::Function,
-        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) | Item::TypeForm(_) => {
-            TopLevelNamespace::Type
-        }
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Sort(_) | Item::Extend(_) => {
-            TopLevelNamespace::Other
-        }
+        Item::Struct(_)
+        | Item::Enum(_)
+        | Item::Trait(_)
+        | Item::Effect(_)
+        | Item::Sort(_)
+        | Item::TypeAlias(_)
+        | Item::TypeForm(_) => TopLevelNamespace::Type,
+        Item::Global(_) | Item::Extend(_) => TopLevelNamespace::Other,
     }
 }
 

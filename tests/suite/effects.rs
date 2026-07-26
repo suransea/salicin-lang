@@ -265,7 +265,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "standard_effect_operations.sc",
         "source_await_handler.sc",
     ];
-    for (fixture_name, output) in batched_native_fixture_outputs(&fixtures) {
+    for (fixture_name, output) in trapping_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -290,7 +290,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         .arg("check")
         .arg(fixture("fail", "algebraic_effect_never_abort_resume.sc"))
         .output()
-        .expect("reject a resume parameter on a Never-returning operation");
+        .expect("reject a resume parameter on a never-returning operation");
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("without `resume`"),

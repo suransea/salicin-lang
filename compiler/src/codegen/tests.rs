@@ -43,23 +43,33 @@ fn compile_resolved_library_text(source: &str) -> Result<String, Vec<Diagnostic>
 }
 
 fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
-    let program = resolve_text(source);
-    let mut analyzer = Analyzer::new(&program);
-    let hir = match analyzer.analyze_target(false) {
-        Some(hir) => hir,
-        None => panic!("cleanup-plan source must lower: {:?}", analyzer.diagnostics),
-    };
-    assert!(
-        analyzer.diagnostics.is_empty(),
-        "unexpected diagnostics: {:?}",
-        analyzer.diagnostics
-    );
-    let function = hir
-        .functions
-        .iter()
-        .find(|function| function.name == function_name)
-        .expect("requested hir function");
-    HirCleanupPlanner::build(&hir, function).expect("cleanup plan must build and verify")
+    let source = source.to_owned();
+    let function_name = function_name.to_owned();
+    std::thread::Builder::new()
+        .name("cleanup-plan-test".to_owned())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let program = resolve_text(&source);
+            let mut analyzer = Analyzer::new(&program);
+            let hir = match analyzer.analyze_target(false) {
+                Some(hir) => hir,
+                None => panic!("cleanup-plan source must lower: {:?}", analyzer.diagnostics),
+            };
+            assert!(
+                analyzer.diagnostics.is_empty(),
+                "unexpected diagnostics: {:?}",
+                analyzer.diagnostics
+            );
+            let function = hir
+                .functions
+                .iter()
+                .find(|function| function.name == function_name)
+                .expect("requested hir function");
+            HirCleanupPlanner::build(&hir, function).expect("cleanup plan must build and verify")
+        })
+        .expect("spawn cleanup plan test")
+        .join()
+        .expect("cleanup plan test thread")
 }
 
 fn compile_with_origins(source: &str, origins: Vec<ItemOrigin>) -> Result<String, Vec<Diagnostic>> {
@@ -1928,8 +1938,12 @@ let main(): i32 = {
 
 #[test]
 fn capturing_callable_bridge_reuses_equivalent_specializations() {
-    let program = resolve_text(
-        r#"
+    std::thread::Builder::new()
+        .name("capturing-callable-bridge-test".to_owned())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let program = resolve_text(
+                r#"
 let invoke(move action: (): i32): i32 = { action() }
 let main(): i32 = {
   let first = 20
@@ -1938,23 +1952,27 @@ let main(): i32 = {
   left + invoke({ second })
 }
 "#,
-    );
-    let mut analyzer = Analyzer::new(&program);
-    assert!(analyzer.analyze().is_some());
-    assert!(
-        analyzer.diagnostics.is_empty(),
-        "unexpected bridge diagnostics: {:?}",
-        analyzer.diagnostics
-    );
-    assert_eq!(
-        analyzer
-            .functions
-            .keys()
-            .filter(|name| name.contains("$callable$bridge$"))
-            .count(),
-        1,
-        "equivalent closure code and capture types must share one specialization"
-    );
+            );
+            let mut analyzer = Analyzer::new(&program);
+            assert!(analyzer.analyze().is_some());
+            assert!(
+                analyzer.diagnostics.is_empty(),
+                "unexpected bridge diagnostics: {:?}",
+                analyzer.diagnostics
+            );
+            assert_eq!(
+                analyzer
+                    .functions
+                    .keys()
+                    .filter(|name| name.contains("$callable$bridge$"))
+                    .count(),
+                1,
+                "equivalent closure code and capture types must share one specialization"
+            );
+        })
+        .expect("spawn capturing callable bridge test")
+        .join()
+        .expect("capturing callable bridge test thread");
 }
 
 #[test]
@@ -2261,12 +2279,12 @@ let result = std.result
 let main(): i32 = {
   let inferred_option = option.none ?? 40
   let inferred_result = result(e: bool).err(false) ?? 2
-  let option = option.none ?? 40
-  let result = result(e: bool).err(false) ?? 1
+  let option_value = option.none ?? 40
+  let result_value = result(e: bool).err(false) ?? 1
   let fully_inferred_result = result.err(false) ?? 1
   let wide = result(t: i64).err(false) ?? 42
   let nested = option(i32).none ?? option.none ?? 1
-  inferred_option + inferred_result + option + result + fully_inferred_result + nested - 43
+  inferred_option + inferred_result + option_value + result_value + fully_inferred_result + nested - 43
 }
 "#,
     )
@@ -2753,13 +2771,13 @@ fn generic_function_validation_rolls_back_temporary_nominal_instances() {
 fn where_bound_validation_rolls_back_assumed_trait_implementations() {
     let program = crate::parser::parse(
         "let measure = trait { let measure(self: borrow(self))(): i32 }\n\
-         let value = struct { value: i32 }\n\
-         extend value: measure {\n\
+         let measured_value = struct { value: i32 }\n\
+         extend measured_value: measure {\n\
            let measure(self: borrow(self))(): i32 = { self.value }\n\
          }\n\
          let read(comptime t: type)(value: borrow(t)): i32\n\
          where t: measure = { value.measure() }\n\
-         let main(): i32 = { let value = value { value: 42 }; read(value) }\n",
+         let main(): i32 = { let value = measured_value { value: 42 }; read(value) }\n",
     )
     .expect("where-bound method source must parse");
     let mut analyzer = Analyzer::new(&program);
@@ -3384,11 +3402,11 @@ extend(comptime t: type) cell(t): value {
 }
 
 let main(): i32 = {
-  let cell = cell { value: leaf { value: 42 } }
-  let read = read_cell(cell)
-  let leaf = cell.take()
-  let wrapped = cell { value: leaf }
-  wrapped.read() + read - 42
+  let cell_value = cell { value: leaf { value: 42 } }
+  let read_value = read_cell(cell_value)
+  let leaf_value = cell_value.take()
+  let wrapped = cell { value: leaf_value }
+  wrapped.read() + read_value - 42
 }
 "#,
     )
@@ -5498,7 +5516,7 @@ let main(): i32 = { 0 }
 #[test]
 fn entry_point_cannot_export_an_unsafe_effect() {
     let errors = compile_resolved_text(
-        "use std.unsafe.unsafe_effect\nlet main(): i32 with(unsafe) = { 42 }\n",
+        "let unsafe = std.unsafe.unsafe_effect\nlet main(): i32 with(unsafe) = { 42 }\n",
     )
     .unwrap_err();
     assert!(errors.iter().any(|error| {
@@ -5695,8 +5713,8 @@ extend value {
   let tagged(comptime e: effects)(self: borrow(self))(): i32 with(e) = { self.value }
 }
 let main(): i32 = {
-  let value = value { value: 42 }
-  unsafe { value.tagged(unsafe)() }
+  let item = value { value: 42 }
+  unsafe { item.tagged(unsafe)() }
 }
 "#,
     )
@@ -5938,10 +5956,11 @@ let main(): i32 = {
     .unwrap();
     let symbol = function_symbol("__closure.0");
     assert!(ir.contains(&format!(
-        "define internal i32 @{symbol}(%sali.type.5061796c6f6164 %arg.0)"
+        "define internal i32 @{symbol}(%{} %arg.0)",
+        type_symbol("payload")
     )));
     assert!(ir.contains("; closure capture"));
-    assert!(ir.contains(&format!("call i32 @{symbol}(%sali.type.5061796c6f6164")));
+    assert!(ir.contains(&format!("call i32 @{symbol}(%{}", type_symbol("payload"))));
 }
 
 #[test]
@@ -6050,10 +6069,10 @@ extend counter {
   let answer = 1
 }
 let main(): i32 = {
-  let mut counter = counter { value: 42 }
-  let value = counter.read()
-  counter.reset()
-  value + counter.take() + counter.answer
+  let mut value = counter { value: 42 }
+  let read_value = value.read()
+  value.reset()
+  read_value + value.take() + counter.answer
 }
 "#,
     )
@@ -6065,11 +6084,11 @@ let main(): i32 = {
     assert!(ir.contains(&format!("define internal i32 @{read}(ptr %arg.0)")));
     assert!(ir.contains(&format!("define internal void @{reset}(ptr %arg.0)")));
     assert!(ir.contains(&format!(
-        "define internal i32 @{take}(%sali.type.436f756e746572 %arg.0)"
+        "define internal i32 @{take}(%sali.type.636f756e746572 %arg.0)"
     )));
     assert!(ir.contains(&format!("call i32 @{read}(ptr")));
     assert!(ir.contains(&format!("call void @{reset}(ptr")));
-    assert!(ir.contains(&format!("call i32 @{take}(%sali.type.436f756e746572")));
+    assert!(ir.contains(&format!("call i32 @{take}(%sali.type.636f756e746572")));
     assert!(ir.contains(&format!("@{answer} = internal unnamed_addr constant i32 1")));
 }
 
@@ -6560,8 +6579,8 @@ err(_) => 0,
 }
 
 let main(): i32 = {
-  let option = option(i32).some(39).flat_map(option_next)
-  let result = result(bool)(i32).ok(1).flat_map(result_next)
+  let option_value = option(i32).some(39).flat_map(option_next)
+  let result_value = result(bool)(i32).ok(1).flat_map(result_next)
   let mapped_option = option(i32).some(1).map(add_one)
   let mapped_result = result(bool)(i32).ok(2).map(add_one)
   let pure_option: option(i32) = option.pure(3)
@@ -6570,7 +6589,7 @@ let main(): i32 = {
   let result_transform: result(bool)((i32): i32) = result.ok(add_one)
   let applied_option = option_transform.apply(option(i32).some(5))
   let applied_result = result_transform.apply(result(bool)(i32).ok(6))
-  read_option(option) + read_result(result) + read_option(mapped_option) + read_result(mapped_result) + read_option(pure_option) + read_result(pure_result) + read_option(applied_option) + read_result(applied_result) - 70
+  read_option(option_value) + read_result(result_value) + read_option(mapped_option) + read_result(mapped_result) + read_option(pure_option) + read_result(pure_result) + read_option(applied_option) + read_result(applied_result) - 70
 }
 "#,
     )
@@ -7538,8 +7557,8 @@ where t: movable = {
 }
 
 let main(): i32 = {
-  let resource = resource { value: 42 }
-  let relocated = relocate(resource)(resource)
+  let value = resource { value: 42 }
+  let relocated = relocate(resource)(value)
   relocated.value
 }
 "#,
@@ -8072,7 +8091,7 @@ fn lowers_for_through_validated_iteration_lang_items() {
              } else { none }\n\
            }\n}\n\
          extend counter: into_iterator {\n\
-           let into_iter = counter\n\
+           let iter = counter\n\
            let into_iter(move self)(): counter = { self }\n}\n\
          let main(): i32 = {\n\
            let mut sum = 0\n\
@@ -8663,7 +8682,18 @@ consume(left)
         }
     }
     assert_eq!(pattern_transfers.len(), 1);
-    let (_, source) = pattern_transfers[0];
+    let (_, source) = pattern_transfers
+        .iter()
+        .find(|(_, source)| {
+            plan.move_paths[source.index()].place.projections
+                == [
+                    CleanupProjection::Downcast(0),
+                    CleanupProjection::Field(0),
+                    CleanupProjection::Field(0),
+                ]
+        })
+        .copied()
+        .expect("the named `left` pattern must transfer its source field");
     assert!(plan.blocks.iter().any(|block| {
         block
             .operations

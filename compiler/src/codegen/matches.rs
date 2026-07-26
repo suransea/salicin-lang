@@ -286,7 +286,7 @@ impl Analyzer {
                     .any(|binding| binding.moves && !binding.path.is_empty())
             {
                 self.error(format!(
-                    "cannot move a pattern binding out of `{}` because it implements `Drop`",
+                    "cannot move a pattern binding out of `{}` because it implements `droppable`",
                     scrutinee.ty
                 ));
             }
@@ -567,6 +567,17 @@ impl Analyzer {
         match pattern {
             Pattern::Wildcard => (HirMatcher::All, bindings, literal_conditions),
             Pattern::Binding(name) => {
+                if let Some(variant_index) = layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == *name && variant.fields.is_empty())
+                {
+                    return (
+                        HirMatcher::Variant(variant_index),
+                        bindings,
+                        literal_conditions,
+                    );
+                }
                 self.bind_pattern(
                     name,
                     Ty::Enum(layout.name.clone()),
@@ -586,8 +597,15 @@ impl Analyzer {
                     .get(&layout.name)
                     .map(|instance| instance.key.template.as_str())
                     .unwrap_or(&layout.name);
+                let layout_short_name = layout.name.rsplit("::").next().unwrap_or(&layout.name);
+                let source_short_name = source_name.rsplit("::").next().unwrap_or(source_name);
                 if path.len() > 2
-                    || (path.len() == 2 && path[0] != layout.name && path[0] != source_name)
+                    || (path.len() == 2
+                        && path[0] != layout.name
+                        && path[0] != source_name
+                        && path[0] != layout_short_name
+                        && path[0] != source_short_name
+                        && path[0] != "self")
                 {
                     self.error(format!(
                         "pattern constructor `{}` does not belong to enum `{}`",
@@ -797,7 +815,7 @@ impl Analyzer {
                         .any(|binding| binding.moves)
                 {
                     self.error(format!(
-                        "cannot move a nested pattern binding through `{ty}` because it implements `Drop`"
+                        "cannot move a nested pattern binding through `{ty}` because it implements `droppable`"
                     ));
                 }
             }

@@ -74,8 +74,8 @@ let main(): i32 = {
 
   let mut matched = async {
     let value = match choice.left
-      { left -> await step(22) }
-      { right -> await other_step(0) }
+      { choice.left -> await step(22) }
+      { choice.right -> await other_step(0) }
     value
   }
   match matched.poll()

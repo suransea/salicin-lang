@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn closed_compile_time_parameters_use_declared_defaults() {
-        let source = "let select(b: bool = false)(value: i32): i32 = { value }\n\
+        let source = "let select(comptime b: bool = false)(value: i32): i32 = { value }\n\
                       let main(): i32 = { select(42) }\n";
         compile_source(source).expect("closed compile-time defaults should be normalized by type");
     }
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn parameter_modifiers_are_type_checked_after_instantiation() {
-        let source = "let decorate(b: bool)(b value: i32): i32 = { value }\n\
+        let source = "let decorate(comptime b: bool)(b value: i32): i32 = { value }\n\
                       let main(): i32 = { decorate(true)(42) }\n";
         let errors = compile_source(source).unwrap_err();
         assert!(errors.iter().any(|error| {
@@ -509,7 +509,7 @@ mod tests {
                 "let missing = struct { value: i32 }\n\
                 let main(): i32 = { missing { value: 42 } + missing { value: 0 } }\n",
                 2,
-                23,
+                21,
                 "no matching `add` implementation",
             ),
             (
@@ -517,7 +517,7 @@ mod tests {
                 "let identity(comptime t: type)(value: t): t = { value }\n\
                 let main(): i32 = { identity() }\n",
                 2,
-                23,
+                21,
                 "argument",
             ),
             (
@@ -525,7 +525,7 @@ mod tests {
                 "let ask = effect { let value(): i32 }\n\
                 let main(): i32 = { ask.value() }\n",
                 2,
-                23,
+                21,
                 "requires custom effect",
             ),
             (
@@ -535,7 +535,7 @@ mod tests {
                   value\n\
                 }\n",
                 2,
-                20,
+                18,
                 "expected `i32`, found `bool`",
             ),
             (
@@ -543,7 +543,7 @@ mod tests {
                 "let choose()(move action: (): bool): bool = { action() }\n\
                  let main(): i32 = { choose() { true } }\n",
                 2,
-                23,
+                21,
                 "expected `i32`, found `bool`",
             ),
         ];
@@ -750,13 +750,13 @@ mod tests {
                         }\n\
                       }\n\
                       let main(): i32 = {\n\
-                        let mut cell = cell.make(i32)(bool)(20)(true)\n\
+                        let mut cell = cell.make(t: i32)(u: bool)(20)(true)\n\
                         let before = do {\n\
                           let reference = cell.view()\n\
                           reference\n\
                         }\n\
                         do {\n\
-                          let reference = cell.view(mut)()\n\
+                          let reference = cell.view(a: mut)()\n\
                           reference = 21\n\
                         }\n\
                         do {\n\
@@ -834,12 +834,12 @@ mod tests {
         let ir = compile_source(
             "let vec = std.vec.vec\n\
              let main(): i32 = {\n\
-               let mut values = vec.new(i32)()\n\
+               let mut values = vec.new(t: i32)()\n\
                values.push(1)\n\
                values.push(2)\n\
                do {\n\
-                 let slice = values.as_slice(mut)()\n\
-                 let item = slice.at(mut)(1)\n\
+                 let slice = values.as_slice(a: mut)()\n\
+                 let item = slice.at(a: mut)(1)\n\
                  item = 42\n\
                }\n\
                values.read(1)\n\
@@ -925,7 +925,7 @@ mod tests {
             "let vec = std.vec.vec\n\
              let read(value: borrow(i32)): i32 = { value }\n\
              let main(): i32 = {\n\
-               let mut values = vec.new(i32)()\n\
+               let mut values = vec.new(t: i32)()\n\
                values.push(1)\n\
                values[0] = 42\n\
                let value = borrow(values[0])\n\

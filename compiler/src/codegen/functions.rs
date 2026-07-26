@@ -320,7 +320,7 @@ impl Analyzer {
             let ty = self.diagnostic_type_name(&param.ty);
             let function = self.diagnostic_function_name(function);
             self.error(format!(
-                "parameter `{}` in function `{function}` requires `Copy`, but nominal type `{}` does not implement Copy",
+                "parameter `{}` in function `{function}` requires `copyable`, but nominal type `{}` does not implement copyable",
                 param.name, ty
             ));
         }
@@ -422,7 +422,7 @@ impl Analyzer {
         }
         if let Some(error) = &signature.throws_error {
             self.error(format!(
-                "`main` cannot expose unhandled `Throws({error})`; handle it with `try {{ ... }}`"
+                "`main` cannot expose unhandled `throws({error})`; handle it with `try {{ ... }}`"
             ));
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {

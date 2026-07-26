@@ -210,7 +210,7 @@ fn core_diagnostics_are_stable_source_level_contracts() {
             "throw_in_plain_return.sc",
             2,
             3,
-            "call to `throw` requires `Throws(bool)`; handle it with `try { ... }` or propagate it from the current function",
+            "call to `throw` requires `throws(bool)`; handle it with `try { ... }` or propagate it from the current function",
         ),
     ] {
         let source = fixture("fail", fixture_name);

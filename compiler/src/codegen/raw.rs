@@ -77,7 +77,7 @@ impl Analyzer {
                 }) = expected
                 else {
                     self.error(
-                        "cannot infer `raw_alloc` pointee type; use `raw_alloc(T)(size, align)` or provide an expected `Ptr(mut)(T)` type",
+                        "cannot infer `raw_alloc` pointee type; use `raw_alloc(t)(size, align)` or provide an expected `ptr(mut)(t)` type",
                     );
                     return error_expr();
                 };
@@ -154,7 +154,7 @@ impl Analyzer {
         } = &pointer.ty
         else {
             self.error(format!(
-                "`raw_dealloc` requires a `Ptr(mut)(T)`, found `{}`",
+                "`raw_dealloc` requires a `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
@@ -204,7 +204,7 @@ impl Analyzer {
         } = &pointer.ty
         else {
             self.error(format!(
-                "`raw_init` requires a `Ptr(mut)(T)`, found `{}`",
+                "`raw_init` requires a `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
@@ -261,7 +261,7 @@ impl Analyzer {
         } = &pointer.ty
         else {
             self.error(format!(
-                "`raw_take` requires a `Ptr(mut)(T)`, found `{}`",
+                "`raw_take` requires a `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
@@ -299,7 +299,7 @@ impl Analyzer {
         let pointer = self.lower_expr(&arguments[0].value, None, context);
         let Ty::Pointer { pointee, .. } = &pointer.ty else {
             self.error(format!(
-                "`raw_offset` requires `Ptr(T)` or `Ptr(mut)(T)`, found `{}`",
+                "`raw_offset` requires `ptr(t)` or `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
@@ -364,13 +364,13 @@ impl Analyzer {
         let pointer = self.lower_expr(&arguments[0].value, None, context);
         let Ty::Pointer { pointee, mutable } = &pointer.ty else {
             self.error(format!(
-                "`{name}` requires `Ptr(T)` or `Ptr(mut)(T)`, found `{}`",
+                "`{name}` requires `ptr(t)` or `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
         };
         if required_mutable && !mutable {
-            self.error("mutable `raw_borrow` requires a `Ptr(mut)(T)`");
+            self.error("mutable `raw_borrow` requires a `ptr(mut)(t)`");
             return error_expr();
         }
         if matches!(pointee.as_ref(), Ty::Never | Ty::Function(_) | Ty::Error) {
@@ -498,13 +498,13 @@ impl Analyzer {
         let pointer = self.lower_expr(&arguments[0].value, None, context);
         let Ty::Pointer { pointee, mutable } = &pointer.ty else {
             self.error(format!(
-                "`raw_slice` requires `Ptr(T)` or `Ptr(mut)(T)`, found `{}`",
+                "`raw_slice` requires `ptr(t)` or `ptr(mut)(t)`, found `{}`",
                 pointer.ty
             ));
             return error_expr();
         };
         if required_mutable && !mutable {
-            self.error("mutable `raw_slice` requires a `Ptr(mut)(T)`");
+            self.error("mutable `raw_slice` requires a `ptr(mut)(t)`");
             return error_expr();
         }
         if matches!(
@@ -630,7 +630,7 @@ impl Analyzer {
             Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_))
         ) {
             self.error(format!(
-                "`raw_slice_len` requires a borrowed Slice, found `{}`",
+                "`raw_slice_len` requires a borrowed slice, found `{}`",
                 slice.ty
             ));
             return error_expr();
@@ -698,21 +698,21 @@ impl Analyzer {
         } = &slice.ty
         else {
             self.error(format!(
-                "`raw_slice_at` requires a borrowed Slice, found `{}`",
+                "`raw_slice_at` requires a borrowed slice, found `{}`",
                 slice.ty
             ));
             return error_expr();
         };
         let Ty::Slice(element) = pointee.as_ref() else {
             self.error(format!(
-                "`raw_slice_at` requires a borrowed Slice, found `{}`",
+                "`raw_slice_at` requires a borrowed slice, found `{}`",
                 slice.ty
             ));
             return error_expr();
         };
         if *mutable != required_mutable {
             self.error(format!(
-                "`raw_slice_at` requires a {}Slice borrow",
+                "`raw_slice_at` requires a {}slice borrow",
                 if required_mutable {
                     "mutable "
                 } else {
@@ -829,15 +829,15 @@ impl Analyzer {
                     value: Expr::Name(access),
                 }] = *access
                 else {
-                    self.error("`Ptr` access argument must be `shared` or `mut`");
+                    self.error("`ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 };
                 let Some(mutable) = access_mutability(access) else {
-                    self.error("`Ptr` access argument must be `shared` or `mut`");
+                    self.error("`ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 };
                 if label.as_deref().is_some_and(|label| label != "a") {
-                    self.error("`Ptr` access argument must be `shared` or `mut`");
+                    self.error("`ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 }
                 let Some(pointee) = self.explicit_raw_pointee("ptr", pointee, context) else {
@@ -847,23 +847,23 @@ impl Analyzer {
             }
             _ => {
                 self.error(
-                    "`Ptr` expects optional access and pointee type groups followed by one borrow argument",
+                    "`ptr` expects optional access and pointee type groups followed by one borrow argument",
                 );
                 return error_expr();
             }
         };
         if runtime.len() != 1 {
-            self.error("`Ptr` expects exactly one borrow argument");
+            self.error("`ptr` expects exactly one borrow argument");
             return error_expr();
         }
         let argument = &runtime[0];
         if argument.label.is_some() {
-            self.error("`Ptr` does not accept a named runtime argument");
+            self.error("`ptr` does not accept a named runtime argument");
             return error_expr();
         }
         let Expr::Borrow { mutable, value, .. } = &argument.value else {
             self.error(format!(
-                "`Ptr({})` requires an explicit `{}` argument",
+                "`ptr({})` requires an explicit `{}` argument",
                 if required_mutable { "mut" } else { "shared" },
                 if required_mutable {
                     "borrow(mut)"
@@ -875,7 +875,7 @@ impl Analyzer {
         };
         if *mutable != required_mutable {
             self.error(format!(
-                "`Ptr({})` requires `{}` borrowing",
+                "`ptr({})` requires `{}` borrowing",
                 if required_mutable { "mut" } else { "shared" },
                 if required_mutable {
                     "borrow(mut)"
@@ -893,7 +893,7 @@ impl Analyzer {
             .is_some_and(|pointee| pointee != &place.ty)
         {
             self.error(format!(
-                "`Ptr` pointee type mismatch: expected `{}`, found `{}`",
+                "`ptr` pointee type mismatch: expected `{}`, found `{}`",
                 explicit_pointee.as_ref().unwrap(),
                 place.ty
             ));

@@ -5,7 +5,7 @@ extend number {
 }
 
 let main(): i32 = {
-  let number = number { value: 42 }
-  let partial = number.add(number)
+  let value = number { value: 42 }
+  let partial = number.add(value)
   0
 }

@@ -39,6 +39,17 @@ impl Analyzer {
             Ok(None) => {}
         }
         if let Expr::Name(target) = base {
+            if let Some(canonical) = self
+                .inherent_members
+                .get(target)
+                .and_then(|members| members.constants.get(member))
+                .cloned()
+            {
+                return HirExpr {
+                    ty: self.global_type(&canonical),
+                    kind: HirExprKind::Global(canonical),
+                };
+            }
             if !context.shadows_top_level_name(target)
                 && (self.struct_layouts.contains_key(target)
                     || self.enum_layouts.contains_key(target))
@@ -166,20 +177,21 @@ impl Analyzer {
                     if self
                         .inherent_members
                         .get(target)
-                        .is_some_and(|members| members.functions.contains_key(member))
+                        .is_some_and(|members| members.constants.contains_key(member))
                     {
-                        self.error(format!(
-                            "associated function `{target}.{member}` must be called on the type"
-                        ));
-                        return error_expr();
+                        let canonical = self.inherent_members[target].constants[member].clone();
+                        return HirExpr {
+                            ty: self.global_type(&canonical),
+                            kind: HirExprKind::Global(canonical),
+                        };
                     }
                     if self
                         .inherent_members
                         .get(target)
-                        .is_some_and(|members| members.constants.contains_key(member))
+                        .is_some_and(|members| members.functions.contains_key(member))
                     {
                         self.error(format!(
-                            "associated constant `{target}.{member}` must be accessed on the type"
+                            "associated function `{target}.{member}` must be called on the type"
                         ));
                         return error_expr();
                     }

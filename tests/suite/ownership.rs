@@ -47,7 +47,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ("raw_offset_safe.sc", "requires an `unsafe` block"),
         (
             "raw_offset_non_pointer.sc",
-            "requires `Ptr(T)` or `Ptr(mut)(T)`",
+            "requires `ptr(t)` or `ptr(mut)(t)`",
         ),
         ("raw_trap_safe.sc", "requires an `unsafe` block"),
         (
@@ -65,7 +65,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ),
         (
             "raw_borrow_mut_immutable_pointer.sc",
-            "requires a `Ptr(mut)(T)`",
+            "requires a `ptr(mut)(t)`",
         ),
         ("raw_borrow_anchor_conflict.sc", "borrowed"),
         (
@@ -74,11 +74,11 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ),
         (
             "raw_pointer_mut_method_shared.sc",
-            "unknown method `take` on `Ptr(i32)`",
+            "unknown method `take` on `ptr(i32)`",
         ),
         (
             "raw_pointer_foreign_extension.sc",
-            "inherent extension for `Ptr` must be declared in the package that defines the type",
+            "inherent extension for `ptr` must be declared in the package that defines the type",
         ),
     ] {
         let output = salic()
@@ -219,7 +219,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         .arg("check")
         .arg(fixture("fail", "vec_resource_use_after_push.sc"))
         .output()
-        .expect("check use after resource Vec push");
+        .expect("check use after resource vec push");
     assert!(
         !output.status.success(),
         "resource push unexpectedly copied"
@@ -234,10 +234,10 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         .arg("check")
         .arg(fixture("fail", "vec_use_after_into_iterator.sc"))
         .output()
-        .expect("check use after consuming Vec iteration");
+        .expect("check use after consuming vec iteration");
     assert!(
         !output.status.success(),
-        "consumed Vec unexpectedly remained usable"
+        "consumed vec unexpectedly remained usable"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("moved"),
@@ -265,7 +265,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
             .arg("check")
             .arg(fixture("fail", name))
             .output()
-            .expect("check Vec element borrow conflict");
+            .expect("check vec element borrow conflict");
         assert!(!output.status.success(), "{name} unexpectedly compiled");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("borrowed"),
@@ -408,7 +408,7 @@ fn parameter_modifier_generics_select_copy_and_move() {
         .expect("reject copy passing for a resource");
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("does not implement Copy"),
+        String::from_utf8_lossy(&output.stderr).contains("does not implement copyable"),
         "{}",
         output_text(&output)
     );
@@ -440,7 +440,7 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
         .arg("run")
         .arg(fixture("pass", "where_copy_bound.sc"))
         .output()
-        .expect("run generic function with a Copy bound");
+        .expect("run generic function with a copyable bound");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (name, expected) in [
@@ -599,14 +599,14 @@ edition = "2026"
     );
     project.write(
         "src/main.sc",
-        "let main(): i32 = {\n  let cell = api.Cell.new(42)\n  cell.take()\n}\n",
+        "let main(): i32 = {\n  let cell = api.cell.new(42)\n  cell.take()\n}\n",
     );
     project.write(
         "src/api.sc",
-        "pub(package) let Cell(T: type) = struct { value: T }\n\
-         extend(T: type) Cell(T) {\n\
-           let new(move value: T): Cell(T) = { Cell { value: value } }\n\
-           let take(move self)(): T = { self.value }\n\
+        "pub(package) let cell(comptime t: type) = struct { value: t }\n\
+         extend(comptime t: type) cell(t) {\n\
+           let new(move value: t): cell(t) = { cell { value: value } }\n\
+           let take(move self)(): t = { self.value }\n\
          }\n",
     );
 
@@ -631,21 +631,21 @@ edition = "2026"
     );
     project.write(
         "src/main.sc",
-        "let main(): i32 = {\n  api.Cell.new().choose(i32)(42)\n}\n",
+        "let main(): i32 = {\n  api.cell.new().choose(i32)(42)\n}\n",
     );
     project.write(
         "src/api.sc",
-        "pub(package) let Choose = trait {\n\
-           let choose(Value: type)(self: borrow(Self))(move value: Value): Value\n\
+        "pub(package) let choose = trait {\n\
+           let choose(comptime value_type: type)(self: borrow(self))(move value: value_type): value_type\n\
          }\n\
-         pub(package) let Cell = struct {}\n\
-         extend Cell: Choose {\n\
-           let choose(Result: type)(self: borrow(Self))(move value: Result): Result = {\n\
+         pub(package) let cell = struct {}\n\
+         extend cell: choose {\n\
+           let choose(comptime result: type)(self: borrow(self))(move value: result): result = {\n\
              value\n\
            }\n\
          }\n\
-         extend Cell {\n\
-           let new(): Cell = { Cell {} }\n\
+         extend cell {\n\
+           let new(): cell = { cell {} }\n\
          }\n",
     );
 
@@ -673,7 +673,7 @@ path = "src/lib.sc"
     );
     project.write(
         "dep/src/lib.sc",
-        "pub let Cell(T: type) = struct { pub value: T }\n",
+        "pub let cell(comptime t: type) = struct { pub value: t }\n",
     );
     project.write(
         "app/salicin.toml",
@@ -688,8 +688,8 @@ dep = { path = "../dep" }
     );
     project.write(
         "app/src/main.sc",
-        "extend(T: type) dep.Cell(T) {\n\
-           let take(move self)(): T = { self.value }\n\
+        "extend(comptime t: type) dep.cell(t) {\n\
+           let take(move self)(): t = { self.value }\n\
          }\n\
          let main(): i32 = { 0 }\n",
     );
@@ -770,7 +770,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
     let directory = TestDirectory::new();
     let source = directory.write(
         "main.sc",
-        "use std.vec.Vec\n\nlet main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
+        "use std.vec.vec\n\nlet main(): i32 = {\n  let values: vec(i32) = vec(i32).new()\n  values.len()\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
     let executable = directory.join("main");
@@ -784,7 +784,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
         .arg("-o")
         .arg(&ir)
         .output()
-        .expect("emit Vec allocator ABI IR");
+        .expect("emit vec allocator ABI IR");
     assert!(emitted.status.success(), "{}", output_text(&emitted));
 
     let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/allocator.c");
@@ -797,12 +797,12 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
         .arg("-o")
         .arg(&executable)
         .output()
-        .expect("link Vec replacement allocator");
+        .expect("link vec replacement allocator");
     assert!(linked.status.success(), "{}", output_text(&linked));
 
     let status = Command::new(&executable)
         .status()
-        .expect("run Vec replacement allocator fixture");
+        .expect("run vec replacement allocator fixture");
     assert_eq!(status.code(), Some(42));
 }
 
@@ -843,7 +843,7 @@ fn type_constructor_aliases_run_and_report_kind_errors() {
         ("type_alias_arity.sc", "argument count mismatch"),
         (
             "type_constructor_unknown_label.sc",
-            "unknown compile-time argument label `Element`",
+            "unknown compile-time argument label `element`",
         ),
     ] {
         let output = salic()
@@ -869,17 +869,17 @@ fn type_constructor_aliases_cross_module_boundaries() {
     );
     project.write(
         "src/types.sc",
-        "pub(package) let Cell(T: type) = struct { pub(package) value: T }\n\
-         pub(package) let Family(T: type): type = Cell(T)\n\
-         pub(package) let Constructor: (T: type): type = Cell\n\
-         pub(package) let Scalar = i32\n",
+        "pub(package) let cell(comptime t: type) = struct { pub(package) value: t }\n\
+         pub(package) let family(comptime t: type): type = cell(t)\n\
+         pub(package) let constructor: (comptime t: type): type = cell\n\
+         pub(package) let scalar = i32\n",
     );
     project.write(
         "src/main.sc",
-        "use types.{Family, Constructor, Scalar}\n\n\
-         let main(): Scalar = {\n\
-           let left: Family(i32) = Family(i32) { value: 40 }\n\
-           let right = Constructor(i32) { value: 2 }\n\
+        "use types.{family, constructor, scalar}\n\n\
+         let main(): scalar = {\n\
+           let left: family(i32) = family(i32) { value: 40 }\n\
+           let right = constructor(i32) { value: 2 }\n\
            left.value + right.value\n\
          }\n",
     );
@@ -909,7 +909,7 @@ fn algebraic_effect_operations_check_their_instantiated_row() {
     assert!(!invalid.status.success());
     let stderr = String::from_utf8_lossy(&invalid.stderr);
     assert!(
-        stderr.contains("call to `State(i32).get` requires custom effect `State(i32)`"),
+        stderr.contains("call to `state(i32).get` requires custom effect `state(i32)`"),
         "{}",
         output_text(&invalid)
     );
@@ -1046,7 +1046,7 @@ fn m1_ownership_errors_report_their_cause() {
         ("use_after_explicit_move_i32.sc", &["moved"][..]),
         (
             "copy_non_copy.sc",
-            &["requires `Copy`", "does not implement Copy"][..],
+            &["requires `copyable`", "does not implement copyable"][..],
         ),
         (
             "double_mut_borrow.sc",
@@ -1126,19 +1126,22 @@ fn region_frontend_errors_report_their_cause() {
     for (name, expected) in [
         (
             "region_undeclared_parameter.sc",
-            "undeclared access or region parameter `R`",
+            "undeclared access or region parameter `r`",
         ),
         (
             "region_undeclared_type.sc",
-            "undeclared access or region parameter `R`",
+            "undeclared access or region parameter `r`",
         ),
-        ("region_duplicate.sc", "duplicate region parameter `R`"),
+        ("region_duplicate.sc", "duplicate region parameter `r`"),
         ("region_static_redeclared.sc", "predefined"),
         (
             "region_name_with_type_kind.sc",
-            "region literals cannot be compile-time parameter names",
+            "expected a parameter name, found a region name",
         ),
-        ("region_plain_name.sc", "uppercase names like `R: region`"),
+        (
+            "region_plain_name.sc",
+            "standard-library item `region` is not in the prelude",
+        ),
     ] {
         let output = salic()
             .arg("check")
@@ -1197,7 +1200,7 @@ fn borrow_value_parameter_errors_report_their_cause() {
     for (name, expected) in [
         ("borrow_value_mut_moved.sc", "moved"),
         ("borrow_value_explicit_move.sc", "moved"),
-        ("borrow_value_copy_mut.sc", "requires `Copy`"),
+        ("borrow_value_copy_mut.sc", "requires `copyable`"),
         ("borrow_value_block_escape_conflict.sc", "already borrowed"),
         ("borrow_value_partial.sc", "partial application"),
         (
@@ -1307,7 +1310,7 @@ fn source_backed_drop_glue_links_and_runs() {
         .arg("run")
         .arg(fixture("pass", "drop_glue.sc"))
         .output()
-        .expect("run source-backed Drop program");
+        .expect("run source-backed droppable program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
@@ -1317,17 +1320,17 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
         .arg("run")
         .arg(fixture("pass", "drop_scope.sc"))
         .output()
-        .expect("run structured Drop program");
+        .expect("run structured droppable program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let trapped = salic()
         .arg("run")
         .arg(fixture("pass", "drop_trap.sc"))
         .output()
-        .expect("run observable Drop trap");
+        .expect("run observable droppable trap");
     assert!(
         !trapped.status.success(),
-        "Drop was not executed:\n{}",
+        "droppable was not executed:\n{}",
         output_text(&trapped)
     );
 
@@ -1335,10 +1338,10 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
         .arg("run")
         .arg(fixture("pass", "drop_generic_blanket_trap.sc"))
         .output()
-        .expect("run blanket generic Drop trap");
+        .expect("run blanket generic droppable trap");
     assert!(
         !generic_trapped.status.success(),
-        "blanket generic Drop was not executed:\n{}",
+        "blanket generic droppable was not executed:\n{}",
         output_text(&generic_trapped)
     );
 
@@ -1441,7 +1444,7 @@ fn fn_once_resource_captures_drop_exactly_once() {
         .arg("run")
         .arg(fixture("pass", "drop_closure_once.sc"))
         .output()
-        .expect("run resource-owning FnOnce closure");
+        .expect("run resource-owning fn_once closure");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (fixture_name, failure) in [
@@ -1603,40 +1606,40 @@ fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (
             "copy_non_copy.sc",
-            &["requires `Copy`", "does not implement Copy"][..],
+            &["requires `copyable`", "does not implement copyable"][..],
         ),
         (
             "copy_nominal_invalid_struct_impl.sc",
-            &["Container", "cannot implement `Copy`", "Payload"][..],
+            &["container", "cannot implement `copyable`", "payload"][..],
         ),
         (
             "copy_nominal_invalid_enum_impl.sc",
-            &["Message", "cannot implement `Copy`", "Payload"][..],
+            &["message", "cannot implement `copyable`", "payload"][..],
         ),
         (
             "copy_nominal_transitive_invalid_impl.sc",
-            &["Branch", "Tree", "cannot implement `Copy`"][..],
+            &["branch", "tree", "cannot implement `copyable`"][..],
         ),
         ("copy_nominal_explicit_move_reuse.sc", &["moved"][..]),
         (
             "copy_nominal_concrete_generic_impl.sc",
             &[
                 "function `read`",
-                "requires `Copy`",
-                "Cell(i64)",
-                "does not implement Copy",
+                "requires `copyable`",
+                "cell(i64)",
+                "does not implement copyable",
             ][..],
         ),
         (
             "copy_generic_blanket_unproven.sc",
-            &["blanket `Copy`", "not structurally valid"][..],
+            &["blanket `copyable`", "not structurally valid"][..],
         ),
     ] {
         let output = salic()
             .arg("check")
             .arg(fixture("fail", name))
             .output()
-            .expect("check invalid source-backed Copy fixture");
+            .expect("check invalid source-backed copyable fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1691,10 +1694,10 @@ fn m1_local_closure_programs_run_with_expected_result() {
 fn m1_local_closure_errors_report_their_cause() {
     for (name, expected) in [
         ("closure_escape_return.sc", "escape"),
-        ("closure_fnmut_immutable.sc", "FnMut"),
+        ("closure_fnmut_immutable.sc", "fn_mut"),
         (
             "closure_partial_fnmut_immutable.sc",
-            "FnMut partial application",
+            "fn_mut partial application",
         ),
         ("closure_capture_borrow_conflict.sc", "borrowed"),
         ("closure_fnonce_twice.sc", "consumed"),

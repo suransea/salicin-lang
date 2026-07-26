@@ -573,11 +573,11 @@ impl Analyzer {
                     occupied.contains(&TopLevelNamespace::Other)
                         || (occupied.contains(&TopLevelNamespace::Function) && !overloaded_function)
                 }
-                TopLevelNamespace::Type => {
-                    occupied.contains(&TopLevelNamespace::Other)
-                        || occupied.contains(&TopLevelNamespace::Type)
+                TopLevelNamespace::Type => occupied.contains(&TopLevelNamespace::Type),
+                TopLevelNamespace::Other => {
+                    occupied.contains(&TopLevelNamespace::Function)
+                        || occupied.contains(&TopLevelNamespace::Other)
                 }
-                TopLevelNamespace::Other => !occupied.is_empty(),
             };
             if duplicate {
                 self.error(format!("duplicate top-level name `{name}`"));
@@ -1078,7 +1078,7 @@ impl Analyzer {
         for parameter in &parameters {
             if parameter.kind != Sort::Type {
                 self.error(format!(
-                    "struct `{}` cannot derive `Copy` with non-type compile-time parameter `{}`",
+                    "struct `{}` cannot derive `copyable` with non-type compile-time parameter `{}`",
                     definition.name, parameter.name
                 ));
                 return None;
@@ -1146,11 +1146,11 @@ impl Analyzer {
             if let Some((member, ty)) = self.first_non_copy_member(target, &valid) {
                 let ty = self.diagnostic_type_name(&ty);
                 self.error(format!(
-                    "`{target_name}` cannot implement `Copy`: {member} has type `{ty}`, which does not implement `Copy`"
+                    "`{target_name}` cannot implement `copyable`: {member} has type `{ty}`, which does not implement `copyable`"
                 ));
             } else {
                 self.error(format!(
-                    "`{target_name}` cannot implement `Copy` because its value layout is not Copy"
+                    "`{target_name}` cannot implement `copyable` because its value layout is not copyable"
                 ));
             }
             self.trait_impls.remove(key);
@@ -1168,11 +1168,11 @@ impl Analyzer {
         if let Some((member, ty)) = self.first_non_copy_member(target, &self.copy_nominals) {
             let ty = self.diagnostic_type_name(&ty);
             self.error(format!(
-                "`{target_name}` cannot implement `Copy`: {member} has type `{ty}`, which does not implement `Copy`"
+                "`{target_name}` cannot implement `copyable`: {member} has type `{ty}`, which does not implement `copyable`"
             ));
         } else {
             self.error(format!(
-                "`{target_name}` cannot implement `Copy` because its value layout is not Copy"
+                "`{target_name}` cannot implement `copyable` because its value layout is not copyable"
             ));
         }
         self.trait_impls.remove(key);
@@ -1317,7 +1317,7 @@ impl Analyzer {
         });
         if !valid {
             self.error(format!(
-                "blanket `Copy` implementation for `{template_name}` is not structurally valid for every instance allowed by its where predicates"
+                "blanket `copyable` implementation for `{template_name}` is not structurally valid for every instance allowed by its where predicates"
             ));
         }
         self.restore_nominals(nominals_before);
@@ -1335,14 +1335,14 @@ impl Analyzer {
         if definition.name == self.lang_item_name(LangItemKind::Move)
             && !move_trait_has_required_shape(&definition)
         {
-            self.error("`Move` language trait must have shape `let Move = trait {}`");
+            self.error("`movable` language trait must have shape `let movable = trait {}`");
             valid = false;
         }
         if definition.name == self.lang_item_name(LangItemKind::Copy)
             && !copy_trait_has_required_shape(&definition)
         {
             self.error(
-                "`Copy` language trait must have shape `let Copy = trait where Self: Move {}`",
+                "`copyable` language trait must have shape `let copyable = trait where self: movable {}`",
             );
             valid = false;
         }
@@ -1350,7 +1350,7 @@ impl Analyzer {
             && !drop_trait_has_required_shape(&definition)
         {
             self.error(
-                "`Drop` language trait must have shape `let Drop = trait { let drop(self: borrow(mut)(Self))(): () }`",
+                "`droppable` language trait must have shape `let droppable = trait { let drop(self: borrow(mut)(self))(): () }`",
             );
             valid = false;
         }
@@ -1364,13 +1364,13 @@ impl Analyzer {
                 let method = operator_trait.method();
                 let shape = match operator_trait.lang_item {
                     LangItemKind::Eq => format!(
-                        "let Eq(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): Bool }}"
+                        "let eq(comptime rhs: type) = trait {{ let {method}(self: borrow(self))(rhs: borrow(rhs)): bool }}"
                     ),
                     LangItemKind::PartialOrd => format!(
-                        "let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
+                        "let partial_ord(comptime rhs: type) = trait {{ let {method}(self: borrow(self))(rhs: borrow(rhs)): partial_ordering }}"
                     ),
                     _ => format!(
-                        "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(self)(rhs: Rhs): Output }}"
+                        "let {trait_name}(comptime rhs: type) = trait {{ let output: type; let {method}(self)(rhs: rhs): output }}"
                     ),
                 };
                 self.error(format!(
@@ -1402,7 +1402,7 @@ impl Analyzer {
         }
         if definition.self_parameter.name != "self" {
             self.error(format!(
-                "trait `{}` self sort parameter must be named `Self`",
+                "trait `{}` self sort parameter must be named `self`",
                 definition.name
             ));
             valid = false;
@@ -1428,7 +1428,7 @@ impl Analyzer {
         for parameter in &compile_parameters {
             if parameter.name == "self" {
                 self.error(format!(
-                    "trait `{}` cannot declare reserved type parameter `Self`",
+                    "trait `{}` cannot declare reserved type parameter `self`",
                     definition.name
                 ));
                 valid = false;
@@ -1700,7 +1700,7 @@ impl Analyzer {
                         && !self.trait_source_type_is_definitely_copy(&parameter.ty)
                     {
                         self.error(format!(
-                            "trait method `{}.{method_name}` parameter `{}` requires `Copy`, but its type is not provably Copy without a trait bound",
+                            "trait method `{}.{method_name}` parameter `{}` requires `copyable`, but its type is not provably copyable without a trait bound",
                             trait_name,
                             parameter.name
                         ));
@@ -2067,7 +2067,7 @@ impl Analyzer {
                     }
                     Sort::String => {
                         self.error(format!(
-                            "`String` parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                            "`string` parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
@@ -3318,7 +3318,7 @@ impl Analyzer {
         if is_drop && self.copy_nominals.contains(&target) {
             let target = self.diagnostic_type_name(&target);
             self.error(format!(
-                "`{target}` cannot implement both `Copy` and `Drop`"
+                "`{target}` cannot implement both `copyable` and `droppable`"
             ));
             return;
         }
@@ -5738,7 +5738,7 @@ impl Analyzer {
     ) {
         if origin.package != PackageId::CORE.0 {
             self.error(
-                "inherent extension for `Ptr` must be declared in the package that defines the type",
+                "inherent extension for `ptr` must be declared in the package that defines the type",
             );
             return;
         }
@@ -5752,7 +5752,7 @@ impl Analyzer {
                     .iter()
                     .any(|parameter| parameter.name == *pointee && parameter.kind == Sort::Type);
                 if !pointee_is_type {
-                    self.error("`Ptr` extension pointee must be determined by a `type` parameter");
+                    self.error("`ptr` extension pointee must be determined by a `type` parameter");
                     return;
                 }
                 if let Some(mutable) = compile_time::access_mutability(access) {
@@ -5769,7 +5769,7 @@ impl Analyzer {
                     (Some(access.clone()), None, pointee.clone())
                 } else {
                     self.error(
-                        "`Ptr` extension access must be `shared`, `mut`, or a declared `access` parameter",
+                        "`ptr` extension access must be `shared`, `mut`, or a declared `access` parameter",
                     );
                     return;
                 }
@@ -5781,14 +5781,14 @@ impl Analyzer {
                     .iter()
                     .any(|parameter| parameter.name == *pointee && parameter.kind == Sort::Type)
                 {
-                    self.error("`Ptr` extension pointee must be determined by a `type` parameter");
+                    self.error("`ptr` extension pointee must be determined by a `type` parameter");
                     return;
                 }
                 (None, Some(false), pointee.clone())
             }
             _ => {
                 self.error(
-                    "generic `Ptr` extend target must be `Ptr(A)(T)`, `Ptr(T)`, or `Ptr(mut)(T)`",
+                    "generic `ptr` extend target must be `ptr(A)(T)`, `ptr(T)`, or `ptr(mut)(T)`",
                 );
                 return;
             }
@@ -5800,13 +5800,13 @@ impl Analyzer {
             .collect::<HashSet<_>>();
         if determined != declared {
             self.error(
-                "every generic `Ptr` extend parameter must be determined by the target type",
+                "every generic `ptr` extend parameter must be determined by the target type",
             );
             return;
         }
         for member in &extension.members {
             let ExtendMember::Function(function) = member else {
-                self.error("generic `Ptr` associated constants are not supported");
+                self.error("generic `ptr` associated constants are not supported");
                 return;
             };
             if !function
@@ -5814,7 +5814,7 @@ impl Analyzer {
                 .first()
                 .is_some_and(|group| group.len() == 1 && group[0].name == "self")
             {
-                self.error("generic `Ptr` extensions currently support methods only");
+                self.error("generic `ptr` extensions currently support methods only");
                 return;
             }
             if let Some(parameter) = function
@@ -5824,7 +5824,7 @@ impl Analyzer {
                 .find(|parameter| declared.contains(&parameter.name))
             {
                 self.error(format!(
-                    "generic `Ptr` method `{}` redeclares outer compile-time parameter `{}`",
+                    "generic `ptr` method `{}` redeclares outer compile-time parameter `{}`",
                     function.name, parameter.name
                 ));
                 return;
@@ -5856,12 +5856,12 @@ impl Analyzer {
     ) {
         if origin.package != PackageId::CORE.0 {
             self.error(
-                "inherent extension for `Slice` must be declared in the package that defines the type",
+                "inherent extension for `slice` must be declared in the package that defines the type",
             );
             return;
         }
         let [Type::Named(element, arguments)] = target_sources.as_slice() else {
-            self.error("generic `Slice` extend target must be `Slice(T)`");
+            self.error("generic `slice` extend target must be `slice(T)`");
             return;
         };
         if !arguments.is_empty()
@@ -5870,18 +5870,18 @@ impl Analyzer {
                 .iter()
                 .any(|parameter| parameter.name == *element && parameter.kind == Sort::Type)
         {
-            self.error("`Slice` extension element must be determined by a `type` parameter");
+            self.error("`slice` extension element must be determined by a `type` parameter");
             return;
         }
         if declared != HashSet::from([element.clone()]) {
             self.error(
-                "every generic `Slice` extend parameter must be determined by the target type",
+                "every generic `slice` extend parameter must be determined by the target type",
             );
             return;
         }
         for member in &extension.members {
             let ExtendMember::Function(function) = member else {
-                self.error("generic `Slice` associated constants are not supported");
+                self.error("generic `slice` associated constants are not supported");
                 return;
             };
             if !function
@@ -5889,7 +5889,7 @@ impl Analyzer {
                 .first()
                 .is_some_and(|group| group.len() == 1 && group[0].name == "self")
             {
-                self.error("generic `Slice` extensions currently support methods only");
+                self.error("generic `slice` extensions currently support methods only");
                 return;
             }
             if let Some(parameter) = function
@@ -5899,7 +5899,7 @@ impl Analyzer {
                 .find(|parameter| declared.contains(&parameter.name))
             {
                 self.error(format!(
-                    "generic `Slice` method `{}` redeclares outer compile-time parameter `{}`",
+                    "generic `slice` method `{}` redeclares outer compile-time parameter `{}`",
                     function.name, parameter.name
                 ));
                 return;
@@ -5928,12 +5928,12 @@ impl Analyzer {
     ) {
         if origin.package != PackageId::CORE.0 {
             self.error(
-                "trait extension for `Slice` must be declared in the package that defines the type or trait",
+                "trait extension for `slice` must be declared in the package that defines the type or trait",
             );
             return;
         }
         let [Type::Named(element, arguments)] = target_sources.as_slice() else {
-            self.error("generic `Slice` trait target must be `Slice(T)`");
+            self.error("generic `slice` trait target must be `slice(T)`");
             return;
         };
         if !arguments.is_empty()
@@ -5942,11 +5942,11 @@ impl Analyzer {
                 .iter()
                 .any(|parameter| parameter.name == *element && parameter.kind == Sort::Type)
         {
-            self.error("`Slice` trait element must be determined by one `type` parameter");
+            self.error("`slice` trait element must be determined by one `type` parameter");
             return;
         }
         let Some(Type::Named(trait_name, trait_arguments)) = extension.trait_ref.as_ref() else {
-            self.error("generic `Slice` extension must reference a named trait");
+            self.error("generic `slice` extension must reference a named trait");
             return;
         };
         let Some(schema) = self.traits.get(trait_name).cloned() else {
@@ -5982,15 +5982,15 @@ impl Analyzer {
         length: crate::ast::USizeConst,
     ) {
         if origin.package != PackageId::CORE.0 {
-            self.error("trait extension for `Array` must be declared in core");
+            self.error("trait extension for `array` must be declared in core");
             return;
         }
         let Type::Named(element_parameter, element_arguments) = element else {
-            self.error("generic `Array` trait target element must be a type parameter");
+            self.error("generic `array` trait target element must be a type parameter");
             return;
         };
         let crate::ast::USizeConst::Parameter(length_parameter) = length else {
-            self.error("generic `Array` trait target length must be a usize parameter");
+            self.error("generic `array` trait target length must be a usize parameter");
             return;
         };
         if !element_arguments.is_empty()
@@ -6002,11 +6002,11 @@ impl Analyzer {
                 parameter.name == length_parameter && parameter.kind == Sort::USize
             })
         {
-            self.error("`Array(T)(L)` trait parameters must be `T: type` and `L: usize`");
+            self.error("`array(T)(L)` trait parameters must be `T: type` and `L: usize`");
             return;
         }
         let Some(Type::Named(trait_name, trait_arguments)) = extension.trait_ref.as_ref() else {
-            self.error("generic `Array` extension must reference a named trait");
+            self.error("generic `array` extension must reference a named trait");
             return;
         };
         let Some(schema) = self.traits.get(trait_name).cloned() else {
@@ -6056,7 +6056,7 @@ impl Analyzer {
         }
         let Some(element_source) = self.source_type_for_ty(element) else {
             self.error(format!(
-                "cannot preserve element type `{element}` while instantiating `Array` traits"
+                "cannot preserve element type `{element}` while instantiating `array` traits"
             ));
             return;
         };
@@ -6103,7 +6103,7 @@ impl Analyzer {
         }
         let Some(pointee_source) = self.source_type_for_ty(pointee) else {
             self.error(format!(
-                "cannot preserve pointee type `{pointee}` while instantiating `Ptr` extensions"
+                "cannot preserve pointee type `{pointee}` while instantiating `ptr` extensions"
             ));
             return Some(owner);
         };
@@ -6180,7 +6180,7 @@ impl Analyzer {
         }
         let Some(element_source) = self.source_type_for_ty(element) else {
             self.error(format!(
-                "cannot preserve element type `{element}` while instantiating `Slice` extensions"
+                "cannot preserve element type `{element}` while instantiating `slice` extensions"
             ));
             return Some(owner);
         };
@@ -6556,16 +6556,6 @@ impl Analyzer {
                         .get("drop")
                         .map(|method| (key.self_ty.clone(), method.clone()))
                 })
-                .collect(),
-            box_pointees: self
-                .nominal_instances
-                .iter()
-                .filter(|(_, instance)| {
-                    instance.key.kind == NominalKind::Struct
-                        && instance.key.template == "alloc::boxed::Box"
-                        && instance.key.arguments.len() == 1
-                })
-                .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
                 .collect(),
             array_types: self.array_types.clone(),
             tuple_types: self.tuple_types.clone(),
@@ -8712,7 +8702,7 @@ impl Analyzer {
                     self.error(format!("type parameter `{name}` cannot be used as a value"));
                     error_expr()
                 } else if name == "self" {
-                    self.error("expression `Self` is only available inside an extend member");
+                    self.error("expression `self` is only available inside an extend member");
                     error_expr()
                 } else if self.globals.contains_key(name) {
                     HirExpr {
@@ -8871,7 +8861,7 @@ impl Analyzer {
                     let pointee = (**pointee).clone();
                     if !self.is_copy_type(&pointee) {
                         self.error(format!(
-                            "raw pointer reads require a Copy pointee in the first version, found `{}`",
+                            "raw pointer reads require a copyable pointee in the first version, found `{}`",
                             self.diagnostic_type_name(&pointee)
                         ));
                         return error_expr();
@@ -9023,19 +9013,19 @@ impl Analyzer {
                     }
                     let Ty::Pointer { pointee, mutable } = &pointer.ty else {
                         self.error(format!(
-                            "raw pointer assignment requires `Ptr(mut)(T)`, found `{}`",
+                            "raw pointer assignment requires `ptr(mut)(T)`, found `{}`",
                             pointer.ty
                         ));
                         return error_expr();
                     };
                     if !*mutable {
-                        self.error("cannot assign through an immutable `Ptr(T)`");
+                        self.error("cannot assign through an immutable `ptr(T)`");
                         return error_expr();
                     }
                     let pointee = (**pointee).clone();
                     if !self.is_copy_type(&pointee) {
                         self.error(format!(
-                            "raw pointer writes require a Copy pointee in the first version, found `{}`",
+                            "raw pointer writes require a copyable pointee in the first version, found `{}`",
                             self.diagnostic_type_name(&pointee)
                         ));
                         return error_expr();
@@ -9099,7 +9089,7 @@ impl Analyzer {
                     && self.projected_place_crosses_custom_drop(&place)
                 {
                     self.error(
-                        "reinitializing a field through a type with custom Drop is not allowed because its destructor requires a complete value",
+                        "reinitializing a field through a type with custom droppable is not allowed because its destructor requires a complete value",
                     );
                 }
                 HirExpr {
@@ -9419,7 +9409,7 @@ impl Analyzer {
                                 && !binding.mutable
                             {
                                 self.error(format!(
-                                    "FnMut partial application `{}` requires a mutable binding (`let mut`)",
+                                    "fn_mut partial application `{}` requires a mutable binding (`let mut`)",
                                     binding.name
                                 ));
                             }
@@ -9427,7 +9417,7 @@ impl Analyzer {
                                 && !binding.mutable
                             {
                                 self.error(format!(
-                                    "FnMut closure `{}` requires a mutable binding (`let mut`)",
+                                    "fn_mut closure `{}` requires a mutable binding (`let mut`)",
                                     binding.name
                                 ));
                             }
@@ -9909,11 +9899,11 @@ impl Analyzer {
                         || name.starts_with("$handler$match$inspect$input$")
                     {
                         self.error(
-                            "an effectful match guard currently requires its match input to implement Copy",
+                            "an effectful match guard currently requires its match input to implement copyable",
                         );
                     } else {
                         self.error(format!(
-                            "closure capture `{name}` must implement Copy for this capture mode"
+                            "closure capture `{name}` must implement copyable for this capture mode"
                         ));
                     }
                     continue;
@@ -9925,7 +9915,7 @@ impl Analyzer {
                     ) && capture_policy != ClosureCapturePolicy::AsyncOwned =>
                 {
                     self.error(format!(
-                        "FnOnce move capture `{name}` must be a nominal root local for now"
+                        "fn_once move capture `{name}` must be a nominal root local for now"
                     ));
                     continue;
                 }
@@ -10266,7 +10256,7 @@ impl Analyzer {
             return error_expr();
         };
         let Ty::Enum(attempt_name) = function.result.as_ref() else {
-            self.error("pattern closure result must be `Attempt(Input)(Output)`");
+            self.error("pattern closure result must be `attempt(input)(output)`");
             return error_expr();
         };
         let attempt_template = self.lang_item_name(LangItemKind::Attempt);
@@ -10281,17 +10271,17 @@ impl Analyzer {
         let Some(layout) = self.enum_layout_or_diagnostic(attempt_name) else {
             return error_expr();
         };
-        let hit = layout.variants.iter().find(|variant| variant.name == "Hit");
+        let hit = layout.variants.iter().find(|variant| variant.name == "hit");
         let miss = layout
             .variants
             .iter()
-            .find(|variant| variant.name == "Miss");
+            .find(|variant| variant.name == "miss");
         let (Some(hit), Some(miss)) = (hit, miss) else {
-            self.error("pattern closure result must provide `Hit(Output)` and `Miss(Input)`");
+            self.error("pattern closure result must provide `hit(output)` and `miss(input)`");
             return error_expr();
         };
         if hit.fields.len() != 1 || miss.fields.len() != 1 || miss.fields[0].ty != *input {
-            self.error("pattern closure result must be `Attempt(Input)(Output)`");
+            self.error("pattern closure result must be `attempt(input)(output)`");
             return error_expr();
         }
 
@@ -10318,12 +10308,12 @@ impl Analyzer {
                 MatchArm {
                     pattern: pattern.clone(),
                     guard: guard.cloned(),
-                    body: variant("Hit", body.clone()),
+                    body: variant("hit", body.clone()),
                 },
                 MatchArm {
                     pattern: Pattern::Binding(missed_input.clone()),
                     guard: None,
-                    body: variant("Miss", Expr::Name(missed_input)),
+                    body: variant("miss", Expr::Name(missed_input)),
                 },
             ],
         };
@@ -10891,7 +10881,7 @@ impl Analyzer {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
         let Expr::Name(function) = root else {
-            self.error("FnOnce capture requires a direct named-function call");
+            self.error("fn_once capture requires a direct named-function call");
             return false;
         };
         if outer.has_type_parameter(function) {
@@ -11005,7 +10995,7 @@ impl Analyzer {
                                 record_closure_capture(captures, name, ClosureCaptureMode::Shared);
                             } else {
                                 self.error(format!(
-                                    "closure call capture `{name}` must match a Copy parameter or a nominal move parameter"
+                                    "closure call capture `{name}` must match a copyable parameter or a nominal move parameter"
                                 ));
                                 valid = false;
                             }
@@ -11570,7 +11560,9 @@ impl Analyzer {
                     .first()
                     .is_some_and(|(key, _)| self.is_drop_impl(key))
                 {
-                    self.error("`Drop.drop` cannot be called directly; destruction is automatic");
+                    self.error(
+                        "`droppable.drop` cannot be called directly; destruction is automatic",
+                    );
                     return error_expr();
                 }
                 if let Some((key, canonical)) = candidates.first() {
@@ -11790,7 +11782,7 @@ impl Analyzer {
                         if !self.is_copy_type(&receiver_parameter.ty) {
                             let ty = self.diagnostic_type_name(&receiver_parameter.ty);
                             self.error(format!(
-                            "receiver for method `{target}.{member}` requires Copy, but `{ty}` does not implement Copy"
+                            "receiver for method `{target}.{member}` requires copyable, but `{ty}` does not implement copyable"
                         ));
                         }
                         HirArgument::Copy(self.access_place(
@@ -11988,7 +11980,7 @@ impl Analyzer {
         };
         let leaves = self.place_leaf_keys(&callable);
         let callable_kind = if closure.is_fn_once {
-            "FnOnce closure"
+            "fn_once closure"
         } else {
             "closure"
         };
@@ -13093,7 +13085,7 @@ impl Analyzer {
         };
         let leaves = self.place_leaf_keys(&callable);
         let callable_kind = if partial.is_fn_once {
-            "FnOnce partial application"
+            "fn_once partial application"
         } else {
             "partial application"
         };
@@ -13360,7 +13352,7 @@ impl Analyzer {
                     if !self.is_copy_type(&parameter.ty) {
                         let ty = self.diagnostic_type_name(&parameter.ty);
                         self.error(format!(
-                            "parameter `{}` requires Copy, but `{}` does not implement Copy",
+                            "parameter `{}` requires copyable, but `{}` does not implement copyable",
                             parameter.name, ty
                         ));
                     }

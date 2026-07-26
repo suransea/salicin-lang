@@ -30,7 +30,7 @@ impl Analyzer {
                         Some((payload, _)) => payload,
                         None => {
                             self.error(
-                                "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
+                                "cannot infer the success type of `try { ... }`; add a contextual `result(e)(t)` type",
                             );
                             return None;
                         }
@@ -40,7 +40,7 @@ impl Analyzer {
                     Some((payload, _)) => payload,
                     None => {
                         self.error(
-                            "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
+                            "cannot infer the success type of `try { ... }`; add a contextual `result(e)(t)` type",
                         );
                         return None;
                     }
@@ -48,7 +48,7 @@ impl Analyzer {
                 Expr::Throw(_) => Ty::Never,
                 _ => {
                     self.error(
-                        "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
+                        "cannot infer the success type of `try { ... }`; add a contextual `result(e)(t)` type",
                     );
                     return None;
                 }
@@ -59,7 +59,7 @@ impl Analyzer {
         let error = match errors.len() {
             0 => {
                 self.error(
-                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `Result(E)(T)` type",
+                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `result(e)(t)` type",
                 );
                 return None;
             }
@@ -71,7 +71,7 @@ impl Analyzer {
                     .collect::<Vec<_>>();
                 names.sort();
                 self.error(format!(
-                    "cannot infer `try {{ ... }}` from multiple escaping error types: {}; convert them to one type or add a contextual `Result(E)(T)` type",
+                    "cannot infer `try {{ ... }}` from multiple escaping error types: {}; convert them to one type or add a contextual `result(e)(t)` type",
                     names
                         .iter()
                         .map(|name| format!("`{name}`"))
@@ -271,13 +271,13 @@ impl Analyzer {
         let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
             let _ = self.lower_expr(body, None, context);
             self.error(format!(
-                "`try {{ ... }}` produces `Result(E)(T)`, but this context expects `{expected}`"
+                "`try {{ ... }}` produces `result(e)(t)`, but this context expects `{expected}`"
             ));
             return error_expr();
         };
         if info.kind != StandardFallibleKind::Result {
             let _ = self.lower_expr(body, None, context);
-            self.error("`try { ... }` requires `Result(E)(T)`, not `Option(T)`");
+            self.error("`try { ... }` requires `result(e)(t)`, not `option(t)`");
             return error_expr();
         }
         let error = info.error.expect("Result has an error type");
@@ -348,7 +348,7 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
-            self.error("internal error: standard Throws try requires a Result expectation");
+            self.error("internal error: standard throws try requires a result expectation");
             return error_expr();
         };
         let Some(error_source) = info
@@ -356,16 +356,16 @@ impl Analyzer {
             .as_ref()
             .and_then(|error| self.source_type_for_ty(error))
         else {
-            self.error("standard Throws try requires a source-level error type");
+            self.error("standard throws try requires a source-level error type");
             return error_expr();
         };
         let Some(payload_source) = info.payload_source.clone() else {
-            self.error("standard Throws try requires a source-level success type");
+            self.error("standard throws try requires a source-level success type");
             return error_expr();
         };
         let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
         let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
-            self.error("compiler core did not register its validated `Throws` effect");
+            self.error("compiler core did not register its validated `throws` effect");
             return error_expr();
         };
         let instance = Type::Named(throws_name, vec![error_source]);
@@ -1035,7 +1035,7 @@ impl Analyzer {
     ) -> HirExpr {
         let Some(active_error) = context.active_throws_error.clone() else {
             self.error(format!(
-                "call requires `Throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
+                "call requires `throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
             ));
             return error_expr();
         };
@@ -1050,11 +1050,11 @@ impl Analyzer {
             return error_expr();
         }
         let Some(info) = self.standard_fallible_info_for_ty(&operand.ty) else {
-            self.error("internal error: throws call does not use a Result ABI");
+            self.error("internal error: throws call does not use a result ABI");
             return error_expr();
         };
         if info.kind != StandardFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
-            self.error("internal error: throws call Result ABI does not match its error effect");
+            self.error("internal error: throws call result ABI does not match its error effect");
             return error_expr();
         }
         const OUTPUT_BINDING: &str = "$throws$output";
@@ -1091,7 +1091,7 @@ impl Analyzer {
             }
             let _ = self.lower_expr(value, None, context);
             self.error(
-                "`throw` requires an enclosing `with(Throws(Error))` function or `try { ... }` handler",
+                "`throw` requires an enclosing `with(throws(Error))` function or `try { ... }` handler",
             );
             return error_expr();
         };
@@ -1104,7 +1104,7 @@ impl Analyzer {
             || boundary.error.as_ref() != Some(&error_ty)
         {
             let _ = self.lower_expr(value, Some(&error_ty), context);
-            self.error("internal error: throws effect does not match its Result ABI");
+            self.error("internal error: throws effect does not match its result ABI");
             return error_expr();
         }
         let error = self.lower_expr(value, Some(&error_ty), context);
@@ -1142,12 +1142,12 @@ impl Analyzer {
                 let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
                 if standard_throws_error_source(&instance, &throws_name).is_none() {
                     self.error(
-                        "compiler core `throw` contract does not target its validated `Throws` effect",
+                        "compiler core `throw` contract does not target its validated `throws` effect",
                     );
                     return Some(error_expr());
                 }
                 let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
-                    self.error("compiler core did not register its validated `Throws` effect");
+                    self.error("compiler core did not register its validated `throws` effect");
                     return Some(error_expr());
                 };
                 let arguments = vec![CallArg {
@@ -1172,7 +1172,7 @@ impl Analyzer {
                     .collect::<Vec<_>>();
                 rendered.sort();
                 self.error(format!(
-                    "`throw` under ordinary `Throws` effects requires exactly one active `Throws(Error)` row; found {}: {}",
+                    "`throw` under ordinary `throws` effects requires exactly one active `throws(Error)` row; found {}: {}",
                     rendered.len(),
                     rendered
                         .iter()

@@ -1951,7 +1951,7 @@ fn validate_defer_support(function: &Function, diagnostics: &mut Vec<String>) {
         && function.body.is_none();
     if !valid {
         diagnostics.push(
-            "compiler-owned support function `defer` must have shape `pub let defer(e: effects)(move action: (): () with(e)): () with(e) = builtin()`"
+            "compiler-owned support function `defer` must have shape `pub let defer(comptime e: effects)(move action: (): () with(e)): () with(e) = builtin()`"
                 .to_owned(),
         );
     }
@@ -2165,7 +2165,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
                 && definition.values.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `continuation` must have shape `pub let continuation(input: type, output: type): type`"
+                    "lang item `continuation` must have shape `pub let continuation(comptime input: type, comptime output: type): type`"
                         .to_owned(),
                 );
             }
@@ -2180,7 +2180,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
                 && definition.values.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `effect_callable` must have shape `pub let effect_callable(input: type, output: type, answer: type): type`"
+                    "lang item `effect_callable` must have shape `pub let effect_callable(comptime input: type, comptime output: type, comptime answer: type): type`"
                         .to_owned(),
                 );
             }
@@ -2291,7 +2291,7 @@ fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mu
         && function.body.is_none();
     if !valid {
         diagnostics.push(format!(
-            "parameter modifier `{name}` must have shape `pub let {name}(p: parameters): parameters`"
+            "parameter modifier `{name}` must have shape `pub let {name}(comptime p: parameters): parameters`"
         ));
     }
 }
@@ -2369,7 +2369,7 @@ fn validate_borrow_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Str
         definition.compile_groups == borrow_compile_groups() && definition.values.is_empty();
     if !valid {
         diagnostics.push(
-            "lang item `borrow` type form must have shape `pub let borrow(a: access = shared)(r: region)(t: type): type`"
+            "lang item `borrow` type form must have shape `pub let borrow(comptime a: access = shared)(comptime r: region)(comptime t: type): type`"
                 .to_owned(),
         );
     }
@@ -2392,7 +2392,7 @@ fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>
         );
     if !valid {
         diagnostics.push(
-            "lang item `borrow` value form must have shape `pub let borrow(a: access = shared)(r: region)(t: type)(value: t): borrow(a)(r)(t)`"
+            "lang item `borrow` value form must have shape `pub let borrow(comptime a: access = shared)(comptime r: region)(comptime t: type)(value: t): borrow(a)(r)(t)`"
                 .to_owned(),
         );
     }
@@ -2403,7 +2403,7 @@ fn validate_pointer_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<St
         definition.compile_groups == pointer_compile_groups() && definition.values.is_empty();
     if !valid {
         diagnostics.push(
-            "lang item `ptr` type form must have shape `pub let ptr(a: access = shared)(t: type): type`"
+            "lang item `ptr` type form must have shape `pub let ptr(comptime a: access = shared)(comptime t: type): type`"
                 .to_owned(),
         );
     }
@@ -2415,7 +2415,7 @@ fn validate_array_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Stri
         && definition.values.is_empty();
     if !valid {
         diagnostics.push(
-            "lang item `array` type form must have shape `pub let array(t: type)(l: usize): type`"
+            "lang item `array` type form must have shape `pub let array(comptime t: type)(comptime l: usize): type`"
                 .to_owned(),
         );
     }
@@ -2426,7 +2426,8 @@ fn validate_slice_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Stri
         && definition.values.is_empty();
     if !valid {
         diagnostics.push(
-            "lang item `slice` type form must have shape `pub let slice(t: type): type`".to_owned(),
+            "lang item `slice` type form must have shape `pub let slice(comptime t: type): type`"
+                .to_owned(),
         );
     }
 }
@@ -2452,7 +2453,7 @@ fn validate_pointer_value_form(function: &Function, diagnostics: &mut Vec<String
         );
     if !valid {
         diagnostics.push(
-            "lang item `ptr` value form must have shape `pub let ptr(a: access = shared)(t: type)(value: borrow(a)(t)): ptr(a)(t)`"
+            "lang item `ptr` value form must have shape `pub let ptr(comptime a: access = shared)(comptime t: type)(value: borrow(a)(t)): ptr(a)(t)`"
                 .to_owned(),
         );
     }
@@ -2468,7 +2469,7 @@ fn validate_layout_query(kind: LangItemKind, function: &Function, diagnostics: &
         && function.body.is_none();
     if !valid {
         diagnostics.push(format!(
-            "lang item `{name}` must have shape `pub let {name}(t: type): u64`"
+            "lang item `{name}` must have shape `pub let {name}(comptime t: type): u64`"
         ));
     }
 }
@@ -2490,7 +2491,7 @@ fn validate_assignment_operator(
         );
     if !valid {
         diagnostics.push(format!(
-            "lang item `{kind}` must have shape `pub let {kind}(rhs: type) = trait {{ let {method}(self: borrow(mut)(self))(rhs: rhs): () }}`"
+            "lang item `{kind}` must have shape `pub let {kind}(comptime rhs: type) = trait {{ let {method}(self: borrow(mut)(self))(rhs: rhs): () }}`"
         ));
     }
 }
@@ -2613,7 +2614,7 @@ fn validate_index(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `index` must have shape `pub let index(key: type) = trait { let output: type; let index(a: access)(self: borrow(a)(self))(key: key): borrow(a)(output) }`"
+            "lang item `index` must have shape `pub let index(comptime key: type) = trait { let output: type; let index(comptime a: access)(self: borrow(a)(self))(key: key): borrow(a)(output) }`"
                 .to_owned(),
         );
     }
@@ -3544,7 +3545,7 @@ fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `handle` must have shape `pub let handle = trait(self: effect) { let clauses(value: type, answer: type): parameters; let handle(value: type, answer: type, rest: effects) ...clauses(value, answer) (move action: (): value with(self, rest)): answer with(rest) }`"
+            "lang item `handle` must have shape `pub let handle = trait(comptime self: effect) { let clauses(comptime value: type, comptime answer: type): parameters; let handle(comptime value: type, comptime answer: type, comptime rest: effects) ...clauses(value, answer) (move action: (): value with(self, rest)): answer with(rest) }`"
                 .to_owned(),
         );
     }
@@ -3633,7 +3634,7 @@ fn validate_option(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `option` must have shape `pub let option(t: type) = enum { some(t), none }`"
+            "lang item `option` must have shape `pub let option(comptime t: type) = enum { some(t), none }`"
                 .to_owned(),
         );
     }
@@ -3647,7 +3648,7 @@ fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `result` must have shape `pub let result(e: type)(t: type) = enum { ok(t), err(e) }`"
+            "lang item `result` must have shape `pub let result(comptime e: type)(comptime t: type) = enum { ok(t), err(e) }`"
                 .to_owned(),
         );
     }
@@ -3664,7 +3665,7 @@ fn validate_attempt(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `attempt` must have shape `pub let attempt(input: type)(output: type) = enum { hit(output), miss(input) }`"
+            "lang item `attempt` must have shape `pub let attempt(comptime input: type)(comptime output: type) = enum { hit(output), miss(input) }`"
                 .to_owned(),
         );
     }
@@ -3700,7 +3701,7 @@ fn validate_poll(definition: &EnumDef, diagnostics: &mut Vec<String>) {
             ]
     {
         diagnostics.push(
-            "lang item `poll` must have shape `pub let poll(t: type) = enum { pending, ready(t) }`"
+            "lang item `poll` must have shape `pub let poll(comptime t: type) = enum { pending, ready(t) }`"
                 .to_owned(),
         );
     }
@@ -4539,44 +4540,47 @@ pub let index(comptime key: type) = trait {
             .iter()
             .any(|diagnostic| diagnostic == "missing lang item `builtin`"));
 
-        for (name, malformed) in [
+        for (module, name, malformed) in [
             (
                 "foreign",
-                EDITION_2026_LIB.replace(
-                    "let foreign(comptime abi: abi): never = builtin()",
-                    "let foreign(): never = builtin()",
+                "foreign",
+                EDITION_2026_FOREIGN.replace(
+                    "pub let foreign(comptime abi: abi): never = builtin()",
+                    "pub let foreign(): never = builtin()",
                 ),
             ),
             (
                 "foreign",
-                EDITION_2026_LIB.replace(
-                    "let foreign(comptime abi: abi): never = builtin()",
-                    "let foreign(comptime abi: abi): () = builtin()",
+                "foreign",
+                EDITION_2026_FOREIGN.replace(
+                    "pub let foreign(comptime abi: abi): never = builtin()",
+                    "pub let foreign(comptime abi: abi): () = builtin()",
                 ),
             ),
             (
+                "lib",
                 "test",
                 EDITION_2026_LIB.replace(
-                    "let test(comptime name: string)(move body: (): bool): () = builtin()",
-                    "let test(move body: (): bool): () = builtin()",
+                    "pub let test(comptime name: string)(move body: (): bool): () = builtin()",
+                    "pub let test(move body: (): bool): () = builtin()",
                 ),
             ),
             (
+                "lib",
                 "test",
                 EDITION_2026_LIB.replace(
-                    "let test(comptime name: string)(move body: (): bool): () = builtin()",
-                    "let test(comptime name: string)(move body: (): i32): () = builtin()",
+                    "pub let test(comptime name: string)(move body: (): bool): () = builtin()",
+                    "pub let test(comptime name: string)(move body: (): i32): () = builtin()",
                 ),
             ),
         ] {
-            let modules = edition_2026_test_modules(&[("lib", &malformed)]);
+            let modules = edition_2026_test_modules(&[(module, &malformed)]);
             let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
             assert!(
                 error
                     .diagnostics()
                     .iter()
-                    .any(|diagnostic| diagnostic
-                        .contains(&format!("private syntax lang item `{name}`"))),
+                    .any(|diagnostic| diagnostic.contains(&format!("syntax lang item `{name}`"))),
                 "{:?}",
                 error.diagnostics()
             );
@@ -4790,15 +4794,15 @@ pub let index(comptime key: type) = trait {
             (
                 "continue",
                 EDITION_2026_CONTROL.replace(
-                    "pub let continue(): never with(continue)",
-                    "pub let continue(): () with(continue)",
+                    "pub let continue(): never with(continue_effect)",
+                    "pub let continue(): () with(continue_effect)",
                 ),
             ),
             (
                 "return",
                 EDITION_2026_CONTROL.replace(
-                    "(move value: t): never with(return(t))",
-                    "(value: t): never with(return(t))",
+                    "(move value: t): never with(return_effect(t))",
+                    "(value: t): never with(return_effect(t))",
                 ),
             ),
             (
@@ -5256,13 +5260,13 @@ pub let droppable = trait {
                 "lang item `result` must be enum, found struct",
                 "lang item `never` must have shape `pub let never = enum {}`",
                 "lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`",
-                "lang item `add` must have shape `pub let add(rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`",
+                "lang item `add` must have shape `pub let add(comptime rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`",
                 "missing lang item `index`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `option` must be `pub`, found private visibility\n- unexpected declaration `extra` at item 7\n- lang item `result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`\n- lang item `add` must have shape `pub let add(rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`\n- missing lang item `index`"
+            "invalid embedded core bundle for edition 2026\n- lang item `option` must be `pub`, found private visibility\n- unexpected declaration `extra` at item 7\n- lang item `result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`\n- lang item `add` must have shape `pub let add(comptime rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`\n- missing lang item `index`"
         );
     }
 
@@ -5370,9 +5374,8 @@ pub let shr(comptime rhs: type) = trait {
             "pub let movable = trait { let item: type }",
             "pub let movable = trait where self: copyable {}",
         ] {
-            let source =
-                core_source_with_copy("pub let copyable = trait\nwhere comptime self: movable {}")
-                    .replacen("pub let movable = trait {}", malformed, 1);
+            let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
+                .replacen("pub let movable = trait {}", malformed, 1);
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
@@ -5399,13 +5402,12 @@ pub let shr(comptime rhs: type) = trait {
         ];
 
         for declaration in malformed_declarations {
-            let source =
-                core_source_with_copy("pub let copyable = trait\nwhere comptime self: movable {}")
-                    .replacen(
-                        "pub let droppable = trait {\n  let drop(self: borrow(mut)(self))(): ()\n}",
-                        declaration,
-                        1,
-                    );
+            let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
+                .replacen(
+                    "pub let droppable = trait {\n  let drop(self: borrow(mut)(self))(): ()\n}",
+                    declaration,
+                    1,
+                );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
@@ -5491,12 +5493,12 @@ pub let index(comptime key: type) = trait {
         assert_eq!(
             error.diagnostics(),
             [
-                "lang item `sub` must have shape `pub let sub(rhs: type) = trait { let output: type; let sub(self)(rhs: rhs): output }`",
-                "lang item `mul` must have shape `pub let mul(rhs: type) = trait { let output: type; let mul(self)(rhs: rhs): output }`",
-                "lang item `div` must have shape `pub let div(rhs: type) = trait { let output: type; let div(self)(rhs: rhs): output }`",
-                "lang item `rem` must have shape `pub let rem(rhs: type) = trait { let output: type; let rem(self)(rhs: rhs): output }`",
-                "lang item `eq` must have shape `pub let eq(rhs: type) = trait { let eq(self: borrow(self))(rhs: borrow(rhs)): bool }`",
-                "lang item `partial_ord` must have shape `pub let partial_ord(rhs: type) = trait { let partial_cmp(self: borrow(self))(rhs: borrow(rhs)): partial_ordering }`",
+                "lang item `sub` must have shape `pub let sub(comptime rhs: type) = trait { let output: type; let sub(self)(rhs: rhs): output }`",
+                "lang item `mul` must have shape `pub let mul(comptime rhs: type) = trait { let output: type; let mul(self)(rhs: rhs): output }`",
+                "lang item `div` must have shape `pub let div(comptime rhs: type) = trait { let output: type; let div(self)(rhs: rhs): output }`",
+                "lang item `rem` must have shape `pub let rem(comptime rhs: type) = trait { let output: type; let rem(self)(rhs: rhs): output }`",
+                "lang item `eq` must have shape `pub let eq(comptime rhs: type) = trait { let eq(self: borrow(self))(rhs: borrow(rhs)): bool }`",
+                "lang item `partial_ord` must have shape `pub let partial_ord(comptime rhs: type) = trait { let partial_cmp(self: borrow(self))(rhs: borrow(rhs)): partial_ordering }`",
             ]
         );
     }
@@ -5508,13 +5510,12 @@ pub let index(comptime key: type) = trait {
             "pub let partial_ordering = enum { less, equal, greater }",
             "pub let partial_ordering = enum { less, equal, greater, unknown }",
         ] {
-            let source =
-                core_source_with_copy("pub let copyable = trait\nwhere comptime self: movable {}")
-                    .replacen(
-                        "pub let partial_ordering = enum { less, equal, greater, unordered }",
-                        declaration,
-                        1,
-                    );
+            let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
+                .replacen(
+                    "pub let partial_ordering = enum { less, equal, greater, unordered }",
+                    declaration,
+                    1,
+                );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
@@ -5539,7 +5540,7 @@ pub let index(comptime key: type) = trait {
             ),
         ] {
             let source =
-                core_source_with_copy("pub let copyable = trait\nwhere comptime self: movable {}").replacen(
+                core_source_with_copy("pub let copyable = trait\nwhere self: movable {}").replacen(
                 original,
                 malformed,
                 1,
@@ -5555,16 +5556,16 @@ pub let index(comptime key: type) = trait {
             (
                 "pub let bit_and(comptime rhs: type) = trait {\n  let output: type\n  let bit_and(self)(rhs: rhs): output\n}",
                 "pub let bit_and = trait { let bit_and(self: borrow(self))(move rhs: i32): i32 }",
-                "lang item `bit_and` must have shape `pub let bit_and(rhs: type) = trait { let output: type; let bit_and(self)(rhs: rhs): output }`",
+                "lang item `bit_and` must have shape `pub let bit_and(comptime rhs: type) = trait { let output: type; let bit_and(self)(rhs: rhs): output }`",
             ),
             (
                 "pub let shr(comptime rhs: type) = trait {\n  let output: type\n  let shr(self)(rhs: rhs): output\n}",
                 "pub let shr(comptime rhs: type) = trait { let output: type; let shift(move self)(rhs: rhs): output }",
-                "lang item `shr` must have shape `pub let shr(rhs: type) = trait { let output: type; let shr(self)(rhs: rhs): output }`",
+                "lang item `shr` must have shape `pub let shr(comptime rhs: type) = trait { let output: type; let shr(self)(rhs: rhs): output }`",
             ),
         ] {
             let source =
-                core_source_with_copy("pub let copyable = trait\nwhere comptime self: movable {}").replacen(
+                core_source_with_copy("pub let copyable = trait\nwhere self: movable {}").replacen(
                 original,
                 malformed,
                 1,

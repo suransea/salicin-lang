@@ -24,7 +24,7 @@ impl Analyzer {
         ) {
             Ok(Scalar::USize(value)) => Some(value),
             Ok(Scalar::Bool(_)) => {
-                self.error("compile-time array length evaluated to `Bool`, expected `usize`");
+                self.error("compile-time array length evaluated to `bool`, expected `usize`");
                 None
             }
             Err(message) => {
@@ -91,7 +91,7 @@ impl Analyzer {
         let call = (name.to_owned(), arguments.to_vec());
         if active_calls.contains(&call) {
             return Err(format!(
-                "recursive CTFE call `{name}` repeated with the same arguments"
+                "recursive ctfe call `{name}` repeated with the same arguments"
             ));
         }
         let function = self
@@ -129,31 +129,31 @@ impl Analyzer {
     ) -> Result<(), String> {
         if function.foreign.is_some() || function.builtin || function.body.is_none() {
             return Err(format!(
-                "function `{}` has no source body available to CTFE",
+                "function `{}` has no source body available to ctfe",
                 function.name
             ));
         }
         if !function.compile_groups.is_empty() {
             return Err(format!(
-                "generic CTFE function `{}` is not supported yet",
+                "generic ctfe function `{}` is not supported yet",
                 function.name
             ));
         }
         if function.groups.len() != 1 || function.groups[0].len() != arguments.len() {
             return Err(format!(
-                "CTFE function `{}` must have one fully-applied parameter group",
+                "ctfe function `{}` must have one fully-applied parameter group",
                 function.name
             ));
         }
         if function.effects != Default::default() {
             return Err(format!(
-                "effectful function `{}` cannot run during CTFE",
+                "effectful function `{}` cannot run during ctfe",
                 function.name
             ));
         }
         if !function.where_predicates.is_empty() {
             return Err(format!(
-                "constrained function `{}` cannot run during CTFE yet",
+                "constrained function `{}` cannot run during ctfe yet",
                 function.name
             ));
         }
@@ -163,7 +163,7 @@ impl Analyzer {
                 PassMode::Inferred | PassMode::Copy | PassMode::Move
             ) {
                 return Err(format!(
-                    "CTFE parameter `{}.{}` cannot borrow runtime storage",
+                    "ctfe parameter `{}.{}` cannot borrow runtime storage",
                     function.name, parameter.name
                 ));
             }
@@ -173,14 +173,14 @@ impl Analyzer {
             );
             if !compatible {
                 return Err(format!(
-                    "CTFE argument for `{}.{}` does not match its `usize`/`Bool` parameter type",
+                    "ctfe argument for `{}.{}` does not match its `usize`/`bool` parameter type",
                     function.name, parameter.name
                 ));
             }
         }
         if !matches!(function.return_type, Some(Type::USize | Type::Bool)) {
             return Err(format!(
-                "CTFE function `{}` must explicitly return `usize` or `Bool`",
+                "ctfe function `{}` must explicitly return `usize` or `bool`",
                 function.name
             ));
         }
@@ -203,7 +203,7 @@ impl Analyzer {
             Expr::Name(name) => locals
                 .get(name)
                 .copied()
-                .ok_or_else(|| format!("unknown local `{name}` in CTFE function")),
+                .ok_or_else(|| format!("unknown local `{name}` in ctfe function")),
             Expr::Unary(operator, operand) => {
                 let operand = self.evaluate_static_body(operand, locals, fuel, active_calls)?;
                 Self::evaluate_static_unary(*operator, operand)
@@ -221,10 +221,10 @@ impl Analyzer {
             }
             Expr::Call(callee, arguments) => {
                 let Expr::Name(function) = callee.unlocated() else {
-                    return Err("CTFE calls must name a top-level function".to_owned());
+                    return Err("ctfe calls must name a top-level function".to_owned());
                 };
                 if arguments.iter().any(|argument| argument.label.is_some()) {
-                    return Err("labeled CTFE calls are not supported yet".to_owned());
+                    return Err("labeled ctfe calls are not supported yet".to_owned());
                 }
                 let arguments = arguments
                     .iter()
@@ -248,7 +248,7 @@ impl Analyzer {
                             block_locals.insert(binding.name.clone(), value);
                         }
                         Stmt::Let(_) => {
-                            return Err("mutable bindings are not permitted during CTFE".to_owned());
+                            return Err("mutable bindings are not permitted during ctfe".to_owned());
                         }
                         Stmt::Expr(expression) => {
                             self.evaluate_static_body(
@@ -262,7 +262,7 @@ impl Analyzer {
                 }
                 let tail = tail
                     .as_deref()
-                    .ok_or_else(|| "CTFE block must produce a value".to_owned())?;
+                    .ok_or_else(|| "ctfe block must produce a value".to_owned())?;
                 self.evaluate_static_body(tail, &mut block_locals, fuel, active_calls)
             }
             Expr::If {
@@ -273,14 +273,14 @@ impl Analyzer {
                 let Scalar::Bool(condition) =
                     self.evaluate_static_body(condition, locals, fuel, active_calls)?
                 else {
-                    return Err("CTFE `if` condition must be `Bool`".to_owned());
+                    return Err("ctfe `if` condition must be `bool`".to_owned());
                 };
                 if condition {
                     self.evaluate_static_body(then_branch, locals, fuel, active_calls)
                 } else {
                     let branch = else_branch
                         .as_deref()
-                        .ok_or_else(|| "value-producing CTFE `if` requires `else`".to_owned())?;
+                        .ok_or_else(|| "value-producing ctfe `if` requires `else`".to_owned())?;
                     self.evaluate_static_body(branch, locals, fuel, active_calls)
                 }
             }
@@ -299,7 +299,7 @@ impl Analyzer {
                             active_calls,
                         )?
                         else {
-                            return Err("CTFE match guard must be `Bool`".to_owned());
+                            return Err("ctfe match guard must be `bool`".to_owned());
                         };
                         if !guard {
                             continue;
@@ -312,10 +312,10 @@ impl Analyzer {
                         active_calls,
                     );
                 }
-                Err("non-exhaustive match during CTFE".to_owned())
+                Err("non-exhaustive match during ctfe".to_owned())
             }
             _ => Err(
-                "expression is not in the pure CTFE subset (no mutation, borrowing, loops, handlers, or closures)"
+                "expression is not in the pure ctfe subset (no mutation, borrowing, loops, handlers, or closures)"
                     .to_owned(),
             ),
         }
@@ -341,7 +341,7 @@ impl Analyzer {
             | (Pattern::Bool(_), Scalar::USize(_))
             | (Pattern::Tuple(_), _)
             | (Pattern::Constructor { .. }, _) => {
-                Err("pattern is outside the `usize`/`Bool` CTFE subset".to_owned())
+                Err("pattern is outside the `usize`/`bool` ctfe subset".to_owned())
             }
         }
     }
@@ -352,8 +352,8 @@ impl Analyzer {
             (UnaryOp::Neg, Scalar::USize(_)) => {
                 Err("negation cannot produce a compile-time `usize`".to_owned())
             }
-            (UnaryOp::Deref, _) => Err("dereference is not permitted during CTFE".to_owned()),
-            _ => Err("invalid unary operand during CTFE".to_owned()),
+            (UnaryOp::Deref, _) => Err("dereference is not permitted during ctfe".to_owned()),
+            _ => Err("invalid unary operand during ctfe".to_owned()),
         }
     }
 
@@ -366,17 +366,17 @@ impl Analyzer {
             (Scalar::USize(left), BinaryOp::Add, Scalar::USize(right)) => left
                 .checked_add(right)
                 .map(Scalar::USize)
-                .ok_or_else(|| "`usize` overflow in CTFE addition".to_owned()),
+                .ok_or_else(|| "`usize` overflow in ctfe addition".to_owned()),
             (Scalar::USize(left), BinaryOp::Sub, Scalar::USize(right)) => left
                 .checked_sub(right)
                 .map(Scalar::USize)
-                .ok_or_else(|| "`usize` underflow in CTFE subtraction".to_owned()),
+                .ok_or_else(|| "`usize` underflow in ctfe subtraction".to_owned()),
             (Scalar::USize(left), BinaryOp::Mul, Scalar::USize(right)) => left
                 .checked_mul(right)
                 .map(Scalar::USize)
-                .ok_or_else(|| "`usize` overflow in CTFE multiplication".to_owned()),
+                .ok_or_else(|| "`usize` overflow in ctfe multiplication".to_owned()),
             (Scalar::USize(_), BinaryOp::Div | BinaryOp::Rem, Scalar::USize(0)) => {
-                Err("division by zero during CTFE".to_owned())
+                Err("division by zero during ctfe".to_owned())
             }
             (Scalar::USize(left), BinaryOp::Div, Scalar::USize(right)) => {
                 Ok(Scalar::USize(left / right))
@@ -397,12 +397,12 @@ impl Analyzer {
                 .ok()
                 .and_then(|right| left.checked_shl(right))
                 .map(Scalar::USize)
-                .ok_or_else(|| "invalid left shift during CTFE".to_owned()),
+                .ok_or_else(|| "invalid left shift during ctfe".to_owned()),
             (Scalar::USize(left), BinaryOp::Shr, Scalar::USize(right)) => u32::try_from(right)
                 .ok()
                 .and_then(|right| left.checked_shr(right))
                 .map(Scalar::USize)
-                .ok_or_else(|| "invalid right shift during CTFE".to_owned()),
+                .ok_or_else(|| "invalid right shift during ctfe".to_owned()),
             (Scalar::USize(left), BinaryOp::Eq, Scalar::USize(right)) => {
                 Ok(Scalar::Bool(left == right))
             }
@@ -433,7 +433,7 @@ impl Analyzer {
             (Scalar::Bool(left), BinaryOp::Or, Scalar::Bool(right)) => {
                 Ok(Scalar::Bool(left || right))
             }
-            _ => Err("invalid operand sorts in CTFE expression".to_owned()),
+            _ => Err("invalid operand sorts in ctfe expression".to_owned()),
         }
     }
 

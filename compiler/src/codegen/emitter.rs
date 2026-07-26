@@ -714,9 +714,6 @@ impl<'a> Emitter<'a> {
             }
             Ty::Array(element, _) => self.collect_drop_glue_type(element, types),
             Ty::Struct(name) => {
-                if let Some(pointee) = self.program.box_pointee(name) {
-                    self.collect_drop_glue_type(pointee, types);
-                }
                 if let Some(layout) = self.program.struct_layout(name) {
                     for field in &layout.fields {
                         self.collect_drop_glue_type(&field.ty, types);
@@ -770,26 +767,6 @@ impl<'a> Emitter<'a> {
                 "  call void @{}(ptr %value)\n",
                 self.program.function_symbol(method)
             ));
-        }
-        if let Ty::Struct(name) = ty {
-            if let Some(pointee) = self.program.box_pointee(name) {
-                let aggregate_ty = llvm_value_type(ty)?;
-                output.push_str(&format!(
-                    "  %pointer.addr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %pointer = load ptr, ptr %pointer.addr\n"
-                ));
-                if self.program.needs_drop(pointee) {
-                    output.push_str(&format!(
-                        "  call void @{}(ptr %pointer)\n",
-                        drop_glue_symbol(pointee)
-                    ));
-                }
-                output.push_str(&format!(
-                    "  call void @salicin_dealloc(ptr %pointer, i64 {}, i64 {})\n  ret void\n}}\n",
-                    llvm_layout_const(pointee, LayoutQueryKind::Size)?,
-                    llvm_layout_const(pointee, LayoutQueryKind::Align)?
-                ));
-                return Ok(output);
-            }
         }
         match ty {
             Ty::Tuple(fields) => {
@@ -3823,7 +3800,7 @@ impl<'a> FunctionEmitter<'a> {
         }
         if self.program.drop_methods.contains_key(ty) {
             return Err(Diagnostic::new(format!(
-                "internal error: match split custom Drop type `{ty}`"
+                "internal error: match split custom droppable type `{ty}`"
             )));
         }
         if let Ty::Tuple(fields) = ty {
@@ -4469,7 +4446,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         )),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
         Ty::Slice(_) => Err(Diagnostic::new(
-            "internal error: unsized `Slice` has no first-class LLVM representation",
+            "internal error: unsized `slice` has no first-class LLVM representation",
         )),
         Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_)) => {
             Ok("{ ptr, i64 }".to_owned())

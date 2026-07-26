@@ -202,7 +202,7 @@ impl Analyzer {
                     self.require_same_type(&index_local.ty, &Ty::I32, "array index");
                     if !self.is_copy_type(&element) {
                         self.error(format!(
-                            "dynamic indexed borrows require Copy elements, found `{}`",
+                            "dynamic indexed borrows require copyable elements, found `{}`",
                             self.diagnostic_type_name(&element)
                         ));
                         return None;
@@ -270,7 +270,7 @@ impl Analyzer {
                 if !self.is_copy_type(&place.ty) {
                     let ty = self.diagnostic_type_name(&place.ty);
                     self.error(format!(
-                        "type `{ty}` does not implement Copy and cannot be copied"
+                        "type `{ty}` does not implement copyable and cannot be copied"
                     ));
                 }
                 HirExpr {
@@ -285,18 +285,18 @@ impl Analyzer {
                 if !self.is_move_type(&place.ty) {
                     let ty = self.diagnostic_type_name(&place.ty);
                     self.error(format!(
-                        "type `{ty}` does not implement Move and cannot be relocated"
+                        "type `{ty}` does not implement movable and cannot be relocated"
                     ));
                 } else if place.capability != LocalCapability::Owned {
                     self.error("cannot move out of a borrowed value");
                 } else if self.projected_place_crosses_custom_drop(&place) {
                     self.error(
-                        "moving a field out through a type with custom Drop is not allowed because its destructor requires a complete value",
+                        "moving a field out through a type with custom droppable is not allowed because its destructor requires a complete value",
                     );
                 } else if context.guard_move_restricted.contains(&place.local)
                     && !self.is_copy_type(&place.ty)
                 {
-                    self.error("cannot move a non-Copy pattern binding in a match guard");
+                    self.error("cannot move a non-copyable pattern binding in a match guard");
                 } else {
                     self.mark_moved(&place, context);
                 }

@@ -4,7 +4,6 @@ use crate::ast::PassMode;
 use crate::core::LangItemKind;
 
 use super::hir::{HirPlace, Ty};
-use super::registry::NominalKind;
 use super::Analyzer;
 
 impl Analyzer {
@@ -172,15 +171,6 @@ impl Analyzer {
         result
     }
 
-    fn box_pointee_type(&self, name: &str) -> Option<&Ty> {
-        self.nominal_instances.get(name).and_then(|instance| {
-            (instance.key.kind == NominalKind::Struct
-                && instance.key.template == "alloc::boxed::Box"
-                && instance.key.arguments.len() == 1)
-                .then(|| &instance.key.arguments[0])
-        })
-    }
-
     pub(super) fn type_needs_drop(&self, ty: &Ty) -> bool {
         self.type_needs_drop_inner(ty, &mut HashSet::new())
     }
@@ -201,15 +191,12 @@ impl Analyzer {
                     .iter()
                     .any(|field| self.type_needs_drop_inner(field, visiting)),
                 Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => false,
-                Ty::Struct(name) => {
-                    self.box_pointee_type(name).is_some()
-                        || self.struct_layouts.get(name).is_some_and(|layout| {
-                            layout
-                                .fields
-                                .iter()
-                                .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
-                        })
-                }
+                Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
+                    layout
+                        .fields
+                        .iter()
+                        .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
+                }),
                 Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
                     layout.variants.iter().any(|variant| {
                         variant

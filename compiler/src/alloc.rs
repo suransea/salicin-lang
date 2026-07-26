@@ -149,12 +149,12 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = Vec::new();
-    if program.items.len() != 48
-        || program.item_visibilities.len() != 48
-        || program.item_origins.len() != 48
+    if program.items.len() != 50
+        || program.item_visibilities.len() != 50
+        || program.item_origins.len() != 50
     {
         diagnostics
-            .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
+            .push("embedded alloc must contain the fixed box and vec bootstrap schema".to_owned());
     } else {
         let visibilities_are_valid =
             program
@@ -162,7 +162,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 10 | 37 | 43 | 44) {
+                    let expected = if matches!(index, 0 | 12 | 39 | 45 | 46) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -175,47 +175,48 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[0] {
             Item::Struct(definition) if valid_box(definition) => {}
             _ => diagnostics.push(
-                "alloc Box must have shape `pub let Box(T: type) = struct { pointer: Ptr(mut)(T) }`"
+                "alloc box must have shape `pub let box(T: type) = struct { pointer: ptr(mut)(t) }`"
                     .to_owned(),
             ),
         }
         match &program.items[1] {
             Item::Function(function) if valid_box_new(function) => {}
             _ => diagnostics.push(
-                "alloc box_new must be a generic owning constructor `(value: T): Box(T)`"
+                "alloc box_new must be a generic owning constructor `(value: T): box(t)`"
                     .to_owned(),
             ),
         }
         match &program.items[2] {
             Item::Function(function) if valid_box_into_raw(function) => {}
             _ => diagnostics.push(
-                "alloc box_into_raw must consume `Box(T)` and return its owned `Ptr(mut)(T)`"
+                "alloc box_into_raw must consume `box(t)` and return its owned `ptr(mut)(t)`"
                     .to_owned(),
             ),
         }
         match &program.items[3] {
             Item::Function(function) if valid_box_read(function) => {}
             _ => diagnostics.push(
-                "alloc box_read must borrow `Box(T)`, require `T: Copy`, and return `T`".to_owned(),
+                "alloc box_read must borrow `box(t)`, require `t: copyable`, and return `t`"
+                    .to_owned(),
             ),
         }
         match &program.items[4] {
             Item::Function(function) if valid_box_write(function) => {}
             _ => diagnostics.push(
-                "alloc box_write must mutably borrow `Box(T)`, copy a `T`, require `T: Copy`, and return unit"
+                "alloc box_write must mutably borrow `box(t)`, copy a `t`, require `t: copyable`, and return unit"
                     .to_owned(),
             ),
         }
         match &program.items[5] {
             Item::Function(function) if valid_box_into_inner(function) => {}
             _ => diagnostics.push(
-                "alloc box_into_inner must consume `Box(T)` and return its owned `T`".to_owned(),
+                "alloc box_into_inner must consume `box(t)` and return its owned `t`".to_owned(),
             ),
         }
         match &program.items[6] {
             Item::Function(function) if valid_box_replace(function) => {}
             _ => diagnostics.push(
-                "alloc box_replace must mutably borrow `Box(T)`, consume a replacement `T`, and return the old `T`"
+                "alloc box_replace must mutably borrow `box(t)`, consume a replacement `t`, and return the old `t`"
                     .to_owned(),
             ),
         }
@@ -226,174 +227,184 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[8] {
             Item::Extend(extension) if valid_box_extension(extension) => {}
             _ => diagnostics.push(
-                "alloc Box extension must provide new, from_raw, reference access, into_inner, into_raw, and replace"
+                "alloc box extension must provide new, from_raw, reference access, into_inner, into_raw, and replace"
                     .to_owned(),
             ),
         }
         match &program.items[9] {
             Item::Extend(extension) if valid_copy_box_extension(extension) => {}
             _ => diagnostics.push(
-                "alloc Copy Box extension must provide `read` and `write` under a `T: Copy` constraint"
+                "alloc copyable box extension must provide `read` and `write` under a `t: copyable` constraint"
                     .to_owned(),
             ),
         }
         match &program.items[10] {
-            Item::Struct(definition) if valid_vec(definition) => {}
-            _ => diagnostics.push(
-                "alloc Vec must have private pointer, length, and capacity fields".to_owned(),
-            ),
+            Item::Function(function) if function.name == "box_deallocate" => {}
+            _ => diagnostics.push("alloc box_deallocate helper is missing".to_owned()),
         }
         match &program.items[11] {
+            Item::Extend(extension) if valid_box_drop_extension(extension) => {}
+            _ => diagnostics.push(
+                "alloc box droppable extension must release its owned value and allocation"
+                    .to_owned(),
+            ),
+        }
+        match &program.items[12] {
+            Item::Struct(definition) if valid_vec(definition) => {}
+            _ => diagnostics.push(
+                "alloc vec must have private pointer, length, and capacity fields".to_owned(),
+            ),
+        }
+        match &program.items[13] {
             Item::Function(function) if valid_vec_layout_size(function) => {}
             _ => diagnostics.push("alloc vec_layout_size has an invalid signature".to_owned()),
         }
-        match &program.items[12] {
+        match &program.items[14] {
             Item::Function(function) if valid_vec_allocate(function) => {}
             _ => diagnostics.push("alloc vec_allocate has an invalid signature".to_owned()),
         }
-        match &program.items[13] {
+        match &program.items[15] {
             Item::Function(function) if valid_vec_deallocate(function) => {}
             _ => diagnostics.push("alloc vec_deallocate has an invalid signature".to_owned()),
         }
-        match &program.items[14] {
+        match &program.items[16] {
             Item::Function(function) if valid_vec_new(function) => {}
             _ => diagnostics.push("alloc vec_new has an invalid signature".to_owned()),
         }
-        match &program.items[15] {
+        match &program.items[17] {
             Item::Function(function) if valid_vec_with_capacity(function) => {}
             _ => diagnostics.push("alloc vec_with_capacity has an invalid signature".to_owned()),
         }
-        match &program.items[16] {
+        match &program.items[18] {
             Item::Function(function) if valid_vec_len_or_capacity(function, "vec_len") => {}
             _ => diagnostics.push("alloc vec_len has an invalid signature".to_owned()),
         }
-        match &program.items[17] {
+        match &program.items[19] {
             Item::Function(function) if valid_vec_len_or_capacity(function, "vec_capacity") => {}
             _ => diagnostics.push("alloc vec_capacity has an invalid signature".to_owned()),
         }
-        match &program.items[18] {
+        match &program.items[20] {
             Item::Function(function) if valid_vec_at(function) => {}
             _ => diagnostics.push("alloc vec_at has an invalid signature".to_owned()),
         }
-        match &program.items[19] {
+        match &program.items[21] {
             Item::Function(function) if valid_vec_reserve(function) => {}
             _ => diagnostics.push("alloc vec_reserve has an invalid signature".to_owned()),
         }
-        match &program.items[20] {
+        match &program.items[22] {
             Item::Function(function) if valid_vec_push(function) => {}
             _ => diagnostics.push("alloc vec_push has an invalid signature".to_owned()),
         }
-        match &program.items[21] {
+        match &program.items[23] {
             Item::Function(function) if valid_vec_replace(function) => {}
             _ => diagnostics.push("alloc vec_replace has an invalid signature".to_owned()),
         }
-        match &program.items[22] {
+        match &program.items[24] {
             Item::Function(function) if valid_vec_pop(function) => {}
             _ => diagnostics.push("alloc vec_pop has an invalid signature".to_owned()),
         }
-        match &program.items[23] {
+        match &program.items[25] {
             Item::Function(function) if valid_vec_truncate(function) => {}
             _ => diagnostics.push("alloc vec_truncate has an invalid signature".to_owned()),
         }
-        match &program.items[24] {
+        match &program.items[26] {
             Item::Function(function) if valid_vec_clear(function) => {}
             _ => diagnostics.push("alloc vec_clear has an invalid signature".to_owned()),
         }
-        match &program.items[25] {
+        match &program.items[27] {
             Item::Function(function) if valid_vec_is_empty(function) => {}
             _ => diagnostics.push("alloc vec_is_empty has an invalid signature".to_owned()),
         }
-        match &program.items[26] {
+        match &program.items[28] {
             Item::Function(function) if valid_vec_swap_remove(function) => {}
             _ => diagnostics.push("alloc vec_swap_remove has an invalid signature".to_owned()),
         }
-        match &program.items[27] {
+        match &program.items[29] {
             Item::Function(function) if valid_vec_swap(function) => {}
             _ => diagnostics.push("alloc vec_swap has an invalid signature".to_owned()),
         }
-        match &program.items[28] {
+        match &program.items[30] {
             Item::Function(function) if valid_vec_reverse(function) => {}
             _ => diagnostics.push("alloc vec_reverse has an invalid signature".to_owned()),
         }
-        match &program.items[29] {
+        match &program.items[31] {
             Item::Function(function) if valid_vec_insert(function) => {}
             _ => diagnostics.push("alloc vec_insert has an invalid signature".to_owned()),
         }
-        match &program.items[30] {
+        match &program.items[32] {
             Item::Function(function) if valid_vec_remove(function) => {}
             _ => diagnostics.push("alloc vec_remove has an invalid signature".to_owned()),
         }
-        match &program.items[31] {
+        match &program.items[33] {
             Item::Function(function) if valid_vec_append(function) => {}
             _ => diagnostics.push("alloc vec_append has an invalid signature".to_owned()),
         }
-        match &program.items[32] {
+        match &program.items[34] {
             Item::Function(function) if valid_vec_shrink_to_fit(function) => {}
             _ => diagnostics.push("alloc vec_shrink_to_fit has an invalid signature".to_owned()),
         }
-        match &program.items[33] {
+        match &program.items[35] {
             Item::Function(function) if valid_vec_read(function) => {}
             _ => diagnostics.push("alloc vec_read has an invalid signature".to_owned()),
         }
-        match &program.items[34] {
+        match &program.items[36] {
             Item::Function(function) if valid_vec_write(function) => {}
             _ => diagnostics.push("alloc vec_write has an invalid signature".to_owned()),
         }
-        match &program.items[35] {
-            Item::Extend(extension) if valid_vec_extension(extension) => {}
-            _ => diagnostics.push("alloc Vec extension has an invalid shape".to_owned()),
-        }
-        match &program.items[36] {
-            Item::Extend(extension) if valid_copy_vec_extension(extension) => {}
-            _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
-        }
         match &program.items[37] {
-            Item::Struct(definition) if valid_vec_into_iter(definition) => {}
-            _ => diagnostics.push("alloc VecIntoIter has an invalid shape".to_owned()),
+            Item::Extend(extension) if valid_vec_extension(extension) => {}
+            _ => diagnostics.push("alloc vec extension has an invalid shape".to_owned()),
         }
         match &program.items[38] {
-            Item::Extend(extension) if valid_vec_index_extension(extension) => {}
-            _ => diagnostics.push("alloc Vec Index extension has an invalid shape".to_owned()),
+            Item::Extend(extension) if valid_copy_vec_extension(extension) => {}
+            _ => diagnostics.push("alloc copyable vec extension has an invalid shape".to_owned()),
         }
         match &program.items[39] {
-            Item::Extend(extension) if valid_vec_iterator_extension(extension) => {}
-            _ => diagnostics
-                .push("alloc VecIntoIter Iterator extension has an invalid shape".to_owned()),
+            Item::Struct(definition) if valid_vec_into_iter(definition) => {}
+            _ => diagnostics.push("alloc vecIntoIter has an invalid shape".to_owned()),
         }
         match &program.items[40] {
-            Item::Extend(extension) if valid_vec_into_iterator_extension(extension) => {}
-            _ => {
-                diagnostics.push("alloc Vec IntoIterator extension has an invalid shape".to_owned())
-            }
+            Item::Extend(extension) if valid_vec_index_extension(extension) => {}
+            _ => diagnostics.push("alloc vec Index extension has an invalid shape".to_owned()),
         }
         match &program.items[41] {
-            Item::Extend(extension) if valid_vec_into_iter_drop_extension(extension) => {}
-            _ => {
-                diagnostics.push("alloc VecIntoIter Drop extension has an invalid shape".to_owned())
-            }
+            Item::Extend(extension) if valid_vec_iterator_extension(extension) => {}
+            _ => diagnostics
+                .push("alloc vecIntoIter Iterator extension has an invalid shape".to_owned()),
         }
         match &program.items[42] {
-            Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
-            _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
+            Item::Extend(extension) if valid_vec_into_iterator_extension(extension) => {}
+            _ => {
+                diagnostics.push("alloc vec IntoIterator extension has an invalid shape".to_owned())
+            }
         }
         match &program.items[43] {
-            Item::Struct(definition) if definition.name == "string" => {}
-            _ => diagnostics.push("alloc String must be a nominal struct".to_owned()),
+            Item::Extend(extension) if valid_vec_into_iter_drop_extension(extension) => {}
+            _ => diagnostics
+                .push("alloc vec_into_iter droppable extension has an invalid shape".to_owned()),
         }
         match &program.items[44] {
+            Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
+            _ => diagnostics.push("alloc vec droppable extension has an invalid shape".to_owned()),
+        }
+        match &program.items[45] {
+            Item::Struct(definition) if definition.name == "string" => {}
+            _ => diagnostics.push("alloc string must be a nominal struct".to_owned()),
+        }
+        match &program.items[46] {
             Item::Struct(definition) if definition.name == "from_utf8_error" => {}
             _ => diagnostics.push("alloc FromUtf8Error must be a nominal struct".to_owned()),
         }
-        match &program.items[45] {
+        match &program.items[47] {
             Item::Function(function) if function.name == "utf8_invalid_at" => {}
             _ => diagnostics.push("alloc utf8_invalid_at validator is missing".to_owned()),
         }
-        match &program.items[46] {
+        match &program.items[48] {
             Item::Extend(extension)
                 if extension.target == Type::Named("string".to_owned(), Vec::new()) => {}
-            _ => diagnostics.push("alloc String extension is missing".to_owned()),
+            _ => diagnostics.push("alloc string extension is missing".to_owned()),
         }
-        match &program.items[47] {
+        match &program.items[49] {
             Item::Extend(extension)
                 if extension.target == Type::Named("from_utf8_error".to_owned(), Vec::new()) => {}
             _ => diagnostics.push("alloc FromUtf8Error extension is missing".to_owned()),
@@ -699,6 +710,19 @@ fn valid_copy_box_extension(extension: &crate::ast::ExtendDef) -> bool {
                 &[("value", PassMode::Copy, named("t"))],
                 Type::Unit,
             ))
+}
+
+fn valid_box_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(
+        extension.compile_groups.as_slice(),
+        [group]
+            if matches!(group.as_slice(), [parameter]
+                if parameter.name == "t" && parameter.kind == Sort::Type)
+    ) && extension.target == applied("box", named("t"))
+        && extension.trait_ref == Some(named("droppable"))
+        && extension.where_predicates.is_empty()
+        && matches!(extension.members.as_slice(), [crate::ast::ExtendMember::Function(drop)]
+            if valid_box_method(drop, "drop", PassMode::MutBorrow, &[], Type::Unit))
 }
 
 fn valid_box_method(
@@ -1340,19 +1364,19 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 48);
+        assert_eq!(bundle.program.items.len(), 50);
         assert!(bundle
             .program
             .item_origins
             .iter()
             .all(|origin| origin.package == PackageId::ALLOC.0));
-        assert!(bundle.program.item_origins[..10]
+        assert!(bundle.program.item_origins[..12]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "boxed"]));
-        assert!(bundle.program.item_origins[10..43]
+        assert!(bundle.program.item_origins[12..45]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
-        assert!(bundle.program.item_origins[43..]
+        assert!(bundle.program.item_origins[45..]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "string"]));
     }
@@ -1362,7 +1386,7 @@ mod tests {
         let source =
             alloc_source().replacen("where t: copyable = {\n  unsafe {", "= {\n  unsafe {", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("box_read without Copy must fail bootstrap validation");
+            .expect_err("box_read without copyable must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
     }
 
@@ -1374,7 +1398,7 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("box_write without Copy must fail bootstrap validation");
+            .expect_err("box_write without copyable must fail bootstrap validation");
         assert!(error.to_string().contains("box_write"));
     }
 
@@ -1386,7 +1410,7 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("safe Box.from_raw must fail bootstrap validation");
+            .expect_err("safe box.from_raw must fail bootstrap validation");
         assert!(error.to_string().contains("from_raw"));
     }
 
@@ -1410,8 +1434,8 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("malformed Copy Box extension must fail bootstrap validation");
-        assert!(error.to_string().contains("Copy Box extension"));
+            .expect_err("malformed copyable box extension must fail bootstrap validation");
+        assert!(error.to_string().contains("copyable box extension"));
     }
 
     #[test]
@@ -1419,8 +1443,8 @@ mod tests {
         let source =
             alloc_source().replacen("  storage_capacity: u64,", "  exposed_capacity: u64,", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("malformed Vec representation must fail bootstrap validation");
-        assert!(error.to_string().contains("alloc Vec"));
+            .expect_err("malformed vec representation must fail bootstrap validation");
+        assert!(error.to_string().contains("alloc vec"));
     }
 
     #[test]
@@ -1431,8 +1455,8 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("malformed Vec Drop must fail bootstrap validation");
-        assert!(error.to_string().contains("Vec Drop extension"));
+            .expect_err("malformed vec droppable must fail bootstrap validation");
+        assert!(error.to_string().contains("vec droppable extension"));
     }
 
     #[test]
@@ -1443,8 +1467,8 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("malformed Vec owning extension must fail bootstrap validation");
-        assert!(error.to_string().contains("alloc Vec extension"));
+            .expect_err("malformed vec owning extension must fail bootstrap validation");
+        assert!(error.to_string().contains("alloc vec extension"));
     }
 
     #[test]
@@ -1455,7 +1479,7 @@ mod tests {
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
-            .expect_err("malformed Copy Vec extension must fail bootstrap validation");
-        assert!(error.to_string().contains("Copy Vec extension"));
+            .expect_err("malformed copyable vec extension must fail bootstrap validation");
+        assert!(error.to_string().contains("copyable vec extension"));
     }
 }

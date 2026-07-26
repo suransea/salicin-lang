@@ -6,8 +6,8 @@ extend number {
 }
 
 let main(): i32 = {
-  let number = number { raw: 40 }
-  number.value() + number.value
+  let number_value = number { raw: 40 }
+  number_value.value() + number.value
 }
 
 test("inherent_method_and_associated_same_name.sc") {

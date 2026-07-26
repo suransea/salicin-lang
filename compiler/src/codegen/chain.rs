@@ -301,7 +301,9 @@ impl Analyzer {
             let candidates = self.trait_method_function_candidates(payload, member, origin);
             match candidates.as_slice() {
                 [(candidate, _)] if self.is_drop_impl(candidate) => {
-                    self.error("`Drop.drop` cannot be called directly; destruction is automatic");
+                    self.error(
+                        "`droppable.drop` cannot be called directly; destruction is automatic",
+                    );
                     return None;
                 }
                 [(_, canonical)] => canonical.clone(),
@@ -401,7 +403,7 @@ impl Analyzer {
                 .is_some_and(|local| local.capability != LocalCapability::Owned);
         let scrutinee = self.lower_expr(source_scrutinee, None, context);
         if borrowed {
-            self.error("optional chaining requires an owned `Option` or `Result` value");
+            self.error("optional chaining requires an owned `option` or `result` value");
             return error_expr();
         }
         if scrutinee.ty == Ty::Error {
@@ -409,7 +411,7 @@ impl Analyzer {
         }
         let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `?.` requires an owned `Option(T)` or `Result(E)(T)`, found `{}`",
+                "operator `?.` requires an owned `option(t)` or `result(e)(t)`, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -511,7 +513,7 @@ impl Analyzer {
                 .and_then(|name| context.lookup(name))
                 .is_some_and(|local| local.capability != LocalCapability::Owned);
         if borrowed {
-            self.error("optional chaining requires an owned `Option`, `Result`, or `Chain` value");
+            self.error("optional chaining requires an owned `option`, `result`, or `chain` value");
             return error_expr();
         }
         let base_probe = self.probe_expr_ty(base, None, context);
@@ -565,7 +567,7 @@ impl Analyzer {
         }
         let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `?.` requires an owned `Option(T)`, `Result(E)(T)`, or `Chain` value, found `{}`",
+                "operator `?.` requires an owned `option(t)`, `result(e)(t)`, or `chain` value, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();

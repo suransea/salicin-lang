@@ -1367,7 +1367,7 @@ impl Analyzer {
                             }
                             _ => {
                                 self.error(format!(
-                                "compile-time argument `{}` in `{owner}` expects sort {}; write `pure`, `Unsafe`, `Throws(Error)`, or a declared custom effect",
+                                "compile-time argument `{}` in `{owner}` expects sort {}; write `pure`, `Unsafe`, `throws(Error)`, or a declared custom effect",
                                 parameter.name,
                                 describe_compile_sort(parameter.kind.clone()),
                             ));
@@ -1391,7 +1391,7 @@ impl Analyzer {
                     }
                     Sort::String => {
                         self.error(
-                            "`String` arguments are currently restricted to compiler-owned syntax",
+                            "`string` arguments are currently restricted to compiler-owned syntax",
                         );
                         return None;
                     }

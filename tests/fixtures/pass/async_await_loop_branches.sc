@@ -100,8 +100,8 @@ let main(): i32 = {
     loop {
       let choice = if unsafe { *matched_ptr == 2 } { choice.left } else { choice.right }
       let done = match choice
-        { left -> await left(matched_ptr) }
-        { right -> await right(matched_ptr) }
+        { choice.left -> await left(matched_ptr) }
+        { choice.right -> await right(matched_ptr) }
       if done {
         break()
       } else {

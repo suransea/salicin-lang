@@ -23,7 +23,7 @@ let main(): i32 = {
   }
   let mut score = 38
   do {
-    let mut values = vec.new(resource)()
+    let mut values = vec.new(t: resource)()
     values.push(resource { counter: counter, value: 1 })
     values.push(resource { counter: counter, value: 2 })
     values.push(resource { counter: counter, value: 3 })

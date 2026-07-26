@@ -14,7 +14,7 @@ let main(): i32 = {
   let mut count = 0
   do {
     let counter = ptr(mut)(borrow(mut)(count))
-    let first = box.new(comptime t: resource)(resource { counter: counter })
+    let first = box.new(t: resource)(resource { counter: counter })
     let second = first
   }
   41 + count

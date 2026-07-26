@@ -333,7 +333,7 @@ pub enum Sort {
     Region,
     /// An immutable UTF-8 metadata string erased before runtime lowering.
     String,
-    /// A single nominal effect identity such as `Unsafe` or `Throws(Error)`.
+    /// A single nominal effect identity such as `Unsafe` or `throws(Error)`.
     Effect,
     /// A normalized, order-insensitive row of zero or more effect identities.
     Effects,
@@ -573,7 +573,7 @@ pub enum Expr {
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Coalesce(Box<Expr>, Box<Expr>),
     /// Selective-CPS form of `??`; produced after parsing so the typed
-    /// lowering can choose the `Option` or `Result` success pattern.
+    /// lowering can choose the `option` or `result` success pattern.
     HandlerCoalesce {
         scrutinee: Box<Expr>,
         payload: String,
@@ -581,7 +581,7 @@ pub enum Expr {
         fallback: Box<Expr>,
     },
     /// Selective-CPS form of a fully applied optional method call. The
-    /// typed lowering chooses `Option` or `Result` wrapping after the lazy
+    /// typed lowering chooses `option` or `result` wrapping after the lazy
     /// success and residual branches have already been transformed.
     HandlerChainCall(Box<HandlerChainCall>),
     Try(Box<Expr>),

@@ -1021,17 +1021,12 @@ fn collect_symbols(
                     .get(&logical_path)
                     .cloned()
                     .unwrap_or_default();
-                let type_function_pair = matches!(
-                    (namespace, occupied.contains(&DeclarationNamespace::Type)),
-                    (DeclarationNamespace::Function, true)
-                ) || matches!(
-                    (
-                        namespace,
-                        occupied.contains(&DeclarationNamespace::Function)
-                    ),
-                    (DeclarationNamespace::Type, true)
-                );
-                if type_function_pair && *visibility != previous.visibility {
+                let type_value_pair = (namespace == DeclarationNamespace::Type
+                    && (occupied.contains(&DeclarationNamespace::Function)
+                        || occupied.contains(&DeclarationNamespace::Other)))
+                    || (namespace != DeclarationNamespace::Type
+                        && occupied.contains(&DeclarationNamespace::Type));
+                if type_value_pair && *visibility != previous.visibility {
                     diagnostics.push(format!(
                         "{}: error: declaration `{name}` must use the same visibility as the same-named declaration in {}",
                         unit.source.path, previous.source_path
@@ -1049,7 +1044,7 @@ fn collect_symbols(
                                 .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>();
-                    if type_function_pair
+                    if type_value_pair
                         && !occupied.contains(&DeclarationNamespace::Other)
                         && !occupied.contains(&DeclarationNamespace::Function)
                     {
@@ -1083,9 +1078,10 @@ fn collect_symbols(
                             unit.source.path, previous.source_path
                         ));
                     }
-                } else if type_function_pair
-                    && !occupied.contains(&DeclarationNamespace::Other)
-                    && !occupied.contains(&DeclarationNamespace::Type)
+                } else if type_value_pair
+                    && !occupied.contains(&namespace)
+                    && !(namespace == DeclarationNamespace::Type
+                        && occupied.contains(&DeclarationNamespace::Type))
                 {
                     symbol_namespaces
                         .entry(logical_path)
@@ -1206,7 +1202,7 @@ fn install_standard_namespaces(
             required_imports.insert((*name).to_owned(), format!("core.async.{name}"));
         }
         for name in CORE_SORT_EXPORTS {
-            // `String` is also the alloc runtime type. Compile-parameter
+            // `string` is also the alloc runtime type. Compile-parameter
             // positions recognize its sort directly, so preserve the runtime
             // type as the unqualified import when alloc is exposed.
             if *name == "string" && exposure.expose_alloc {
@@ -3005,12 +3001,14 @@ fn declaration_name(item: &Item) -> Option<&str> {
 fn declaration_namespace(item: &Item) -> DeclarationNamespace {
     match item {
         Item::Function(_) => DeclarationNamespace::Function,
-        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) | Item::TypeForm(_) => {
-            DeclarationNamespace::Type
-        }
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Sort(_) | Item::Extend(_) => {
-            DeclarationNamespace::Other
-        }
+        Item::Struct(_)
+        | Item::Enum(_)
+        | Item::Trait(_)
+        | Item::Effect(_)
+        | Item::Sort(_)
+        | Item::TypeAlias(_)
+        | Item::TypeForm(_) => DeclarationNamespace::Type,
+        Item::Global(_) | Item::Extend(_) => DeclarationNamespace::Other,
     }
 }
 
@@ -3470,7 +3468,7 @@ impl Resolver {
                 if let Some(canonical) = self.resolve_logical_path(&logical, context) {
                     *function = canonical;
                 } else if !self.reject_unimported_standard(&logical, context) {
-                    self.reject_bare_module(&logical, context, "a CTFE function");
+                    self.reject_bare_module(&logical, context, "a ctfe function");
                 }
                 for argument in arguments {
                     self.rewrite_static_expression(argument, context, static_scope);
@@ -4061,6 +4059,7 @@ fn compile_argument_name_is_builtin(name: &str) -> bool {
             | "copy"
             | "move"
             | "pure"
+            | "self"
     )
 }
 
@@ -4625,7 +4624,7 @@ mod tests {
 
     #[test]
     fn rejects_module_segments_that_are_unspellable_or_canonicalize_ambiguously() {
-        for segment in ["", "_", "let", "upper", "has-dash", "a.b", "a::b"] {
+        for segment in ["", "_", "let", "Upper", "has-dash", "a.b", "a::b"] {
             let error = resolve_sources(&[
                 unit("root.sc", &[], "let main(): i32 = { 0 }\n", true),
                 unit("bad.sc", &[segment], "let value = 1\n", false),
@@ -4698,7 +4697,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
 
         for expected in [
-            "module `option` cannot be used as a type or compile-time argument",
+            "module `option` cannot be used as a value or callable",
             "module `add` cannot be used as a type",
             "module `never` cannot be used as a type",
         ] {
@@ -5252,7 +5251,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(invalid
             .iter()
-            .any(|diagnostic| diagnostic.contains("unknown package id 99")));
+            .any(|diagnostic| diagnostic.contains("unknown package ID 99")));
         assert!(invalid
             .iter()
             .any(|diagnostic| diagnostic.contains("not reachable")));
@@ -5267,7 +5266,7 @@ let main(): i32 = { option {} }
         assert!(reserved
             .iter()
             .any(|diagnostic| diagnostic.contains(&format!(
-                "package id {} is reserved for compiler core",
+                "package ID {} is reserved for compiler core",
                 PackageId::CORE.0
             ))));
 
@@ -5281,7 +5280,7 @@ let main(): i32 = { option {} }
         assert!(reserved_alloc
             .iter()
             .any(|diagnostic| diagnostic.contains(&format!(
-                "package id {} is reserved for compiler alloc",
+                "package ID {} is reserved for compiler alloc",
                 PackageId::ALLOC.0
             ))));
     }

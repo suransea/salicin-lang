@@ -160,7 +160,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
     );
     assert!(
         String::from_utf8_lossy(&self_reference.stderr)
-            .contains("self-referential and cannot implement `Move`"),
+            .contains("self-referential and cannot implement `movable`"),
         "{}",
         output_text(&self_reference)
     );
@@ -173,7 +173,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
     assert!(!multiple.status.success(), "{}", output_text(&multiple));
     assert!(
         String::from_utf8_lossy(&multiple.stderr).contains(
-            "await residual Throws and algebraic effects require poll/resume handler specialization"
+            "await residual throws and algebraic effects require poll/resume handler specialization"
         ),
         "{}",
         output_text(&multiple)

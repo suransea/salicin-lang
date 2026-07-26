@@ -144,26 +144,26 @@ let Record = struct(c) {
   tag: u8,
   inner: Inner,
   huge: i128,
-  values: Array(u16)(3),
-  next: Ptr(u8),
+  values: array(u16)(3),
+  next: ptr(u8),
 }
 
 let c_record_size(): u64 = foreign(c)
 let c_record_align(): u64 = foreign(c)
-let c_verify_record(record: Ptr(Record)): i32 = foreign(c)
-let c_fill_record(record: Ptr(mut)(Record)): () = foreign(c)
+let c_verify_record(record: ptr(Record)): i32 = foreign(c)
+let c_fill_record(record: ptr(mut)(Record)): () = foreign(c)
 
 let main(): i32 = {
   let byte: u8 = 31
-  let mut record = Record { tag: 7, inner: Inner { small: -3, wide: 1000 }, huge: -4000, values: [11, 13, 17], next: Ptr(borrow(byte)) }
+  let mut record = Record { tag: 7, inner: Inner { small: -3, wide: 1000 }, huge: -4000, values: [11, 13, 17], next: ptr(borrow(byte)) }
   let verified = unsafe {
     c_record_size() == size_of(Record) &&
     c_record_align() == align_of(Record) &&
-    c_verify_record(Ptr(borrow(record))) == 42
+    c_verify_record(ptr(borrow(record))) == 42
   }
   do {
     unsafe {
-      c_fill_record(Ptr(mut)(borrow(mut)(record)))
+      c_fill_record(ptr(mut)(borrow(mut)(record)))
     }
   }
   if verified &&
@@ -543,15 +543,15 @@ fn c_ffi_rejects_unsafe_calls_and_private_abi_types() {
         ),
         (
             "ffi_array_parameter.sc",
-            "has unsupported C ABI type `Array(i32)(2)`",
+            "has unsupported C ABI type `array(i32)(2)`",
         ),
         (
             "ffi_c_struct_parameter.sc",
-            "has unsupported C ABI type `Pair`",
+            "has unsupported C ABI type `pair`",
         ),
         (
             "ffi_c_struct_result.sc",
-            "has unsupported C ABI result type `Pair`",
+            "has unsupported C ABI result type `pair`",
         ),
         (
             "ffi_function_parameter.sc",

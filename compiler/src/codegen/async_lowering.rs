@@ -118,7 +118,7 @@ impl Analyzer {
                 })
             {
                 self.error(format!(
-                    "async local `{}` borrows `{}` stored in the same future across `await`; the generated state would be self-referential and cannot implement `Move`",
+                    "async local `{}` borrows `{}` stored in the same future across `await`; the generated state would be self-referential and cannot implement `movable`",
                     retained.name,
                     retained.referent.as_deref().expect("checked retained referent")
                 ));
@@ -343,7 +343,7 @@ impl Analyzer {
                 return lowered;
             };
             if closure.result != Ty::Bool {
-                self.error("a recurring async `while` condition must produce `Bool`");
+                self.error("a recurring async `while` condition must produce `bool`");
                 return super::lower::error_expr();
             }
             if closure
@@ -478,7 +478,7 @@ impl Analyzer {
                     .any(|effect| effect != async_effect);
             if has_residual_continuation && continuation_has_await {
                 self.error(
-                    "an async continuation that both suspends and retains residual Throws or algebraic effects requires later-child poll specialization, which is not implemented yet",
+                    "an async continuation that both suspends and retains residual throws or algebraic effects requires later-child poll specialization, which is not implemented yet",
                 );
                 return super::lower::error_expr();
             }
@@ -575,7 +575,7 @@ impl Analyzer {
                 .as_ref()
                 .is_some_and(|existing| existing != &error)
             {
-                self.error("async segments retain incompatible `Throws` error types in one future");
+                self.error("async segments retain incompatible `throws` error types in one future");
                 return super::lower::error_expr();
             }
             closure.throws_error = Some(error);
@@ -650,7 +650,7 @@ impl Analyzer {
                     .map(|error| self.diagnostic_type_name(error))
                     .collect::<Vec<_>>();
                 self.error(format!(
-                    "async residual `Throws({})` requires poll/resume handler specialization for this suspension shape, which is not implemented yet",
+                    "async residual `throws({})` requires poll/resume handler specialization for this suspension shape, which is not implemented yet",
                     errors.join(" | ")
                 ));
             }
@@ -885,10 +885,10 @@ impl Analyzer {
             .collect::<Vec<_>>();
         if candidates.len() != 1 {
             self.error(if candidates.is_empty() {
-                format!("await operand of type `{ty}` does not implement `Future`")
+                format!("await operand of type `{ty}` does not implement `future`")
             } else {
                 format!(
-                    "await operand of type `{ty}` has multiple `Future` implementations; the residual effect row is ambiguous"
+                    "await operand of type `{ty}` has multiple `future` implementations; the residual effect row is ambiguous"
                 )
             });
             return None;
@@ -918,7 +918,7 @@ impl Analyzer {
             && (signature.throws_error.is_some() || !signature.custom_effects.is_empty())
         {
             self.error(
-                "await residual Throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
+                "await residual throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
             );
             return None;
         }
@@ -981,7 +981,7 @@ impl Analyzer {
             .collect::<Option<Vec<_>>>()?;
         let output = futures.first()?.output.clone();
         if futures.iter().any(|future| future.output != output) {
-            self.error("control-flow await branches must produce the same `Future.Output` type");
+            self.error("control-flow await branches must produce the same `future.output` type");
             return None;
         }
         let poll_ty = futures.first()?.poll_ty.clone();
@@ -1582,7 +1582,7 @@ impl Analyzer {
             }],
         );
         let ready = Expr::Call(
-            Box::new(Expr::Member(Box::new(poll_type), "Ready".to_owned())),
+            Box::new(Expr::Member(Box::new(poll_type), "ready".to_owned())),
             vec![CallArg {
                 label: None,
                 value: resume,
@@ -3290,7 +3290,7 @@ impl Analyzer {
                 arms: vec![
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Pending".to_owned()],
+                            path: vec!["pending".to_owned()],
                             fields: crate::ast::PatternFields::Unit,
                         },
                         guard: None,
@@ -3311,13 +3311,13 @@ impl Analyzer {
                                         value: source_type_expression(&output_source),
                                     }],
                                 )),
-                                "Pending".to_owned(),
+                                "pending".to_owned(),
                             ))),
                         },
                     },
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Ready".to_owned()],
+                            path: vec!["ready".to_owned()],
                             fields: crate::ast::PatternFields::Positional(vec![
                                 crate::ast::Pattern::Binding(loop_output.clone()),
                             ]),
@@ -3334,7 +3334,7 @@ impl Analyzer {
                                         value: source_type_expression(&output_source),
                                     }],
                                 )),
-                                "Ready".to_owned(),
+                                "ready".to_owned(),
                             )),
                             vec![CallArg {
                                 label: None,
@@ -3412,9 +3412,9 @@ impl Analyzer {
                     value: source_type_expression(&output_source),
                 }],
             );
-            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "Pending".to_owned());
+            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "pending".to_owned());
             let ready = Expr::Call(
-                Box::new(Expr::Member(Box::new(parent_poll_type), "Ready".to_owned())),
+                Box::new(Expr::Member(Box::new(parent_poll_type), "ready".to_owned())),
                 vec![CallArg {
                     label: None,
                     value: continuation,
@@ -3426,7 +3426,7 @@ impl Analyzer {
                 arms: vec![
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Pending".to_owned()],
+                            path: vec!["pending".to_owned()],
                             fields: crate::ast::PatternFields::Unit,
                         },
                         guard: None,
@@ -3434,7 +3434,7 @@ impl Analyzer {
                     },
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Ready".to_owned()],
+                            path: vec!["ready".to_owned()],
                             fields: crate::ast::PatternFields::Positional(vec![
                                 crate::ast::Pattern::Tuple(
                                     bindings
@@ -3465,12 +3465,12 @@ impl Analyzer {
                     value: source_type_expression(&output_source),
                 }],
             );
-            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "Pending".to_owned());
+            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "pending".to_owned());
             let ready_value = |value| {
                 Expr::Call(
                     Box::new(Expr::Member(
                         Box::new(parent_poll_type.clone()),
-                        "Ready".to_owned(),
+                        "ready".to_owned(),
                     )),
                     vec![CallArg { label: None, value }],
                 )
@@ -3510,7 +3510,7 @@ impl Analyzer {
                             arms: vec![
                                 crate::ast::MatchArm {
                                     pattern: crate::ast::Pattern::Constructor {
-                                        path: vec!["Pending".to_owned()],
+                                        path: vec!["pending".to_owned()],
                                         fields: crate::ast::PatternFields::Unit,
                                     },
                                     guard: None,
@@ -3527,7 +3527,7 @@ impl Analyzer {
                                 },
                                 crate::ast::MatchArm {
                                     pattern: crate::ast::Pattern::Constructor {
-                                        path: vec!["Ready".to_owned()],
+                                        path: vec!["ready".to_owned()],
                                         fields: crate::ast::PatternFields::Positional(vec![
                                             crate::ast::Pattern::Binding(output.clone()),
                                         ]),
@@ -3552,7 +3552,7 @@ impl Analyzer {
                 arms: vec![
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Pending".to_owned()],
+                            path: vec!["pending".to_owned()],
                             fields: crate::ast::PatternFields::Unit,
                         },
                         guard: None,
@@ -3568,7 +3568,7 @@ impl Analyzer {
                     },
                     crate::ast::MatchArm {
                         pattern: crate::ast::Pattern::Constructor {
-                            path: vec!["Ready".to_owned()],
+                            path: vec!["ready".to_owned()],
                             fields: crate::ast::PatternFields::Positional(vec![
                                 crate::ast::Pattern::Binding(machine_output.clone()),
                             ]),

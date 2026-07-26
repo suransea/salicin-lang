@@ -133,7 +133,7 @@ impl Analyzer {
                     &super::source_rewrite::source_type_expression(&error),
                 )
             })?;
-        Some(format!("Throws({error})"))
+        Some(format!("throws({error})"))
     }
 
     pub(super) fn is_standard_unsafe_effect_source(&self, effect: &Type) -> bool {
@@ -310,7 +310,7 @@ impl Analyzer {
                 let Expr::Name(name) = callee.as_ref() else {
                     return Ok(None);
                 };
-                if context.shadows_top_level_name(name) || !self.effect_defs.contains_key(name) {
+                if !self.effect_defs.contains_key(name) {
                     return Ok(None);
                 }
                 if arguments.iter().any(|argument| argument.label.is_some()) {

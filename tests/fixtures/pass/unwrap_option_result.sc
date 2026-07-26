@@ -3,7 +3,7 @@ let result = std.result
 
 let main(): i32 = {
   let option = option.some(20)
-  let result = result(comptime e: bool).ok(22)
+  let result = result(e: bool).ok(22)
   option!! + result!!
 }
 

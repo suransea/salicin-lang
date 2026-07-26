@@ -26,7 +26,7 @@ fn m1_array_errors_report_their_cause() {
         ("array_constant_oob.sc", "out of bounds"),
         ("array_negative_oob.sc", "out of bounds"),
         ("array_empty_without_context.sc", "empty array"),
-        ("array_resource_dynamic_index.sc", "requires Copy"),
+        ("array_resource_dynamic_index.sc", "requires copyable"),
         ("array_resource_element_use_after_move.sc", "moved"),
         ("array_resource_partial_root_move.sc", "moved"),
         ("array_dynamic_index_assignment.sc", "compile-time"),
@@ -57,8 +57,8 @@ fn m1_loop_errors_report_their_cause() {
         ("loop_break_type_mismatch.sc", "type mismatch"),
         ("loop_backedge_move.sc", "move"),
         ("while_let_binding_scope.sc", "unknown"),
-        ("for_missing_into_iterator.sc", "IntoIterator"),
-        ("for_missing_iterator.sc", "Iterator"),
+        ("for_missing_into_iterator.sc", "into_iter"),
+        ("for_missing_iterator.sc", "iterator"),
         ("for_break_value.sc", "type mismatch"),
         ("for_refutable_pattern.sc", "pattern type mismatch"),
     ] {
@@ -416,8 +416,8 @@ fn m2_add_trait_programs_run_with_expected_result() {
 #[test]
 fn m2_add_trait_errors_report_their_cause() {
     for (name, expected) in [
-        ("add_trait_missing_impl.sc", "Add"),
-        ("add_trait_rhs_mismatch.sc", "Add"),
+        ("add_trait_missing_impl.sc", "add"),
+        ("add_trait_rhs_mismatch.sc", "add"),
         ("add_trait_ambiguous_literal.sc", "ambiguous"),
         ("add_trait_use_after_move.sc", "moved"),
         ("add_trait_rhs_use_after_move.sc", "moved"),
@@ -426,7 +426,7 @@ fn m2_add_trait_errors_report_their_cause() {
             .arg("check")
             .arg(fixture("fail", name))
             .output()
-            .expect("check invalid Add-trait fixture");
+            .expect("check invalid add-trait fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -464,10 +464,10 @@ fn arithmetic_trait_programs_run_with_expected_result() {
 fn arithmetic_trait_errors_report_their_cause() {
     for (name, expected) in [
         ("arithmetic_trait_ambiguous_literal.sc", "ambiguous"),
-        ("arithmetic_trait_rhs_mismatch.sc", "Div"),
+        ("arithmetic_trait_rhs_mismatch.sc", "div"),
         ("arithmetic_trait_use_after_move.sc", "moved"),
         ("compound_assign_immutable.sc", "immutable"),
-        ("compound_assign_missing_impl.sc", "AddAssign"),
+        ("compound_assign_missing_impl.sc", "add_assign"),
     ] {
         let output = salic()
             .arg("check")
@@ -509,8 +509,8 @@ fn m2_core_option_and_result_programs_run_with_expected_result() {
 #[test]
 fn m2_core_option_and_result_errors_report_their_cause() {
     for (name, expected) in [
-        ("core_redefine_option.sc", "Option"),
-        ("core_redefine_result.sc", "Result"),
+        ("core_redefine_option.sc", "option"),
+        ("core_redefine_result.sc", "result"),
         ("core_option_arity.sc", "argument count"),
         ("core_result_arity.sc", "argument count"),
         ("core_option_payload_mismatch.sc", "conflicting"),
@@ -523,7 +523,7 @@ fn m2_core_option_and_result_errors_report_their_cause() {
             .arg("check")
             .arg(fixture("fail", name))
             .output()
-            .expect("check invalid Option/Result prelude fixture");
+            .expect("check invalid option/result prelude fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -569,7 +569,7 @@ fn m2_coalesce_errors_report_their_cause() {
         ("coalesce_result_use_after_move.sc", "moved"),
         ("coalesce_option_rhs_mismatch.sc", "type mismatch"),
         ("coalesce_result_rhs_mismatch.sc", "type mismatch"),
-        ("coalesce_non_container_lhs.sc", "Option"),
+        ("coalesce_non_container_lhs.sc", "option"),
         (
             "coalesce_infer_result_error_unconstrained.sc",
             "cannot infer",
@@ -654,7 +654,7 @@ fn partial_ord_protocol_preserves_unordered_comparisons() {
         .arg("run")
         .arg(fixture("pass", "partial_ord_operator_trait.sc"))
         .output()
-        .expect("run PartialOrd operator fixture");
+        .expect("run partial_ord operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
@@ -691,25 +691,25 @@ fn compile_time_argument_diagnostics_name_binders_sorts_and_groups() {
     for (name, expected) in [
         (
             "infer_unconstrained.sc",
-            vec!["argument `T`", "sort `type`", "for `make`"],
+            vec!["argument `t`", "sort `type`", "for `make`"],
         ),
         (
             "infer_unconstrained_constructor.sc",
-            vec!["argument `F`", "sort `(type): type`", "for `make`"],
+            vec!["argument `f`", "sort `(type): type`", "for `make`"],
         ),
         (
             "generic_nominal_argument_count.sc",
             vec![
                 "argument count mismatch in group 1",
-                "`T` of sort `type`",
+                "`t` of sort `type`",
                 "found 2",
             ],
         ),
         (
             "type_constructor_unknown_label.sc",
             vec![
-                "argument label `Element`",
-                "expected one of `T` of sort `type`",
+                "argument label `element`",
+                "expected one of `t` of sort `type`",
             ],
         ),
     ] {
@@ -767,7 +767,7 @@ fn m2_optional_chain_programs_run_with_expected_result() {
 #[test]
 fn m2_optional_chain_errors_report_their_cause() {
     for (name, expected) in [
-        ("chain_non_container.sc", "Option"),
+        ("chain_non_container.sc", "option"),
         ("chain_unknown_field.sc", "missing"),
         ("chain_unknown_method.sc", "missing"),
         ("chain_mut_borrow_method.sc", "mutable-borrow"),
@@ -821,7 +821,7 @@ fn throws_errors_report_their_cause() {
             "throw_omitted_return_type.sc",
             "handle it with `try { ... }`",
         ),
-        ("throw_error_type_mismatch.sc", "requires `Throws(i32)`"),
+        ("throw_error_type_mismatch.sc", "requires `throws(i32)`"),
         (
             "throw_without_value.sc",
             "standard-library item `throw` is not in the prelude",

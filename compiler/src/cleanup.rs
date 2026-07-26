@@ -1,7 +1,7 @@
 //! Type-independent ownership and cleanup control-flow skeleton.
 //!
 //! This module deliberately does not know about Salicin types. In particular,
-//! it must not infer either `Copy` or `needs_drop`; those decisions belong to
+//! it must not infer either `copyable` or `needs_drop`; those decisions belong to
 //! semantic analysis and are inputs to later cleanup lowering. It also does
 //! not contain drop glue or runtime drop flags.
 
@@ -58,7 +58,7 @@ pub(crate) enum LocalKind {
 
 /// Describes whether storage owns a value or aliases storage owned elsewhere.
 ///
-/// This is intentionally not a `Copy` or `needs_drop` classification.
+/// This is intentionally not a `copyable` or `needs_drop` classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LocalOwnership {
     Owned,

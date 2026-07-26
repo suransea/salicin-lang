@@ -458,9 +458,6 @@ impl Analyzer {
                 let Expr::Name(name) = root else {
                     return Ok(None);
                 };
-                if context.lookup(name).is_some() {
-                    return Ok(None);
-                }
                 if context.has_type_parameter(name) {
                     self.error(format!(
                         "type parameter `{name}` cannot be used as a generic type constructor"

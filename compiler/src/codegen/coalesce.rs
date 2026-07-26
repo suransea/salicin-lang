@@ -119,7 +119,7 @@ impl Analyzer {
         }
         let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
+                "operator `??` requires `option(t)` or `result(e)(t)` on the left, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -208,7 +208,7 @@ impl Analyzer {
         }
         let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
+                "operator `??` requires `option(t)` or `result(e)(t)` on the left, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();

@@ -5,6 +5,6 @@ extend number {
 }
 
 let main(): i32 = {
-  let number = number { value: 42 }
-  number.read(receiver: number)()
+  let value = number { value: 42 }
+  number.read(receiver: value)()
 }

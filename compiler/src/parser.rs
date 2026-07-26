@@ -153,7 +153,7 @@ impl Parser {
                 uses.extend(self.use_declaration(visibility)?);
             } else if self.at_context_ident("extern") {
                 return Err(self.error_here(
-                    "grouped `extern` declarations have been removed; use `let name(...): Result = foreign(c, \"symbol\")`",
+                    "grouped `extern` declarations have been removed; use `let name(...): result = foreign(c, \"symbol\")`",
                 ));
             } else if self.at_context_ident("test") {
                 if visibility != Visibility::Private {
@@ -442,7 +442,7 @@ impl Parser {
                 Some(TokenKind::Ident(name)) if name == "domain"
             ) {
                 return Err(self.error_here(
-                    "`domain` was removed; user code must declare a finite sort with `let Name = sort { ... }` because abstract sorts are compiler-owned",
+                    "`domain` was removed; user code must declare a finite sort with `let name = sort { ... }` because abstract sorts are compiler-owned",
                 ));
             }
             if matches!(
@@ -504,7 +504,7 @@ impl Parser {
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
@@ -623,7 +623,7 @@ impl Parser {
 
         if self.at_context_ident("type") {
             return Err(self.error_here(
-                "`type` is an abstract sort and cannot appear as a declaration value; write `let Name: type`",
+                "`type` is an abstract sort and cannot appear as a declaration value; write `let name: type`",
             ));
         }
 
@@ -646,7 +646,7 @@ impl Parser {
 
         if self.at_context_ident("domain") {
             return Err(self.error_here(
-                "`domain` was removed; declare a finite sort with `let Name = sort { ... }`",
+                "`domain` was removed; declare a finite sort with `let name = sort { ... }`",
             ));
         }
 
@@ -665,7 +665,7 @@ impl Parser {
             self.advance();
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here(
-                    "abstract sorts use `let Name: sort`; an empty defined sort uses `let Name = sort {}`",
+                    "abstract sorts use `let name: sort`; an empty defined sort uses `let name = sort {}`",
                 ));
             }
             return self.sort_definition(name).map(Item::Sort);
@@ -881,12 +881,13 @@ impl Parser {
     fn type_constructor_signature_follows(&self) -> bool {
         self.at(&TokenKind::Colon)
             && self.at_offset(1, &TokenKind::LParen)
+            && self.at_offset(2, &TokenKind::Comptime)
             && matches!(
-                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                self.tokens.get(self.index + 3).map(|token| &token.kind),
                 Some(TokenKind::Ident(_))
             )
-            && self.at_offset(3, &TokenKind::Colon)
-            && self.at_offset(4, &TokenKind::Type)
+            && self.at_offset(4, &TokenKind::Colon)
+            && self.at_offset(5, &TokenKind::Type)
     }
 
     fn type_alias(
@@ -1134,7 +1135,7 @@ impl Parser {
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
@@ -1260,11 +1261,12 @@ impl Parser {
                 let starts_associated_binding = matches!(self.current().kind, TokenKind::Ident(_))
                     && (self.at_offset(1, &TokenKind::Equal)
                         || (self.at_offset(1, &TokenKind::LParen)
+                            && self.at_offset(2, &TokenKind::Comptime)
                             && matches!(
-                                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                                self.tokens.get(self.index + 3).map(|token| &token.kind),
                                 Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
                             )
-                            && self.at_offset(3, &TokenKind::Colon)));
+                            && self.at_offset(4, &TokenKind::Colon)));
                 if starts_associated_binding {
                     saw_associated = true;
                     let binding = self.expect_ident("an associated type name")?;
@@ -2198,7 +2200,7 @@ impl Parser {
                     let derive = self.expect_ident("a derive name")?;
                     if derive != "copyable" {
                         return Err(self.error_here(format!(
-                            "unsupported struct derive `{derive}`; only `Copy` is supported"
+                            "unsupported struct derive `{derive}`; only `copyable` is supported"
                         )));
                     }
                     if derives.iter().any(|existing| existing == &derive) {
@@ -2436,7 +2438,7 @@ impl Parser {
         let (effects, throws_error, _has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let return_type =
@@ -2567,7 +2569,7 @@ impl Parser {
                 }
             } else {
                 return Err(self.error_here(
-                    "expected `Throws(Error)`, `Unsafe`, an effect parameter, or a custom effect name in `with(...)`",
+                    "expected `throws(Error)`, `Unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -6333,14 +6335,18 @@ mod tests {
             assert!(error.message.contains("duplicate"));
         }
 
-        for source in [
-            "let f(): i32 with(unsafe) = { 0 }\n",
-            "let f(): i32 with(try(bool)) = { 0 }\n",
-        ] {
-            let error = parse(source).unwrap_err();
-            assert!(!error.message.is_empty());
-            assert!(!error.message.contains("was removed"));
-        }
+        let contextual =
+            parse("let f(): i32 with(unsafe, try(bool)) = { 0 }\n").expect("custom effect names");
+        let Item::Function(contextual) = &contextual.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            contextual.effects.custom,
+            [
+                Type::Named("unsafe".to_owned(), Vec::new()),
+                Type::Named("try".to_owned(), vec![Type::Bool]),
+            ]
+        );
     }
 
     #[test]
@@ -6641,7 +6647,8 @@ mod tests {
             .message
             .contains("`extend` declarations cannot have visibility"));
 
-        let trait_member = parse("let trait = trait { pub let f(value: i32): i32 }\n").unwrap_err();
+        let trait_member =
+            parse("let protocol = trait { pub let f(value: i32): i32 }\n").unwrap_err();
         assert!(trait_member.message.contains("trait members"));
 
         let extend_member = parse("extend thing { pub(package) let answer = 42 }\n").unwrap_err();
@@ -6948,7 +6955,6 @@ mod tests {
         for source in [
             "let value: cell(_) = cell(i32) { value: 20 }\n",
             "let value = cell(_) { value: 20 }\n",
-            "let value = cell(comptime t: _) { value: 20 }\n",
             "let value = cell(cell(_)) { value: cell(i32) { value: 20 } }\n",
             "let value = _\n",
             "let value: array(i32)(_) = []\n",
@@ -7085,7 +7091,7 @@ mod tests {
             ),
             (
                 "let bad(comptime t: type, value: t): t = { value }\n",
-                "cannot be mixed",
+                "expected `comptime`",
             ),
             (
                 "let bad(value: t, comptime u: type): t = { value }\n",
@@ -7109,13 +7115,14 @@ mod tests {
             "_", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
             "usize", "bool", "never",
         ] {
-            let source = format!("let invalid({name}: type)(value: i32): i32 = {{ value }}\n");
+            let source =
+                format!("let invalid(comptime {name}: type)(value: i32): i32 = {{ value }}\n");
             let error = parse(&source).unwrap_err();
             assert_eq!(
                 error.message,
                 format!("reserved type name `{name}` cannot be used as a compile-time parameter")
             );
-            assert_eq!((error.line, error.column), (1, 13));
+            assert_eq!((error.line, error.column), (1, 22));
         }
     }
 
@@ -7171,7 +7178,7 @@ mod tests {
             ),
             (
                 "let abs(value: i32): i32 = foreign(c, \"\")\n",
-                "non-empty ascii linker symbol",
+                "non-empty ASCII linker symbol",
             ),
         ] {
             let error = parse(source).unwrap_err();
@@ -7644,7 +7651,7 @@ mod tests {
     fn handler_action_ends_the_trailing_group_sequence() {
         let program = parse(
             "let run(): i32 = {\n\
-               let ignored = continue.handle\n\
+               let ignored = continue_effect.handle\n\
                  next { () }\n\
                  action { () }\n\
                if true { 42 } else { 0 }\n\
@@ -8266,7 +8273,7 @@ mod tests {
     fn parses_closed_types_as_compile_parameter_types() {
         let program = parse(
             "let optimization = enum { size, speed }\n\
-             let select(b: bool, comptime o: optimization)(value: i32): i32 = { value }\n",
+             let select(comptime b: bool, comptime o: optimization)(value: i32): i32 = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[1] else {
@@ -8331,7 +8338,7 @@ mod tests {
     #[test]
     fn parses_parameter_prefixes_as_composable_modifiers() {
         let program = parse(
-            "let decorate(b: bool, comptime m: (comptime p: parameters): parameters)(b m value: i32): i32 = { value }\n",
+            "let decorate(comptime b: bool, comptime m: (comptime p: parameters): parameters)(b m value: i32): i32 = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -8559,10 +8566,10 @@ mod tests {
                comptime input: type,\n\
                comptime output: type,\n\
                comptime e: effects,\n\
-               ...comptime cases: parameters,\n\
+               comptime ...cases: parameters,\n\
              )\n\
                (move input: input)\n\
-               ...comptime cases: output with(e)\n",
+               ...cases: output with(e)\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -8677,13 +8684,10 @@ mod tests {
         let duplicate = parse("let f(): i32 with(ui, ui) = { 0 }\n").unwrap_err();
         assert!(duplicate.message.contains("duplicate custom effect `ui`"));
 
-        let lowercase_declaration = parse("let ui = effect\n").unwrap_err();
-        assert!(lowercase_declaration
-            .message
-            .contains("uppercase nominal name"));
-
-        let lowercase_use = parse("let f(): i32 with(core.effect.ui) = { 0 }\n").unwrap_err();
-        assert!(lowercase_use.message.contains("uppercase nominal segment"));
+        parse("let local_effect = effect\n")
+            .expect("snake_case effect declarations are valid nominal identities");
+        parse("let f(): i32 with(core.effect.ui) = { 0 }\n")
+            .expect("snake_case qualified effect names are valid");
     }
 
     #[test]
@@ -9112,7 +9116,7 @@ mod tests {
         let program = parse(
             "let choose(comptime t: type)(copy value: t): t\n\
              where t: copyable,\n\
-                   comptime t: marker(i32, item = t), = { value }\n",
+                   t: marker(i32, item = t), = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -9464,9 +9468,9 @@ mod tests {
             binding.value_source.as_deref(),
             Some(&crate::ast::SourceSpan {
                 line: 2,
-                column: 22,
+                column: 20,
                 end_line: 2,
-                end_column: 26,
+                end_column: 24,
             })
         );
         assert!(matches!(

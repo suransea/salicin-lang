@@ -466,8 +466,8 @@ mod tests {
 
     #[test]
     fn formats_delimiters_where_clauses_and_expression_continuations() {
-        let source = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere comptime t: copyable,\nT: marker, = {\nvalue\n}\n\nlet add(\nleft: i32,\nright: i32,\n): i32 = {\nleft +\nright\n}\n\nlet main(): i32 = {\nlet values = [\n40,\n2,\n]\nlet grouped =\n(values[0] + values[1])\nadd(\nvalues[0],\nvalues[1],\n) + grouped - 42\n}\n";
-        let expected = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere comptime t: copyable,\n  comptime t: marker, = {\n  value\n}\n\nlet add(\n  left: i32,\n  right: i32,\n): i32 = {\n  left +\n    right\n}\n\nlet main(): i32 = {\n  let values = [\n    40,\n    2,\n  ]\n  let grouped =\n    (values[0] + values[1])\n  add(\n    values[0],\n    values[1],\n  ) + grouped - 42\n}\n";
+        let source = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere t: copyable,\nt: marker, = {\nvalue\n}\n\nlet add(\nleft: i32,\nright: i32,\n): i32 = {\nleft +\nright\n}\n\nlet main(): i32 = {\nlet values = [\n40,\n2,\n]\nlet grouped =\n(values[0] + values[1])\nadd(\nvalues[0],\nvalues[1],\n) + grouped - 42\n}\n";
+        let expected = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere t: copyable,\n  t: marker, = {\n  value\n}\n\nlet add(\n  left: i32,\n  right: i32,\n): i32 = {\n  left +\n    right\n}\n\nlet main(): i32 = {\n  let values = [\n    40,\n    2,\n  ]\n  let grouped =\n    (values[0] + values[1])\n  add(\n    values[0],\n    values[1],\n  ) + grouped - 42\n}\n";
         let formatted = format_source(source).expect("format syntax continuations");
         assert_eq!(formatted, expected);
         assert_eq!(

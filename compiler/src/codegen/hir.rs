@@ -190,7 +190,7 @@ impl fmt::Display for Ty {
                 write!(
                     f,
                     "{}({pointee})",
-                    if *mutable { "Ptr(mut)" } else { "ptr" }
+                    if *mutable { "ptr(mut)" } else { "ptr" }
                 )
             }
             Self::Reference {
@@ -209,8 +209,8 @@ impl fmt::Display for Ty {
                     write!(f, "{qualifier} {pointee}")
                 }
             }
-            Self::Slice(element) => write!(f, "Slice({element})"),
-            Self::Array(element, length) => write!(f, "Array({element})({length})"),
+            Self::Slice(element) => write!(f, "slice({element})"),
+            Self::Array(element, length) => write!(f, "array({element})({length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("never"),
             Self::Error => f.write_str("<error>"),
@@ -232,7 +232,7 @@ impl fmt::Display for Ty {
                     effects.insert(0, "unsafe_effect".to_owned());
                 }
                 if let Some(error) = &function.throws_error {
-                    effects.push(format!("Throws({error})"));
+                    effects.push(format!("throws({error})"));
                 }
                 if !effects.is_empty() {
                     write!(f, " with({})", effects.join(", "))?;
@@ -258,7 +258,7 @@ impl fmt::Display for Ty {
                     effects.insert(0, "unsafe_effect".to_owned());
                 }
                 if let Some(error) = throws_error {
-                    effects.push(format!("Throws({error})"));
+                    effects.push(format!("throws({error})"));
                 }
                 if effects.is_empty() {
                     f.write_str("pure")
@@ -349,7 +349,6 @@ pub(super) struct HirProgram {
     pub(super) exported_functions: HashMap<String, String>,
     pub(super) foreign_functions: Vec<HirForeignFunction>,
     pub(super) drop_methods: HashMap<Ty, String>,
-    pub(super) box_pointees: HashMap<String, Ty>,
     pub(super) array_types: HashSet<Ty>,
     pub(super) tuple_types: HashSet<Ty>,
     pub(super) continuation_adapters: Vec<ContinuationAdapter>,
@@ -433,10 +432,6 @@ impl HirProgram {
         self.enums.iter().find(|layout| layout.name == name)
     }
 
-    pub(super) fn box_pointee(&self, name: &str) -> Option<&Ty> {
-        self.box_pointees.get(name)
-    }
-
     pub(super) fn is_uninhabited(&self, ty: &Ty) -> bool {
         *ty == Ty::Never
             || matches!(ty, Ty::Enum(name) if self.enum_layout(name).is_some_and(|layout| layout.variants.is_empty()))
@@ -448,8 +443,7 @@ impl HirProgram {
             Ty::Tuple(fields) => fields.iter().any(|field| self.needs_drop(field)),
             Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => false,
             Ty::Struct(name) => {
-                self.box_pointee(name).is_some()
-                    || self.drop_methods.contains_key(ty)
+                self.drop_methods.contains_key(ty)
                     || self.struct_layout(name).is_some_and(|layout| {
                         layout.fields.iter().any(|field| self.needs_drop(&field.ty))
                     })
@@ -564,7 +558,7 @@ pub(super) enum HirReadKind {
 
 /// Describes whether an assignment replaces a value that is definitely live.
 ///
-/// This is intentionally independent of `Copy` and of any future `Drop`
+/// This is intentionally independent of `copyable` and of any future `droppable`
 /// decision.  The cleanup planner can use it later to decide whether an old
 /// value may need cleanup before the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

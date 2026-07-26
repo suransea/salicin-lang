@@ -44,29 +44,29 @@ extend pair: right_view {
 }
 
 let main(): i32 = {
-  let mut pair = pair { left: 20, right: 0 }
-  let holder = holder { value: 0 }
+  let mut pair_value = pair { left: 20, right: 0 }
+  let holder_value = holder { value: 0 }
   let before = do {
-    let reference = forward(pair)
-    let generic = same(value: pair)
-    let associated = pair.right_ref(pair)
-    let method = pair.right_method()
-    let qualified = pair.right_method(self: pair)()
-    let forwarded = forwarded_method(pair)
-    let generic_method = holder.get()
-    let trait_method = pair.view()
-    let inferred = inferred_left(pair)
-    let inferred_generic = inferred_same(value: pair)
-    let inferred_forwarded = inferred_forward(pair)
-    let inferred_method = pair.inferred_right()
+    let reference = forward(pair_value)
+    let generic = same(value: pair_value)
+    let associated = pair.right_ref(pair_value)
+    let method = pair_value.right_method()
+    let qualified = pair.right_method(self: pair_value)()
+    let forwarded = forwarded_method(pair_value)
+    let generic_method = holder_value.get()
+    let trait_method = pair_value.view()
+    let inferred = inferred_left(pair_value)
+    let inferred_generic = inferred_same(value: pair_value)
+    let inferred_forwarded = inferred_forward(pair_value)
+    let inferred_method = pair_value.inferred_right()
     reference + generic.right + associated + method + qualified + forwarded + generic_method +
       trait_method + inferred + inferred_generic.right + inferred_forwarded + inferred_method - 40
   }
   do {
-    let reference = pair.inferred_left_mut()
+    let reference = pair_value.inferred_left_mut()
     reference = 22
   }
-  before + pair.left
+  before + pair_value.left
 }
 
 test("returned_borrow.sc") {

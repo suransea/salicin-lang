@@ -9,13 +9,13 @@ let main(): i32 = {
   unsafe {
     *pointer = payload { left: 40, right: 2 }
   }
-  let payload = unsafe {
+  let value = unsafe {
     *pointer
   }
   unsafe {
     raw_dealloc(pointer, size_of(payload), align_of(payload))
   }
-  payload.left + payload.right
+  value.left + value.right
 }
 
 test("raw_allocator_layout.sc") {

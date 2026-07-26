@@ -18,7 +18,7 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let mut boxed = box.new(comptime t: resource)(resource { counter: counter, value: 10 })
+    let mut boxed = box.new(t: resource)(resource { counter: counter, value: 10 })
     do {
       let previous = boxed.replace(resource { counter: counter, value: 20 })
     }

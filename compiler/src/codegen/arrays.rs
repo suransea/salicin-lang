@@ -111,7 +111,7 @@ impl Analyzer {
         let moves = !self.is_copy_type(&element_ty);
         if moves && integer_literal_value(index).is_none() {
             self.error(format!(
-                "dynamic indexing requires Copy elements, found `{}`; use a constant index to move a resource element",
+                "dynamic indexing requires copyable elements, found `{}`; use a constant index to move a resource element",
                 self.diagnostic_type_name(&element_ty)
             ));
             return error_expr();
@@ -156,7 +156,7 @@ impl Analyzer {
         let element = pointee.as_ref().clone();
         if !self.is_copy_type(&element) {
             self.error(format!(
-                "indexed value access requires Copy output, found `{}`; borrow the indexed place instead",
+                "indexed value access requires copyable output, found `{}`; borrow the indexed place instead",
                 self.diagnostic_type_name(&element)
             ));
             return error_expr();
