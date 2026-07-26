@@ -51,6 +51,8 @@ Project builds use `salicin.toml`, discover `src/lib.sc` and `src/main.sc`, and
 place artifacts under `build/`. A root `[workspace]` lists package members;
 `--package` selects a member, and the workspace shares its root `build`
 directory and `salicin.lock`. Local path dependencies remain explicit.
+`--locked` requires the recorded graph to remain current; `--frozen` also
+forbids dependency network access.
 
 ## Repository layout
 

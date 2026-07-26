@@ -55,6 +55,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   diagnostic phases, and multi-document routing.
 - [Workspace and package identity](project/workspaces.md): membership, package selection,
   shared artifacts, and resolved provider identity.
+- [Dependency resolution](project/dependency-resolution.md): exact local graphs, lock modes,
+  failure atomicity, and the registry selection algorithm.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

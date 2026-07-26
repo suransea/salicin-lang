@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Added strict typed lockfile consumption and reproducible lock modes.
+  `--locked` requires the complete workspace/path provider graph to match the
+  current manifests; `--frozen` adds a no-network contract. Missing,
+  malformed, unsupported, or stale lockfiles fail without being rewritten.
+  The registry snapshot, version selection, yanking, checksum, cache, and
+  offline algorithm is specified while registry transport remains deferred.
+
 ## 0.206.1 - 2026-07-26
 
 - Migrated the tracked inventory example to source-aware lockfile format 2.

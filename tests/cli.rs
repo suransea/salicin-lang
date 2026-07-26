@@ -5427,6 +5427,104 @@ path = "src/broken.sc"
 }
 
 #[test]
+fn locked_and_frozen_require_a_current_valid_lockfile() {
+    let project = TestDirectory::new();
+    let manifest = project.write(
+        "salicin.toml",
+        "[package]\nname = \"locked-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    project.write("src/main.sc", "let main(): i32 = { 0 }\n");
+    let lock = project.join("salicin.lock");
+
+    for mode in ["--locked", "--frozen"] {
+        let missing = salic()
+            .arg("check")
+            .arg(&project.0)
+            .arg(mode)
+            .output()
+            .expect("reject missing required lockfile");
+        assert_eq!(missing.status.code(), Some(2), "{}", output_text(&missing));
+        assert!(
+            String::from_utf8_lossy(&missing.stderr).contains("is required"),
+            "{}",
+            output_text(&missing)
+        );
+        assert!(!lock.exists(), "{mode} must not create a lockfile");
+    }
+
+    let generated = salic()
+        .arg("check")
+        .arg(&project.0)
+        .output()
+        .expect("generate lockfile");
+    assert!(generated.status.success(), "{}", output_text(&generated));
+    let original = fs::read_to_string(&lock).expect("read generated lockfile");
+
+    for mode in ["--locked", "--frozen"] {
+        let current = salic()
+            .arg("check")
+            .arg(&project.0)
+            .arg(mode)
+            .output()
+            .expect("accept current lockfile");
+        assert!(current.status.success(), "{}", output_text(&current));
+        assert_eq!(fs::read_to_string(&lock).unwrap(), original);
+    }
+
+    fs::write(
+        &manifest,
+        "[package]\nname = \"locked-app\"\nversion = \"0.2.0\"\nedition = \"2026\"\n",
+    )
+    .expect("change manifest resolution input");
+    let stale = salic()
+        .arg("check")
+        .arg(&project.0)
+        .arg("--locked")
+        .output()
+        .expect("reject stale lockfile");
+    assert_eq!(stale.status.code(), Some(2), "{}", output_text(&stale));
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("out of date"),
+        "{}",
+        output_text(&stale)
+    );
+    assert_eq!(fs::read_to_string(&lock).unwrap(), original);
+
+    fs::write(&lock, "format = 1\n").expect("damage lockfile");
+    let malformed = salic()
+        .arg("check")
+        .arg(&project.0)
+        .arg("--frozen")
+        .output()
+        .expect("reject malformed lockfile");
+    assert_eq!(
+        malformed.status.code(),
+        Some(2),
+        "{}",
+        output_text(&malformed)
+    );
+    assert!(
+        String::from_utf8_lossy(&malformed.stderr).contains("unsupported lockfile format"),
+        "{}",
+        output_text(&malformed)
+    );
+
+    let conflicting = salic()
+        .arg("check")
+        .arg(&project.0)
+        .arg("--locked")
+        .arg("--frozen")
+        .output()
+        .expect("reject conflicting lock modes");
+    assert_eq!(
+        conflicting.status.code(),
+        Some(2),
+        "{}",
+        output_text(&conflicting)
+    );
+}
+
+#[test]
 fn virtual_workspace_selects_packages_and_shares_lock_and_build_roots() {
     let workspace = TestDirectory::new();
     workspace.write(

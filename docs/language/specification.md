@@ -753,6 +753,8 @@ Project metadata lives in `salicin.toml`. A library target starts at
 contains explicit relative member paths. Membership does not create a
 dependency: each package still declares its direct dependencies. Workspace
 resolution is recorded in one root `salicin.lock`.
+`--locked` requires that exact graph; `--frozen` also prohibits dependency
+network access.
 
 The executable entry point is:
 

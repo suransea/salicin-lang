@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::Version;
+use serde::Deserialize;
 
 use crate::manifest::{DependencyGraph, Edition};
 
@@ -131,6 +132,122 @@ pub struct LockedDependency {
     pub version: Version,
     pub source: String,
     pub path: String,
+}
+
+/// Parse and validate canonical lock data.
+pub fn parse_lockfile(source: &str) -> Result<Lockfile, String> {
+    let raw: RawLockfile =
+        toml::from_str(source).map_err(|error| format!("could not parse lockfile: {error}"))?;
+    if raw.format != LOCKFILE_FORMAT_VERSION {
+        return Err(format!(
+            "unsupported lockfile format {}; expected {}",
+            raw.format, LOCKFILE_FORMAT_VERSION
+        ));
+    }
+    let mut packages = Vec::with_capacity(raw.package.len());
+    for package in raw.package {
+        let version = Version::parse(&package.version).map_err(|error| {
+            format!(
+                "package `{}` has invalid locked version `{}`: {error}",
+                package.name, package.version
+            )
+        })?;
+        let edition = parse_locked_edition(&package.edition)?;
+        validate_locked_source(&package.source, &package.path)?;
+        let mut dependencies = Vec::with_capacity(package.dependencies.len());
+        for dependency in package.dependencies {
+            let dependency_version = Version::parse(&dependency.version).map_err(|error| {
+                format!(
+                    "dependency `{}` has invalid locked version `{}`: {error}",
+                    dependency.alias, dependency.version
+                )
+            })?;
+            validate_locked_source(&dependency.source, &dependency.path)?;
+            dependencies.push(LockedDependency {
+                alias: dependency.alias,
+                name: dependency.name,
+                version: dependency_version,
+                source: dependency.source,
+                path: dependency.path,
+            });
+        }
+        packages.push(LockedPackage {
+            name: package.name,
+            version,
+            edition,
+            source: package.source,
+            path: package.path,
+            dependencies,
+        });
+    }
+    Ok(Lockfile {
+        format: raw.format,
+        packages,
+    })
+}
+
+fn parse_locked_edition(edition: &str) -> Result<Edition, String> {
+    match edition {
+        "2026" => Ok(Edition::Edition2026),
+        edition => Err(format!("unsupported locked edition `{edition}`")),
+    }
+}
+
+fn validate_locked_source(source: &str, path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.contains(['\\', ':'])
+        || Path::new(path).is_absolute()
+        || Path::new(path).components().any(|component| {
+            !matches!(
+                component,
+                Component::Normal(_) | Component::ParentDir | Component::CurDir
+            )
+        })
+    {
+        return Err(format!(
+            "locked package path `{path}` must be a portable relative path"
+        ));
+    }
+    let expected = source
+        .strip_prefix("workspace:")
+        .or_else(|| source.strip_prefix("path:"))
+        .ok_or_else(|| format!("unsupported locked package source `{source}`"))?;
+    if expected != path {
+        return Err(format!(
+            "locked source `{source}` does not match package path `{path}`"
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockfile {
+    format: u32,
+    #[serde(default)]
+    package: Vec<RawLockedPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockedPackage {
+    name: String,
+    version: String,
+    edition: String,
+    source: String,
+    path: String,
+    #[serde(default)]
+    dependencies: Vec<RawLockedDependency>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockedDependency {
+    alias: String,
+    name: String,
+    version: String,
+    source: String,
+    path: String,
 }
 
 /// Generate deterministic lock data from a previously validated graph.
@@ -401,6 +518,39 @@ mod tests {
         fs::write(&path, "stale\n").unwrap();
         assert!(write_package_lockfile(&graph).unwrap());
         assert_eq!(fs::read_to_string(path).unwrap(), lockfile.to_text());
+    }
+
+    #[test]
+    fn parses_generated_lockfiles_and_rejects_stale_shapes() {
+        let temp = TempDir::new();
+        temp.package("dependency", "dependency", "");
+        temp.package(
+            "root",
+            "root",
+            "\n[dependencies]\ndep = { path = \"../dependency\" }\n",
+        );
+        let graph = load_dependency_graph(temp.0.join("root")).unwrap();
+        let expected = generate_lockfile(&graph);
+        assert_eq!(parse_lockfile(&expected.to_text()).unwrap(), expected);
+
+        for (source, expected) in [
+            ("format = 1\n", "unsupported lockfile format"),
+            (
+                "format = 2\nunknown = true\n",
+                "unknown field `unknown`",
+            ),
+            (
+                "format = 2\n[[package]]\nname = \"p\"\nversion = \"bad\"\nedition = \"2026\"\nsource = \"path:.\"\npath = \".\"\n",
+                "invalid locked version",
+            ),
+            (
+                "format = 2\n[[package]]\nname = \"p\"\nversion = \"1.0.0\"\nedition = \"2026\"\nsource = \"path:other\"\npath = \".\"\n",
+                "does not match package path",
+            ),
+        ] {
+            let error = parse_lockfile(source).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]

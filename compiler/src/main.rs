@@ -9,7 +9,7 @@ use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use salicin_lang::lockfile::{
-    generate_lockfile_at, generate_workspace_lockfile, portable_relative_path,
+    generate_lockfile_at, generate_workspace_lockfile, parse_lockfile, portable_relative_path,
     write_lockfile_if_changed, LOCKFILE_NAME,
 };
 use salicin_lang::manifest::{
@@ -29,13 +29,13 @@ const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c"
 const HELP: &str = "Salicin compiler
 
 Usage:
-  salic build [path] [-p <package>] [--bin <name>] [-o <path>]
-  salic check [path] [-p <package>] [--bin <name> | --lib]
-  salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [-o <path>]
+  salic build [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-o <path>]
+  salic check [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
+  salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen] [-o <path>]
   salic fmt [path] [--check]
-  salic run [path] [-p <package>] [--bin <name>] [-- <args>...]
-  salic test [path] [-p <package>] [--bin <name>]
-  salic [path] [-p <package>] [--bin <name>] [-o <path>]
+  salic run [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-- <args>...]
+  salic test [path] [-p <package>] [--bin <name>] [--locked | --frozen]
+  salic [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-o <path>]
 
 Commands:
     build      Compile a Salicin binary target to a native executable
@@ -51,6 +51,8 @@ Options:
       --bin <name>     Select a binary target from salicin.toml
       --lib            Select the library target (check and emit-ir only)
   -p, --package <name> Select a workspace package
+      --locked         Require salicin.lock to be present and current
+      --frozen         Require the lockfile and forbid dependency network access
   -h, --help           Print this help
   -V, --version        Print the compiler version
 
@@ -68,17 +70,20 @@ enum Action {
     Build {
         input: Option<PathBuf>,
         package: Option<String>,
+        lock_mode: LockMode,
         bin: Option<String>,
         output: Option<PathBuf>,
     },
     Check {
         input: Option<PathBuf>,
         package: Option<String>,
+        lock_mode: LockMode,
         target: TargetSelection,
     },
     EmitIr {
         input: Option<PathBuf>,
         package: Option<String>,
+        lock_mode: LockMode,
         target: TargetSelection,
         output: Option<PathBuf>,
     },
@@ -89,12 +94,14 @@ enum Action {
     Run {
         input: Option<PathBuf>,
         package: Option<String>,
+        lock_mode: LockMode,
         bin: Option<String>,
         args: Vec<OsString>,
     },
     Test {
         input: Option<PathBuf>,
         package: Option<String>,
+        lock_mode: LockMode,
         bin: Option<String>,
     },
 }
@@ -106,9 +113,18 @@ enum TargetSelection {
     Lib,
 }
 
+#[derive(Clone, Copy, Default)]
+enum LockMode {
+    #[default]
+    Update,
+    Locked,
+    Frozen,
+}
+
 struct CompileArgs {
     input: Option<PathBuf>,
     package: Option<String>,
+    lock_mode: LockMode,
     output: Option<PathBuf>,
     target: TargetSelection,
 }
@@ -145,6 +161,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         return Ok(ParsedArgs::Action(Action::Build {
             input: None,
             package: None,
+            lock_mode: LockMode::Update,
             bin: None,
             output: None,
         }));
@@ -174,6 +191,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::Build {
                 input: parsed.input,
                 package: parsed.package,
+                lock_mode: parsed.lock_mode,
                 bin,
                 output: parsed.output,
             }
@@ -183,6 +201,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::Check {
                 input: parsed.input,
                 package: parsed.package,
+                lock_mode: parsed.lock_mode,
                 target: parsed.target,
             }
         }
@@ -191,6 +210,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::EmitIr {
                 input: parsed.input,
                 package: parsed.package,
+                lock_mode: parsed.lock_mode,
                 target: parsed.target,
                 output: parsed.output,
             }
@@ -206,13 +226,14 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::Test {
                 input: parsed.input,
                 package: parsed.package,
+                lock_mode: parsed.lock_mode,
                 bin,
             }
         }
         _ if starts_with_dash(first)
             && !matches!(
                 first.to_str(),
-                Some("-o" | "--output" | "--bin" | "-p" | "--package")
+                Some("-o" | "--output" | "--bin" | "-p" | "--package" | "--locked" | "--frozen")
             ) =>
         {
             return Err(format!("unknown option '{}'", first.to_string_lossy()));
@@ -223,6 +244,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::Build {
                 input: parsed.input,
                 package: parsed.package,
+                lock_mode: parsed.lock_mode,
                 bin,
                 output: parsed.output,
             }
@@ -267,6 +289,7 @@ fn parse_compile_args(
     let mut input = None;
     let mut output = None;
     let mut package = None;
+    let mut lock_mode = LockMode::Update;
     let mut target = TargetSelection::Default;
     let mut index = 0;
 
@@ -305,6 +328,17 @@ fn parse_compile_args(
                 ));
             }
             package = Some(name.to_owned());
+        } else if is(argument, "--locked") || is(argument, "--frozen") {
+            if !matches!(lock_mode, LockMode::Update) {
+                return Err(format!(
+                    "'{command}' accepts only one of '--locked' or '--frozen'"
+                ));
+            }
+            lock_mode = if is(argument, "--locked") {
+                LockMode::Locked
+            } else {
+                LockMode::Frozen
+            };
         } else if is(argument, "--bin") {
             if !matches!(target, TargetSelection::Default) {
                 return Err(format!("'{command}' accepts only one target selector"));
@@ -344,6 +378,7 @@ fn parse_compile_args(
     Ok(CompileArgs {
         input,
         package,
+        lock_mode,
         output,
         target,
     })
@@ -375,6 +410,7 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
     Ok(Action::Run {
         input: parsed.input,
         package: parsed.package,
+        lock_mode: parsed.lock_mode,
         bin,
         args: program_args,
     })
@@ -385,12 +421,14 @@ fn execute(action: Action) -> i32 {
         Action::Build {
             input,
             package,
+            lock_mode,
             bin,
             output,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
                 package.as_deref(),
+                lock_mode,
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -427,9 +465,16 @@ fn execute(action: Action) -> i32 {
         Action::Check {
             input,
             package,
+            lock_mode,
             target,
         } => {
-            let target = match resolve_input(input.as_deref(), package.as_deref(), target, false) {
+            let target = match resolve_input(
+                input.as_deref(),
+                package.as_deref(),
+                lock_mode,
+                target,
+                false,
+            ) {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
@@ -441,10 +486,17 @@ fn execute(action: Action) -> i32 {
         Action::EmitIr {
             input,
             package,
+            lock_mode,
             target,
             output,
         } => {
-            let target = match resolve_input(input.as_deref(), package.as_deref(), target, false) {
+            let target = match resolve_input(
+                input.as_deref(),
+                package.as_deref(),
+                lock_mode,
+                target,
+                false,
+            ) {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
@@ -475,12 +527,14 @@ fn execute(action: Action) -> i32 {
         Action::Run {
             input,
             package,
+            lock_mode,
             bin,
             args,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
                 package.as_deref(),
+                lock_mode,
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -502,11 +556,13 @@ fn execute(action: Action) -> i32 {
         Action::Test {
             input,
             package,
+            lock_mode,
             bin,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
                 package.as_deref(),
+                lock_mode,
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -601,13 +657,19 @@ fn report_driver_error(message: String) -> i32 {
 fn resolve_input(
     input: Option<&Path>,
     package: Option<&str>,
+    lock_mode: LockMode,
     selection: TargetSelection,
     binary_only: bool,
 ) -> Result<ResolvedTarget, String> {
     if let Some(path) = input {
         if path.extension() == Some(OsStr::new(SOURCE_FILE_EXTENSION)) {
-            if package.is_some() || !matches!(selection, TargetSelection::Default) {
-                return Err("package and target selectors require a salicin.toml input".into());
+            if package.is_some()
+                || !matches!(lock_mode, LockMode::Update)
+                || !matches!(selection, TargetSelection::Default)
+            {
+                return Err(
+                    "package, lockfile, and target selectors require a salicin.toml input".into(),
+                );
             }
             return Ok(ResolvedTarget {
                 source: path.to_path_buf(),
@@ -661,12 +723,7 @@ fn resolve_input(
     } else {
         generate_workspace_lockfile(&lock_graph, &project_root, &workspace_members)
     };
-    write_lockfile_if_changed(&lockfile_path, &lockfile).map_err(|error| {
-        format!(
-            "could not write lockfile '{}': {error}",
-            lockfile_path.display()
-        )
-    })?;
+    apply_lock_mode(&lockfile_path, &lockfile, lock_mode)?;
 
     let mut protected_inputs = Vec::new();
     for manifest in &lock_graph.packages {
@@ -689,6 +746,50 @@ fn resolve_input(
         is_library: selected.kind == TargetKind::Lib,
         protected_inputs,
     })
+}
+
+fn apply_lock_mode(
+    path: &Path,
+    expected: &salicin_lang::lockfile::Lockfile,
+    mode: LockMode,
+) -> Result<(), String> {
+    match mode {
+        LockMode::Update => write_lockfile_if_changed(path, expected)
+            .map(|_| ())
+            .map_err(|error| format!("could not write lockfile '{}': {error}", path.display())),
+        LockMode::Locked | LockMode::Frozen => {
+            let source = fs::read_to_string(path).map_err(|error| {
+                format!(
+                    "lockfile '{}' is required by {} but could not be read: {error}",
+                    path.display(),
+                    lock_mode_name(mode)
+                )
+            })?;
+            let actual = parse_lockfile(&source).map_err(|error| {
+                format!(
+                    "lockfile '{}' is invalid under {}: {error}",
+                    path.display(),
+                    lock_mode_name(mode)
+                )
+            })?;
+            if &actual != expected {
+                return Err(format!(
+                    "lockfile '{}' is out of date under {}; run without the flag to update it",
+                    path.display(),
+                    lock_mode_name(mode)
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn lock_mode_name(mode: LockMode) -> &'static str {
+    match mode {
+        LockMode::Update => "default resolution",
+        LockMode::Locked => "--locked",
+        LockMode::Frozen => "--frozen",
+    }
 }
 
 fn find_containing_workspace(

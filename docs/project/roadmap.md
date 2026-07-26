@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Reproducible Dependency Resolution
+## Current Milestone: Stable Incremental Inputs
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -29,10 +29,10 @@ condition, and nested residual iteration shapes receive source diagnostics.
 
 The runtime representation audit, native calling convention, exported symbol
 contract, bounded C interoperability, conservative formatter, and editor span
-contract, workspace membership, and source-aware provider identity are
-complete. The current milestone defines deterministic registry and path
-dependency selection, lockfile reuse, checksums, and offline behavior before
-incremental compilation begins.
+contract, workspace membership, source-aware provider identity, and
+reproducible local dependency resolution are complete. The current milestone
+defines stable semantic inputs and invalidation boundaries for incremental
+compilation.
 
 ## Test Throughput Foundation
 
@@ -151,11 +151,20 @@ workspace/path source identities. Compiler canonical names and native symbols
 use resolved `(source, name, exact version)` provider identity, allowing equal
 package declarations from distinct providers without conflation.
 
+## Completed Reproducible Resolution
+
+The [dependency resolution contract](dependency-resolution.md) gives
+workspace and path dependencies a canonical complete provider graph.
+Lockfiles are strictly parsed as typed format-2 data. `--locked` rejects
+missing, malformed, or stale graphs without writing; `--frozen` additionally
+forbids network access. The future registry resolver's snapshot, yanking,
+highest-compatible selection, checksum, cache, and offline rules are fixed
+without introducing a public registry service.
+
 ## Later Ecosystem Milestone
 
 Package compatibility follows the completed tooling foundation:
 
-- reproducible dependency resolution;
 - incremental compilation keyed by stable semantic inputs.
 
 No milestone may freeze a public ABI, package registry protocol, or compatibility promise while the
