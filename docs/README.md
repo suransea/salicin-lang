@@ -43,6 +43,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 - [Project TODO](project/todo.md): unfinished tasks and their acceptance criteria.
 - [Experimental ABI review](project/abi-review.md): current runtime representations and boundary
   gaps.
+- [Native calling convention](project/native-calling-convention.md): parameter flattening,
+  ownership transfer, cleanup, effects, and returns.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

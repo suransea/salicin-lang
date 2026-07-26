@@ -44,8 +44,8 @@ surface accepts only integers, raw pointers, and `()` results.
 
 ## Function Boundaries
 
-Runtime parameter groups are flattened in source order. Unit parameters are
-erased. `borrow` and `borrow(mut)` parameters pass one pointer; inferred,
+Runtime parameter groups are flattened in source order. Unit parameters and
+borrows of unit are erased. Other `borrow` and `borrow(mut)` parameters pass one pointer; inferred,
 `copy`, and `move` parameters pass the value representation directly.
 Aggregate returns are direct LLVM aggregate returns.
 
@@ -102,4 +102,3 @@ supported scalar/aggregate call surface belong to `ABI-C-1`.
 - Native export/linkage is intentionally absent; `pub` is source visibility.
 - The C surface is bounded and source-validated, but aggregate calls still
   require cross-language verification.
-

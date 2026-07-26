@@ -1183,7 +1183,7 @@ impl<'a> FunctionEmitter<'a> {
         ));
         let mut emitted_parameter_count = 0;
         for (index, parameter) in self.function.params.iter().enumerate() {
-            if parameter.ty == Ty::Unit {
+            if llvm_parameter_is_erased(&parameter.ty) {
                 continue;
             }
             if emitted_parameter_count != 0 {
@@ -1209,7 +1209,7 @@ impl<'a> FunctionEmitter<'a> {
             if self.terminated {
                 break;
             }
-            if parameter.ty == Ty::Unit {
+            if llvm_parameter_is_erased(&parameter.ty) {
                 continue;
             }
             if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
@@ -4410,6 +4410,14 @@ fn llvm_return_type(ty: &Ty) -> Result<String, Diagnostic> {
     }
 }
 
+fn llvm_parameter_is_erased(ty: &Ty) -> bool {
+    *ty == Ty::Unit
+        || matches!(
+            ty,
+            Ty::Reference { pointee, .. } if pointee.as_ref() == &Ty::Unit
+        )
+}
+
 fn llvm_parameter_type(ty: &Ty, mode: PassMode) -> Result<String, Diagnostic> {
     if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
         Ok("ptr".to_owned())
@@ -4635,7 +4643,10 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
 
 #[cfg(test)]
 mod tests {
-    use super::{llvm_field_type, llvm_parameter_type, llvm_return_type, llvm_value_type};
+    use super::{
+        llvm_field_type, llvm_parameter_is_erased, llvm_parameter_type, llvm_return_type,
+        llvm_value_type,
+    };
     use crate::ast::PassMode;
     use crate::codegen::hir::Ty;
 
@@ -4667,6 +4678,17 @@ mod tests {
         assert_eq!(llvm_field_type(&Ty::Unit).unwrap(), "[0 x i8]");
         assert!(llvm_value_type(&Ty::Unit).is_err());
         assert!(llvm_value_type(&Ty::Never).is_err());
+        assert!(llvm_parameter_is_erased(&Ty::Unit));
+        assert!(llvm_parameter_is_erased(&Ty::Reference {
+            pointee: Box::new(Ty::Unit),
+            mutable: false,
+            region: None,
+        }));
+        assert!(!llvm_parameter_is_erased(&Ty::Reference {
+            pointee: Box::new(Ty::I32),
+            mutable: false,
+            region: None,
+        }));
         for mode in [PassMode::Borrow, PassMode::MutBorrow] {
             assert_eq!(llvm_parameter_type(&Ty::I128, mode).unwrap(), "ptr");
         }

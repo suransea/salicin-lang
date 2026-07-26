@@ -2681,6 +2681,27 @@ fn emits_flattened_curried_call_and_i32_wrapper() {
 }
 
 #[test]
+fn rejects_unsized_native_call_parameters_and_returns_before_emission() {
+    let diagnostics = compile_library_text(
+        "let Slice = std.Slice\n\
+         let invalid(value: Slice(i32)): Slice(i32) = { loop {} }\n",
+    )
+    .expect_err("unsized native call boundary must fail");
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("parameter `value` of `invalid` has unsized type")),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("function `invalid` returns unsized type")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn emits_global_if_mutation_and_short_circuit() {
     let global = Item::Global(Binding {
         value_source: None,

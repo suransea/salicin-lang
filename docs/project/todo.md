@@ -13,17 +13,11 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-Execution order is strict: perform the three remaining ABI tasks in listed
+Execution order is strict: perform the two remaining ABI tasks in listed
 order. Tooling and package work does not begin before the ABI sequence is
 complete.
 
-## P0: Native Calling Convention
-
-- [ ] **ABI-CALL-1: Define the native Salicin calling convention**
-
-Make runtime parameter groups, return values, ownership transfer, cleanup
-responsibility, effect rows, and error propagation explicit across separately
-compiled modules. Reject unsupported boundary types at their declarations.
+## P0: Linkage And C Interoperability
 
 - [ ] **ABI-LINK-1: Define exported symbols and cross-module linkage**
 
@@ -40,7 +34,7 @@ definitions orthogonal to this boundary.
 
 ## P1: Tooling And Packages
 
-Entry gate: all three P0 ABI tasks are complete.
+Entry gate: both P0 ABI tasks are complete.
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

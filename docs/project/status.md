@@ -267,6 +267,14 @@ its `Result` return boundary, and compiler-owned continuation records contain
 entry, drop, environment, and active-flag pointers. Native calling agreement
 and exported Salicin linkage remain the active ABI milestones.
 
+The experimental [native calling convention](native-calling-convention.md)
+defines flattened runtime groups, erased Unit and borrowed-Unit parameters,
+direct value or pointer passing, owned argument and return transfer, cleanup
+on every exit, static effect authority, algebraic continuation lowering, and
+`Result`-based `Throws` propagation. Unsized value parameters and returns are
+rejected at source declarations. Exported symbol and separate-object
+agreement are not yet implemented.
+
 ## Standard Library
 
 The source library is split into:

@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Defined the experimental whole-program native calling convention: compile
+  groups disappear, runtime groups flatten in source order, borrows pass as
+  pointers, owned values transfer cleanup at call entry, direct returns
+  transfer ownership to callers, effects add no hidden direct-call arguments,
+  and `Throws` uses its matching `Result` return. Caller and callee now share
+  Unit and borrowed-Unit parameter erasure, fixing a mismatched LLVM signature.
+  Source diagnostics and tests pin unsized boundary rejection before emission.
 - Audited and documented the experimental native ABI representation for
   scalars, pointers, borrows, slices, aggregates, enums, callables, effects,
   ownership modes, continuations, and effect callables. Low-level tests pin

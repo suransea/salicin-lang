@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Native Calling Convention
+## Current Milestone: Exported Symbols And Linkage
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -27,11 +27,11 @@ suspension, and residual handler specialization for supported state shapes.
 Unsupported recursive, self-referential, move-only backedge, effectful
 condition, and nested residual iteration shapes receive source diagnostics.
 
-The runtime representation audit is complete. The current milestone defines
-native runtime parameter groups, returns, ownership transfer, cleanup
-responsibility, effect lowering, and error propagation. Linkage and verified C
-interoperability follow in that order. This remains an experimental ABI
-definition, not a 1.0 stability promise.
+The runtime representation audit and native calling convention are complete.
+The current milestone defines exported symbol identity, declaration and
+definition agreement, generic specialization ownership, and deterministic
+collision diagnostics. Verified C interoperability follows. This remains an
+experimental ABI definition, not a 1.0 stability promise.
 
 ## Test Throughput Foundation
 
@@ -97,6 +97,19 @@ is whole-program behavior rather than a separately compiled contract, ordinary
 Salicin symbols remain internal, and C aggregate calls need cross-language
 verification. These feed `ABI-CALL-1`, `ABI-LINK-1`, and `ABI-C-1`
 respectively.
+
+## Completed Native Calling Convention
+
+The [native calling convention](native-calling-convention.md) defines runtime
+group flattening, Unit and borrowed-Unit erasure, value and borrow passing,
+owned cleanup transfer, direct returns, `Throws` result boundaries, algebraic
+effect specialization, erased continuation records, and tail-call cleanup.
+Caller and callee now share one parameter-erasure rule; source validation
+rejects unsized parameters and returns before LLVM emission.
+
+The convention is a whole-program contract. Exporting it between separately
+compiled objects requires the symbol identity and declaration agreement from
+`ABI-LINK-1`.
 
 ## Later Ecosystem Milestone
 

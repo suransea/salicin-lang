@@ -2221,6 +2221,13 @@ fn m1_ownership_programs_run_with_expected_result() {
             output_text(&output)
         );
     }
+
+    let unit_borrow = fs::read_to_string(fixture("pass", "borrowed_unit_is_abi_erased.sc"))
+        .expect("read borrowed-unit ABI fixture");
+    let ir = compile_source(&unit_borrow).expect("compile borrowed-unit ABI fixture");
+    assert!(ir.contains("define internal void @sali.fn.6f627365727665()"));
+    assert!(ir.contains("call void @sali.fn.6f627365727665()"));
+    assert!(!ir.contains("@sali.fn.6f627365727665(ptr"));
 }
 
 #[test]
