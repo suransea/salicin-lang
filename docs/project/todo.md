@@ -13,12 +13,12 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-The async, ABI, formatter, editor-span, workspace-identity, and reproducible
-resolution milestones are complete. Incremental-compilation work is current.
+The accepted roadmap queue is complete. Add a new task here only after its
+design direction and entry gate are accepted.
 
-## P0: Incremental Compilation
+## Active Queue
 
-- [ ] **INCR-1: Define stable incremental-compilation inputs**
+No active tasks.
 
 ## Definition of Done
 

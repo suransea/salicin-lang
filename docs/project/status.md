@@ -20,18 +20,23 @@ current capability inventory. It does not record release history; see the
   group, while process-terminating fixtures remain isolated;
 - package and virtual workspace manifests, explicit workspace members,
   `--package` selection, local path dependencies, shared build roots, and
-  deterministic source-aware lockfiles.
+  deterministic source-aware lockfiles;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
-  UTF-16 positions, phased precision metadata, and multi-document routing.
+  UTF-16 positions, phased precision metadata, and multi-document routing;
+- versioned SHA-256 incremental input fingerprints over compiler, target,
+  standard-library, provider-graph, module, and source-byte inputs.
 
 The compiler does not yet provide an LSP transport, incremental document
 updates, completion, hover, or rename.
+It also does not persist incremental compilation artifacts; the stable
+fingerprint defines cache inputs without freezing a cache format.
 
 The command-line surface is:
 
 ```text
 salic check SOURCE
 salic emit-ir SOURCE -o OUTPUT
+salic fingerprint SOURCE
 salic build SOURCE -o OUTPUT
 salic run SOURCE -- ARGUMENTS
 salic test SOURCE

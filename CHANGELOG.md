@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Added schema-1 SHA-256 incremental input fingerprints and the read-only
+  `salic fingerprint` command. Keys include compiler/host, target, edition,
+  embedded standard-library sources, resolved provider graph, dependency
+  aliases, module paths, and source bytes while excluding graph IDs, absolute
+  paths, mtimes, traversal order, and output locations. Path-migration and
+  precise invalidation tests establish the contract without freezing a
+  persistent cache format.
+
 ## 0.207.0 - 2026-07-26
 
 - Added strict typed lockfile consumption and reproducible lock modes.

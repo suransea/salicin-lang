@@ -5525,6 +5525,60 @@ fn locked_and_frozen_require_a_current_valid_lockfile() {
 }
 
 #[test]
+fn incremental_fingerprint_is_path_independent_and_input_sensitive() {
+    fn write_project(project: &TestDirectory) {
+        project.write(
+            "salicin.toml",
+            "[package]\nname = \"fingerprint-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        );
+        project.write("src/main.sc", "let main(): i32 = { shared.answer() }\n");
+        project.write(
+            "src/lib.sc",
+            "pub let library_answer(): i32 = { shared.answer() }\n",
+        );
+        project.write("src/shared.sc", "pub(package) let answer(): i32 = { 42 }\n");
+    }
+
+    fn fingerprint(project: &TestDirectory, extra: &[&str]) -> Output {
+        let mut command = salic();
+        command.arg("fingerprint").arg(&project.0);
+        command.args(extra);
+        command.output().expect("fingerprint project")
+    }
+
+    let first = TestDirectory::new();
+    let relocated = TestDirectory::new();
+    write_project(&first);
+    write_project(&relocated);
+
+    let first_binary = fingerprint(&first, &[]);
+    let relocated_binary = fingerprint(&relocated, &[]);
+    assert!(
+        first_binary.status.success(),
+        "{}",
+        output_text(&first_binary)
+    );
+    assert!(
+        relocated_binary.status.success(),
+        "{}",
+        output_text(&relocated_binary)
+    );
+    assert_eq!(first_binary.stdout, relocated_binary.stdout);
+    let hex = String::from_utf8_lossy(&first_binary.stdout);
+    assert_eq!(hex.trim().len(), 64, "{hex}");
+    assert!(hex.trim().bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let library = fingerprint(&first, &["--lib", "--locked"]);
+    assert!(library.status.success(), "{}", output_text(&library));
+    assert_ne!(first_binary.stdout, library.stdout);
+
+    relocated.write("src/shared.sc", "pub(package) let answer(): i32 = { 43 }\n");
+    let changed = fingerprint(&relocated, &["--locked"]);
+    assert!(changed.status.success(), "{}", output_text(&changed));
+    assert_ne!(first_binary.stdout, changed.stdout);
+}
+
+#[test]
 fn virtual_workspace_selects_packages_and_shares_lock_and_build_roots() {
     let workspace = TestDirectory::new();
     workspace.write(

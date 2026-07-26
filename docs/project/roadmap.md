@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Stable Incremental Inputs
+## Current Milestone: Queue Complete
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -29,10 +29,9 @@ condition, and nested residual iteration shapes receive source diagnostics.
 
 The runtime representation audit, native calling convention, exported symbol
 contract, bounded C interoperability, conservative formatter, and editor span
-contract, workspace membership, source-aware provider identity, and
-reproducible local dependency resolution are complete. The current milestone
-defines stable semantic inputs and invalidation boundaries for incremental
-compilation.
+contract, workspace membership, source-aware provider identity, reproducible
+local dependency resolution, and stable incremental inputs are complete. No
+additional implementation milestone is accepted.
 
 ## Test Throughput Foundation
 
@@ -161,14 +160,19 @@ forbids network access. The future registry resolver's snapshot, yanking,
 highest-compatible selection, checksum, cache, and offline rules are fixed
 without introducing a public registry service.
 
-## Later Ecosystem Milestone
+## Completed Stable Incremental Inputs
 
-Package compatibility follows the completed tooling foundation:
+The [incremental input contract](incremental-inputs.md) defines a versioned
+SHA-256 schema over compiler/host, target, edition, embedded libraries,
+resolved providers, dependency aliases, module paths, and source bytes.
+Graph-local IDs, absolute paths, mtimes, traversal order, and output paths are
+excluded. Unit and CLI tests pin path migration, graph reordering, source,
+provider, alias, and target invalidation. Persistent cache artifacts remain a
+separate unaccepted milestone.
 
-- incremental compilation keyed by stable semantic inputs.
-
-No milestone may freeze a public ABI, package registry protocol, or compatibility promise while the
-corresponding language representation is still changing.
+No future milestone may freeze a public ABI, package registry protocol, cache
+artifact, or compatibility promise while its representation is still
+changing.
 
 ## Deferred
 

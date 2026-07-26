@@ -13,8 +13,8 @@ use salicin_lang::lockfile::{
     write_lockfile_if_changed, LOCKFILE_NAME,
 };
 use salicin_lang::manifest::{
-    load_dependency_graph, load_project, DependencyGraph, Manifest, ProjectManifest, Target,
-    TargetKind, MANIFEST_FILE_NAME, SOURCE_FILE_EXTENSION,
+    load_dependency_graph, load_project, DependencyGraph, Edition, Manifest, ProjectManifest,
+    Target, TargetKind, MANIFEST_FILE_NAME, SOURCE_FILE_EXTENSION,
 };
 use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
@@ -22,6 +22,7 @@ use salicin_lang::{
     compile_library_source, compile_library_source_packages, compile_source,
     compile_source_packages, compile_test_source, compile_test_source_packages,
     formatter::format_source,
+    incremental::{fingerprint_package_graph, IncrementalTarget},
 };
 
 const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c");
@@ -32,6 +33,7 @@ Usage:
   salic build [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-o <path>]
   salic check [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen] [-o <path>]
+  salic fingerprint [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic fmt [path] [--check]
   salic run [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-- <args>...]
   salic test [path] [-p <package>] [--bin <name>] [--locked | --frozen]
@@ -41,6 +43,7 @@ Commands:
     build      Compile a Salicin binary target to a native executable
     check      Parse and type-check a source or package target
   emit-ir    Print LLVM IR, or write it to a file with -o
+  fingerprint Print the stable incremental input fingerprint
   fmt        Format one source file or every source in the selected package
   run        Compile and run a program; arguments after -- go to the program
   test       Compile all test declarations into one runner and run it
@@ -86,6 +89,12 @@ enum Action {
         lock_mode: LockMode,
         target: TargetSelection,
         output: Option<PathBuf>,
+    },
+    Fingerprint {
+        input: Option<PathBuf>,
+        package: Option<String>,
+        lock_mode: LockMode,
+        target: TargetSelection,
     },
     Format {
         input: Option<PathBuf>,
@@ -177,7 +186,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if args.len() == 2
         && matches!(
             first.to_str(),
-            Some("build" | "check" | "emit-ir" | "fmt" | "run" | "test")
+            Some("build" | "check" | "emit-ir" | "fingerprint" | "fmt" | "run" | "test")
         )
         && (is(&args[1], "-h") || is(&args[1], "--help"))
     {
@@ -213,6 +222,15 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 lock_mode: parsed.lock_mode,
                 target: parsed.target,
                 output: parsed.output,
+            }
+        }
+        Some("fingerprint") => {
+            let parsed = parse_compile_args("fingerprint", &args[1..], false, true)?;
+            Action::Fingerprint {
+                input: parsed.input,
+                package: parsed.package,
+                lock_mode: parsed.lock_mode,
+                target: parsed.target,
             }
         }
         Some("fmt") => {
@@ -520,6 +538,30 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
+        Action::Fingerprint {
+            input,
+            package,
+            lock_mode,
+            target,
+        } => {
+            let target = match resolve_input(
+                input.as_deref(),
+                package.as_deref(),
+                lock_mode,
+                target,
+                false,
+            ) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
+            match fingerprint_target(&target) {
+                Ok(fingerprint) => {
+                    println!("{fingerprint}");
+                    0
+                }
+                Err(()) => 1,
+            }
+        }
         Action::Format { input, check } => match format_input(input.as_deref(), check) {
             Ok(code) => code,
             Err(message) => report_driver_error(message),
@@ -600,6 +642,7 @@ struct ResolvedTarget {
     source: PathBuf,
     project: Option<ProjectTarget>,
     is_library: bool,
+    edition: Edition,
     protected_inputs: Vec<PathBuf>,
 }
 
@@ -675,6 +718,7 @@ fn resolve_input(
                 source: path.to_path_buf(),
                 project: None,
                 is_library: false,
+                edition: Edition::Edition2026,
                 protected_inputs: vec![path.to_path_buf()],
             });
         }
@@ -744,6 +788,7 @@ fn resolve_input(
             packages,
         }),
         is_library: selected.kind == TargetKind::Lib,
+        edition: package_manifest.package.edition,
         protected_inputs,
     })
 }
@@ -1298,6 +1343,37 @@ fn compile_test_target(target: &ResolvedTarget) -> Result<salicin_lang::TestComp
 
     let packages = read_source_packages(target)?;
     report_project_compilation(&target.source, compile_test_source_packages(&packages))
+}
+
+fn fingerprint_target(
+    target: &ResolvedTarget,
+) -> Result<salicin_lang::incremental::IncrementalFingerprint, ()> {
+    let packages = if target.project.is_some() {
+        read_source_packages(target)?
+    } else {
+        vec![SourcePackage {
+            id: PackageId(0),
+            name: "source".into(),
+            version: "0.0.0".into(),
+            identity: "source@0.0.0".into(),
+            is_primary: true,
+            dependencies: BTreeMap::new(),
+            sources: vec![SourceUnit {
+                path: target.source.display().to_string(),
+                module_path: Vec::new(),
+                source: read_source(&target.source)?,
+                is_root: true,
+            }],
+        }]
+    };
+    let mode = if target.is_library {
+        IncrementalTarget::Library
+    } else {
+        IncrementalTarget::Binary
+    };
+    fingerprint_package_graph(&packages, target.edition, mode).map_err(|error| {
+        eprintln!("salic: could not fingerprint incremental inputs: {error}");
+    })
 }
 
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {

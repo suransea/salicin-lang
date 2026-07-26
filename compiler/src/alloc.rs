@@ -16,8 +16,23 @@ const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
 const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
 const EDITION_2026_STRING: &str = include_str!("../../library/alloc/src/string.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
+const EDITION_2026_MODULES: &[(&str, &str)] = &[
+    ("lib", EDITION_2026_LIB),
+    ("boxed", EDITION_2026_BOXED),
+    ("vec", EDITION_2026_VEC),
+    ("string", EDITION_2026_STRING),
+    ("raw", EDITION_2026_RAW),
+];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<AllocBundle, AllocBundleError>> = OnceLock::new();
+
+pub(crate) fn incremental_sources(
+    edition: Edition,
+) -> impl Iterator<Item = (&'static str, &'static str)> {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_MODULES.iter().copied(),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllocBundle {
@@ -37,17 +52,9 @@ impl AllocBundle {
     }
 
     fn load(edition: Edition) -> Result<Self, AllocBundleError> {
-        let modules = match edition {
-            Edition::Edition2026 => [
-                ("lib", EDITION_2026_LIB),
-                ("boxed", EDITION_2026_BOXED),
-                ("vec", EDITION_2026_VEC),
-                ("string", EDITION_2026_STRING),
-                ("raw", EDITION_2026_RAW),
-            ],
-        };
+        let modules = EDITION_2026_MODULES;
         let mut combined = Program::new(Vec::new());
-        for &(module, source) in &modules {
+        for &(module, source) in modules {
             let mut program = parser::parse(source).map_err(|error| {
                 AllocBundleError::new(
                     edition,
@@ -78,10 +85,10 @@ impl AllocBundle {
             source: String::new(),
             is_root: true,
         }];
-        sources.extend(modules.map(|(module, source)| SourceUnit {
+        sources.extend(modules.iter().map(|(module, source)| SourceUnit {
             path: format!("<alloc/{module}>"),
             module_path: alloc_source_module_path(module),
-            source: source.to_owned(),
+            source: (*source).to_owned(),
             is_root: false,
         }));
         let mut program = modules::resolve_embedded_alloc_sources(&sources)

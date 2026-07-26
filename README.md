@@ -34,6 +34,7 @@ Common commands:
 ```sh
 salic check main.sc
 salic emit-ir main.sc -o main.ll
+salic fingerprint main.sc
 salic build main.sc -o main
 salic run main.sc -- argument
 salic test main.sc

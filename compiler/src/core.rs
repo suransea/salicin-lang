@@ -45,6 +45,34 @@ const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
+const EDITION_2026_MODULES: &[(&str, &str)] = &[
+    ("lib", EDITION_2026_LIB),
+    ("prelude", EDITION_2026_PRELUDE),
+    ("never", EDITION_2026_NEVER),
+    ("marker", EDITION_2026_MARKER),
+    ("primitives", EDITION_2026_PRIMITIVES),
+    ("option", EDITION_2026_OPTION),
+    ("result", EDITION_2026_RESULT),
+    ("error", EDITION_2026_ERROR),
+    ("cmp", EDITION_2026_CMP),
+    ("flow", EDITION_2026_FLOW),
+    ("ops", EDITION_2026_OPS),
+    ("ops/arith", EDITION_2026_OPS_ARITH),
+    ("ops/bit", EDITION_2026_OPS_BIT),
+    ("ops/assign", EDITION_2026_OPS_ASSIGN),
+    ("ops/index", EDITION_2026_OPS_INDEX),
+    ("effect", EDITION_2026_EFFECT),
+    ("unsafe", EDITION_2026_UNSAFE),
+    ("async", EDITION_2026_ASYNC),
+    ("domains", EDITION_2026_DOMAINS),
+    ("passing", EDITION_2026_PASSING),
+    ("borrow", EDITION_2026_BORROW),
+    ("control", EDITION_2026_CONTROL),
+    ("iter", EDITION_2026_ITER),
+    ("algebra", EDITION_2026_ALGEBRA),
+    ("functional", EDITION_2026_FUNCTIONAL),
+    ("memory", EDITION_2026_MEMORY),
+];
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "primitives",
@@ -57,6 +85,14 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
+
+pub(crate) fn incremental_sources(
+    edition: Edition,
+) -> impl Iterator<Item = (&'static str, &'static str)> {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_MODULES.iter().copied(),
+    }
+}
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -1056,39 +1092,9 @@ impl CoreBundle {
 
     pub(crate) fn cached_for_edition(edition: Edition) -> Result<&'static Self, CoreBundleError> {
         match edition {
-            Edition::Edition2026 => match EDITION_2026_BUNDLE.get_or_init(|| {
-                Self::from_modules(
-                    edition,
-                    &[
-                        ("lib", EDITION_2026_LIB),
-                        ("prelude", EDITION_2026_PRELUDE),
-                        ("never", EDITION_2026_NEVER),
-                        ("marker", EDITION_2026_MARKER),
-                        ("primitives", EDITION_2026_PRIMITIVES),
-                        ("option", EDITION_2026_OPTION),
-                        ("result", EDITION_2026_RESULT),
-                        ("error", EDITION_2026_ERROR),
-                        ("cmp", EDITION_2026_CMP),
-                        ("flow", EDITION_2026_FLOW),
-                        ("ops", EDITION_2026_OPS),
-                        ("ops/arith", EDITION_2026_OPS_ARITH),
-                        ("ops/bit", EDITION_2026_OPS_BIT),
-                        ("ops/assign", EDITION_2026_OPS_ASSIGN),
-                        ("ops/index", EDITION_2026_OPS_INDEX),
-                        ("effect", EDITION_2026_EFFECT),
-                        ("unsafe", EDITION_2026_UNSAFE),
-                        ("async", EDITION_2026_ASYNC),
-                        ("domains", EDITION_2026_DOMAINS),
-                        ("passing", EDITION_2026_PASSING),
-                        ("borrow", EDITION_2026_BORROW),
-                        ("control", EDITION_2026_CONTROL),
-                        ("iter", EDITION_2026_ITER),
-                        ("algebra", EDITION_2026_ALGEBRA),
-                        ("functional", EDITION_2026_FUNCTIONAL),
-                        ("memory", EDITION_2026_MEMORY),
-                    ],
-                )
-            }) {
+            Edition::Edition2026 => match EDITION_2026_BUNDLE
+                .get_or_init(|| Self::from_modules(edition, EDITION_2026_MODULES))
+            {
                 Ok(bundle) => Ok(bundle),
                 Err(error) => Err(error.clone()),
             },

@@ -57,6 +57,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   shared artifacts, and resolved provider identity.
 - [Dependency resolution](project/dependency-resolution.md): exact local graphs, lock modes,
   failure atomicity, and the registry selection algorithm.
+- [Stable incremental inputs](project/incremental-inputs.md): versioned SHA-256 schema,
+  invalidation boundaries, and deliberate cache limits.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.
