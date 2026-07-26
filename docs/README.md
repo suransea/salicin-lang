@@ -39,7 +39,7 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 ## Project
 
 - [Implementation status](project/status.md): supported behavior and known boundaries.
-- [Language roadmap](project/roadmap.md): milestone order, exit conditions, and deferrals.
+- [Project roadmap](project/roadmap.md): milestone order, exit conditions, and deferrals.
 - [Project TODO](project/todo.md): unfinished tasks and their acceptance criteria.
 - [Experimental ABI review](project/abi-review.md): current runtime representations and boundary
   gaps.
@@ -59,6 +59,6 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   failure atomicity, and the registry selection algorithm.
 - [Stable incremental inputs](project/incremental-inputs.md): versioned SHA-256 schema,
   invalidation boundaries, and deliberate cache limits.
-- [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
-  borrowing, and executor boundary for the active async milestone.
+- [Initial async contract](project/async-contract.md): cold-future, polling, cancellation,
+  borrowing, and executor boundaries.
 - [Changelog](../CHANGELOG.md): release-by-release history.

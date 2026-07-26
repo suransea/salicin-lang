@@ -1,198 +1,197 @@
-# Language Roadmap
+# Project Roadmap
 
-Status: living project direction
+Status: active project direction
 
-This roadmap records sequencing and exit conditions. It does not define language behavior; the
-[language specification](../language/specification.md) and [grammar](../language/grammar.md) do
-that. Current implementation facts belong in [status](status.md), actionable work in
-[TODO](todo.md), and completed work in the [changelog](../../CHANGELOG.md).
+This roadmap defines outcomes, order, and entry and exit gates. It does not
+define language behavior; the [language specification](../language/specification.md)
+and [grammar](../language/grammar.md) do that. Current implementation facts
+belong in [status](status.md), executable work in [TODO](todo.md), and completed
+work in the [changelog](../../CHANGELOG.md).
 
-## Direction
+## Product Direction
 
-Salicin is moving toward a coherent native language built around deterministic ownership, explicit
-effects, static abstraction, and source-backed library contracts. Work should complete one
-end-to-end capability at a time and preserve:
+Salicin's next phase turns the implemented language core into a compiler that
+can support daily development. The near-term order is deliberately:
+
+1. make unchanged builds reusable;
+2. make source analysis continuously available to editors;
+3. build source navigation on structured semantic identities;
+4. make locked third-party source dependencies reproducible.
+
+New language surface is not a near-term goal unless one of those outcomes
+requires it. Every milestone must continue to preserve:
 
 - deterministic left-to-right evaluation and exactly-once cleanup;
-- source-level diagnostics without generated names;
+- source-level diagnostics without generated implementation names;
 - static dispatch and bounded monomorphization;
 - explicit authority for unsafe operations and effects;
-- ordinary library declarations wherever compiler primitives are unnecessary.
+- ordinary library declarations wherever compiler primitives are unnecessary;
+- reproducible behavior independent of checkout path and traversal order.
 
-## Current Milestone: Queue Complete
+## Planning Model
 
-Async state machines now cover cold construction, explicit polling,
-cancellation, finite sequential and branch suspension, recurring loop
-suspension, and residual handler specialization for supported state shapes.
-Unsupported recursive, self-referential, move-only backedge, effectful
-condition, and nested residual iteration shapes receive source diagnostics.
+The roadmap uses ordered milestones rather than release dates. One milestone
+is active at a time:
 
-The runtime representation audit, native calling convention, exported symbol
-contract, bounded C interoperability, conservative formatter, and editor span
-contract, workspace membership, source-aware provider identity, reproducible
-local dependency resolution, and stable incremental inputs are complete. No
-additional implementation milestone is accepted.
+- **Now** is implementation-ready and owns the P0 queue.
+- **Next** has an accepted outcome but starts only after the current exit gate.
+- **Later** is ordered and accepted at milestone granularity; individual tasks
+  may still need a design contract before implementation.
+- **Design candidates** are real gaps but are not promises or active work.
 
-## Test Throughput Foundation
+Completed milestones are removed from this file. Their behavior is recorded
+in [status](status.md), their contracts remain under `docs/project`, and their
+history remains in the changelog.
 
-The compiler provides contextual `test("name") { ... }` registrations and a
-`salic test` command that collects the selected package into one native
-runner. This removes per-case native linking from language-level regression
-suites. Compatible repository execution fixtures are isolated as modules and
-declare their own registrations for collection into one runner per semantic
-group; the Rust harness does not synthesize tests. Fixtures that must terminate
-the process remain independent. Test registration is intentionally narrower
-than general compile-time execution.
+## Now: Persistent Incremental Builds
 
-## Confirmed ABI Direction
+The existing schema-1 fingerprint already identifies the semantic and native
+inputs to one selected package-graph target. This milestone turns that
+read-only identity into a safe, content-addressed cache without changing
+language semantics or freezing a precompiled package format.
 
-The completed representation and ABI milestone established three orthogonal source forms:
-
-- C data representation belongs to the type constructor, written `struct(c) { ... }`; Salicin will
-  not add a general `rep` modifier;
-- each foreign-owned declaration uses a complete `foreign(c)` or
-  `foreign(c, "external_symbol")` initializer, with an omitted symbol defaulting to the Salicin
-  declaration name and calls requiring `Unsafe`;
-- each compiler-owned core declaration uses a complete core-private `builtin()` initializer,
-  including compiler-defined types and type constructors.
-
-The bootstrap declaration is `let builtin() = builtin()`. Semantic analysis treats its use
-as a declaration-definition marker rather than ordinary runtime recursion; edition validation
-assigns its uninhabited result. Every marker except that bootstrap must be resolved before code
-generation.
-Trait requirements remain bodyless; user opaque types are a separate design problem.
-
-This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not
-introduce `@` syntax, and `foreign` is not a variant of `builtin`.
-
-## Completed Foundation: C Forms And Compiler Definitions
-
-This milestone followed the direct-tail suspended residual async slice and
-completed before the remaining async shapes, formatter, LSP, package, or
-incremental-compilation work.
+The first cache is intentionally whole-graph and stores compiler-owned LLVM IR.
+Manifest resolution and fingerprinting still run on every invocation; an
+unchanged hit may skip semantic analysis and LLVM generation. Native linking
+remains a separate step so output selection and host linker failures are not
+hidden by the cache.
 
 Exit conditions:
 
-- C-compatible data uses only `struct(c)` and has verified layout diagnostics;
-- every foreign declaration uses `foreign(c, ...)`, defaults its symbol
-  predictably, and requires `Unsafe` at call sites;
-- every compiler-owned core declaration uses the private complete
-  `builtin()` initializer, while trait requirements remain bodyless;
-- legacy `rep c`, `@link_name`, and grouped `extern "C"` forms have migration
-  diagnostics and no accepted grammar path;
-- source, contract, cross-module, LLVM, and native tests cover the three
-  boundaries independently.
+- cache location, key, payload schema, ownership, and invalidation rules are
+  documented independently of output paths;
+- `build`, `run`, `test`, and `emit-ir` can reuse valid cached IR, while
+  `check` continues to perform source analysis;
+- misses, disabled caching, corrupt or truncated entries, compiler/schema
+  changes, source changes, target changes, and dependency changes behave
+  deterministically;
+- entries are written atomically, a failed compilation cannot publish an
+  entry, and concurrent readers never observe partial data;
+- CLI output makes cache use inspectable without changing ordinary program
+  stdout or exit status;
+- cold and warm outputs are byte-equivalent where the current compiler
+  promises deterministic IR, and the complete repository quality gate passes.
 
-## Completed ABI Representation Review
+This milestone does not promise per-package reuse, cross-compiler cache
+compatibility, remote caching, eviction policy, or a stable binary artifact
+format.
 
-The existing `struct(c)`, `foreign(c, ...)`, and core-private `builtin()`
-source forms remain the foundation; they are not reopened as competing syntax.
-The [ABI review](abi-review.md) records the implemented 64-bit host-target
-representation for scalars, pointers, aggregates, enums, callables,
-continuations, effect callables, and ownership modes. Low-level tests pin the
-mapping, unsupported first-class values fail before LLVM emission, and
-non-64-bit compiler hosts are rejected explicitly.
+## Next: LSP Diagnostics Baseline
 
-The review identified native call ownership, exported linkage, and C
-cross-language verification as separate follow-up boundaries. The first two
-are now complete; C verification remains active.
+The transport-independent editor API already exposes UTF-8 byte ranges,
+UTF-16 positions, tokens, and phased diagnostics. The next milestone adds a
+stateful workspace session and a minimal Language Server Protocol transport.
 
-## Completed Native Calling Convention
+The baseline covers workspace discovery, full-document synchronization,
+cancellation or supersession of stale analyses, diagnostics, and semantic
+tokens. In-memory editor buffers take precedence over disk without mutating
+source files. Resolver and semantic diagnostics must carry structured source
+origins; the server must not recover locations by parsing rendered messages.
 
-The [native calling convention](native-calling-convention.md) defines runtime
-group flattening, Unit and borrowed-Unit erasure, value and borrow passing,
-owned cleanup transfer, direct returns, `Throws` result boundaries, algebraic
-effect specialization, erased continuation records, and tail-call cleanup.
-Caller and callee now share one parameter-erasure rule; source validation
-rejects unsized parameters and returns before LLVM emission.
+Exit conditions:
 
-## Completed Native Linkage
+- a versioned workspace snapshot can overlay opened documents and reanalyze a
+  complete source graph;
+- stale results cannot replace diagnostics for a newer document version;
+- `salic lsp` supports initialize, shutdown, open, change, save, and close over
+  stdio JSON-RPC;
+- lexer, parser, resolver, and semantic failures publish to the correct URI
+  with UTF-16 ranges;
+- semantic tokens use the compiler token model and remain stable for Unicode
+  source;
+- protocol transcript tests cover malformed messages, multiple files,
+  out-of-order edits, cancellation, and clean shutdown.
 
-The [native linkage contract](native-linkage.md) gives concrete primary
-package `pub` functions and constants package-qualified symbols with ABI
-fingerprints. Stable package identities replace graph-local numeric IDs in
-nominal contracts, incompatible declarations cannot silently bind, generic
-specializations belong to the consumer, and compiler-generated definitions
-remain internal. Independent LLVM modules link and execute through this
-contract. Precompiled package interfaces remain later distribution work.
+Incremental parsing, completion, hover, references, rename, and editor-specific
+extensions are not part of this baseline.
 
-## Completed C Interoperability
+## Later: Semantic Navigation
 
-The [C interoperability contract](c-interoperability.md) defines the native
-64-bit host-Clang boundary. Cross-language tests cover every integer width,
-raw pointers, and bidirectional access to nested `struct(c)` storage
-containing integer, pointer, array, and nested aggregate fields. By-value
-arrays and aggregates, bool, borrows, and typed function pointers are rejected
-until target ABI lowering explicitly supports them.
+Navigation follows the LSP baseline because it needs long-lived analysis
+snapshots and stable source identities. The compiler will expose a semantic
+occurrence index that distinguishes declarations, references, overloads,
+aliases, fields, variants, traits, implementations, and generated
+specializations without exposing compiler-generated names.
 
-## Completed Formatter Invariants
+Exit conditions:
 
-The [source formatter](formatter.md) preserves all existing physical line
-boundaries, expands directly nested block boundaries, and validates the
-formatted parse. Parser-provided source roles drive brace, delimiter,
-parameter-group, `where`, trailing-closure, and prefix-match indentation.
-`salic fmt` supports files and root packages; `--check`, invalid-source
-atomicity, dependency isolation, and corpus-wide idempotence are tested.
+- source declarations and uses have stable identities within one snapshot;
+- go-to-definition, references, and hover work across modules and packages;
+- rename produces a complete, non-overlapping workspace edit or refuses the
+  operation when identity or visibility is ambiguous;
+- aliases, shadowing, overloads, Unicode identifiers, and dependency-owned
+  read-only source have explicit tests and rejection behavior.
 
-## Completed Editor Spans
+Completion remains a separate follow-up because candidate ranking and partial
+syntax recovery require their own contract.
 
-The [editor span contract](editor-spans.md) exposes half-open UTF-8 byte ranges
-and zero-based UTF-16 positions for tokens and phased diagnostics. Single-file
-and source-graph analysis route source-backed errors to their documents;
-location-free fallbacks are explicitly distinguished from exact ranges.
-Unicode, cross-file, and complete failure-fixture coverage pin the boundary.
+## Later: Registry Source Dependencies
 
-## Completed Workspaces And Provider Identity
+The implemented resolver already fixes package provider identity, lockfile
+semantics, and workspace/path resolution. The
+[dependency resolution contract](dependency-resolution.md) also defines the
+registry selection algorithm. This milestone implements a registry client
+against immutable index snapshots and verified source archives; it does not
+create or standardize a public registry service.
 
-The [workspace contract](workspaces.md) supports rooted and virtual manifests,
-explicit non-nested members, `--package` selection, shared build and lock
-roots, and workspace-wide formatting. Lockfile format 2 records portable
-workspace/path source identities. Compiler canonical names and native symbols
-use resolved `(source, name, exact version)` provider identity, allowing equal
-package declarations from distinct providers without conflation.
+Exit conditions:
 
-## Completed Reproducible Resolution
+- manifests can declare registry source dependencies without weakening
+  workspace/path identity rules;
+- resolution selects the highest compatible non-yanked version from one
+  identified snapshot and records exact provider and checksum data;
+- archives are verified before manifest or source consumption and extracted
+  without path traversal or partial-cache visibility;
+- `--locked` cannot change the selected graph, and `--frozen` succeeds only
+  from verified local index and archive data;
+- local fixture registries cover version conflicts, yanking, checksum
+  mismatch, cache corruption, offline operation, and dependency cycles.
 
-The [dependency resolution contract](dependency-resolution.md) gives
-workspace and path dependencies a canonical complete provider graph.
-Lockfiles are strictly parsed as typed format-2 data. `--locked` rejects
-missing, malformed, or stale graphs without writing; `--frozen` additionally
-forbids network access. The future registry resolver's snapshot, yanking,
-highest-compatible selection, checksum, cache, and offline rules are fixed
-without introducing a public registry service.
+Publishing, credentials, mirrors, a hosted service, precompiled interfaces,
+and a stable package protocol remain outside this milestone.
 
-## Completed Stable Incremental Inputs
+## Design Candidates
 
-The [incremental input contract](incremental-inputs.md) defines a versioned
-SHA-256 schema over compiler/host, target, edition, embedded libraries,
-resolved providers, dependency aliases, module paths, and source bytes.
-Graph-local IDs, absolute paths, mtimes, traversal order, and output paths are
-excluded. Unit and CLI tests pin path migration, graph reordering, source,
-provider, alias, and target invalidation. Persistent cache artifacts remain a
-separate unaccepted milestone.
+These gaps need an accepted contract and sequencing decision before entering
+the executable queue:
 
-No future milestone may freeze a public ABI, package registry protocol, cache
-artifact, or compatibility promise while its representation is still
-changing.
+- per-package incremental reuse based on dependency interface digests;
+- host-facing `std` APIs with explicit IO, process, time, and filesystem
+  authority;
+- completion and partial-program analysis;
+- the currently diagnosed async shapes: recursive erasure, effectful loop
+  conditions, nested residual iteration, and move-only backedge factories;
+- a wake-aware executor and host async runtime;
+- non-host targets and a target-aware ABI;
+- broader by-value C interoperability;
+- precompiled package interfaces and distribution artifacts;
+- analyzer decomposition along the existing semantic phase boundaries.
+
+Refactoring may accompany an active milestone when it creates a narrow
+boundary required by that milestone. A repository-wide rewrite is not itself
+a roadmap outcome.
 
 ## Deferred
 
-The following require separate accepted designs and are not active work:
+The following remain intentionally outside the accepted roadmap:
 
 - multi-shot continuations;
 - implicit ambient IO or allocation authority;
 - garbage collection as a second ownership model;
 - runtime trait objects and open-world dispatch;
 - macros, reflection, and general compile-time execution;
-- a public package registry;
-- a stable 1.0 compatibility promise.
+- a public package registry service;
+- a stable ABI or 1.0 compatibility promise.
 
 ## Change Gate
 
-A language change enters the roadmap only when it:
+A milestone or language change enters the executable queue only when it:
 
-1. solves a concrete language or standard-library requirement;
-2. states its interaction with ownership, effects, evaluation order, and cleanup;
-3. defines rejection boundaries and source-level diagnostics;
-4. has positive, negative, cross-module when relevant, and native evidence;
-5. leaves the full formatting, lint, test, and documentation gates clean.
+1. names a user-visible or compiler-operational outcome;
+2. identifies affected ownership, effects, evaluation, cleanup, source, and
+   package boundaries;
+3. defines failure behavior and source-level diagnostics;
+4. has positive, negative, restart or corruption, cross-module, and native
+   evidence where relevant;
+5. states what is deliberately not included;
+6. leaves formatting, Clippy, tests, and documentation clean.

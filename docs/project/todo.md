@@ -2,35 +2,135 @@
 
 Status: executable queue
 
-This file contains only unfinished or immediately preparatory work. The
-[roadmap](roadmap.md) defines milestone order, [status](status.md) records implemented behavior,
-and the [changelog](../../CHANGELOG.md) records completed work.
+This file contains only unfinished work accepted by the
+[roadmap](roadmap.md). [Status](status.md) records implemented behavior and the
+[changelog](../../CHANGELOG.md) records completed work.
 
 Priority meanings:
 
-- **P0**: current task or regression blocker;
-- **P1**: immediate next work; begins when P0 is complete;
-- **P2**: accepted later work whose entry gate is not open;
-- **Deferred**: requires a new design decision.
+- **P0**: the active milestone; tasks run in listed dependency order;
+- **P1**: the accepted next milestone; design work may start, implementation
+  waits for the P0 exit gate;
+- **P2**: ordered later work; tasks may be refined before their milestone
+  opens;
+- **Design candidate**: not executable until its contract and roadmap position
+  are accepted.
 
-The accepted roadmap queue is complete. Add a new task here only after its
-design direction and entry gate are accepted.
+Task IDs are stable. A completed item leaves this queue and is recorded in the
+status and changelog instead of remaining as a checked archive.
 
-## Active Queue
+## P0: Persistent Incremental Builds
 
-No active tasks.
+- [ ] **INCR-2 — Persistent cache contract.** Specify the cache root, schema
+  version, fingerprint mapping, LLVM IR payload, metadata, atomic publication,
+  concurrent access, corruption handling, bypass behavior, and explicit
+  non-goals. Keep output paths and graph-local IDs out of cache identity.
+
+- [ ] **INCR-3 — Cache storage layer.** Implement content-addressed lookup and
+  atomic write/replace with strict metadata validation. A missing, malformed,
+  truncated, or incompatible entry is a miss; it must never be executed or
+  reported as a compiler diagnostic.
+
+- [ ] **INCR-4 — Compile pipeline integration.** Reuse cached IR for
+  `emit-ir`, `build`, `run`, and `test` after manifest resolution and
+  fingerprinting. Publish only after semantic analysis, cleanup verification,
+  constant evaluation, and deterministic LLVM emission succeed. Keep native
+  linking and `check` behavior outside the first cache.
+
+- [ ] **INCR-5 — Cache control and observability.** Add a documented way to
+  bypass the cache and an inspectable hit/miss reason that does not pollute
+  program stdout. Define safe cleanup of compiler-owned entries without
+  deleting user outputs.
+
+- [ ] **INCR-6 — End-to-end invalidation proof.** Cover cold and warm
+  equivalence, checkout relocation, compiler and schema changes, target and
+  command targets, embedded libraries, provider identities, dependency
+  aliases, module paths, source bytes, corrupt entries, failed compilation,
+  and concurrent readers.
+
+P0 is complete only when every item above and the roadmap milestone exit
+conditions are satisfied.
+
+## P1: LSP Diagnostics Baseline
+
+- [ ] **LSP-1 — Structured diagnostic origins.** Replace resolver
+  message-parsing and remaining location fallbacks with structured document
+  identity, phase, source range, severity, and stable diagnostic code.
+
+- [ ] **LSP-2 — Versioned workspace snapshots.** Add a stateful analysis
+  session that overlays open buffers on the resolved package graph, tracks
+  document versions, and discards superseded results without writing files.
+
+- [ ] **LSP-3 — Minimal stdio transport.** Implement `salic lsp` with JSON-RPC
+  framing, initialize/shutdown lifecycle, workspace selection, and full-text
+  open/change/save/close synchronization.
+
+- [ ] **LSP-4 — Diagnostics and semantic tokens.** Publish phased diagnostics
+  and compiler-derived tokens with exact URI and UTF-16 ranges across a
+  multi-file package.
+
+- [ ] **LSP-5 — Protocol acceptance suite.** Test recorded client transcripts,
+  malformed requests, Unicode, multiple documents, stale versions,
+  cancellation, server restart, and clean shutdown without depending on a
+  particular editor.
+
+## P2: Semantic Navigation
+
+- [ ] **NAV-1 — Semantic occurrence index.** Define stable snapshot-local
+  identities and source occurrences for declarations, aliases, fields,
+  variants, overloads, trait members, implementations, and references.
+
+- [ ] **NAV-2 — Definition, references, and hover.** Expose cross-module and
+  cross-package navigation while keeping dependency-owned source read-only and
+  generated specialization names private.
+
+- [ ] **NAV-3 — Safe rename.** Produce complete non-overlapping workspace edits
+  with explicit refusal for ambiguous, generated, foreign-symbol, or
+  dependency-owned targets.
+
+## P2: Registry Source Dependencies
+
+- [ ] **PKG-1 — Registry input contract.** Finalize manifest spelling, registry
+  identity/configuration, immutable index snapshot format, archive layout,
+  checksum ownership, cache roots, and local-fixture protocol.
+
+- [ ] **PKG-2 — Registry resolution.** Extend the provider graph with
+  highest-compatible non-yanked selection while preserving exact lockfile
+  identities and deterministic graph ordering.
+
+- [ ] **PKG-3 — Verified source cache.** Download or load archives into an
+  atomic checksum-addressed cache, reject traversal and identity mismatch, and
+  expose sources only after verification.
+
+- [ ] **PKG-4 — Locked and frozen acceptance.** Prove that `--locked` cannot
+  change selection and `--frozen` performs no network access, including
+  yanked locks, missing entries, corrupt archives, conflicts, and cycles.
 
 ## Definition of Done
 
 A task is complete only when:
 
-1. its source semantics and rejection boundaries are documented;
-2. positive and negative tests cover typing, ownership, and effects;
-3. diagnostics identify source constructs rather than generated internals;
-4. native tests cover relevant execution, trap, resume, abandon, and cleanup paths;
-5. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and the full test suite pass;
-6. status and changelog entries are updated;
-7. the commit is pushed with a clean worktree.
+1. its contract, failure behavior, and non-goals are documented;
+2. unit, integration, CLI, cross-module, restart, corruption, and native tests
+   cover the relevant boundary;
+3. diagnostics identify source constructs or operational causes without
+   leaking generated internals;
+4. any performance claim has a reproducible measurement or observable proof;
+5. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and the
+   full test suite pass;
+6. status, architecture or contract docs, and changelog are updated together;
+7. the change is reviewable in isolation and does not include unrelated
+   worktree edits.
+
+## Design Candidates
+
+- per-package incremental compilation and dependency interface hashes;
+- host-facing `std` with explicit authority;
+- completion and partial-program recovery;
+- unsupported async and executor shapes;
+- non-host targets and broader C ABI lowering;
+- precompiled package distribution;
+- analyzer decomposition not required by an active outcome.
 
 ## Deferred
 

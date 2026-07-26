@@ -73,7 +73,7 @@ Documentation starts at [docs/README.md](docs/README.md):
 - [compiler architecture](docs/compiler/architecture.md)
 - [standard library](docs/standard-library/README.md)
 - [implementation status](docs/project/status.md)
-- [language roadmap](docs/project/roadmap.md)
+- [project roadmap](docs/project/roadmap.md)
 - [project TODO](docs/project/todo.md)
 
 ## Development

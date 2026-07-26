@@ -363,8 +363,9 @@ declaration, `where`, trailing-closure, and match indentation. Comments and
 dependencies remain source-owned; the passing fixture corpus is idempotent
 under repeated formatting.
 
-Lossless byte spans, trivia ownership, editor diagnostics, and an LSP remain
-the active tooling boundary.
+The editor API remains transport-independent. Structured resolver diagnostics,
+versioned in-memory document state, incremental parsing, and an LSP transport
+are not yet implemented.
 
 The `examples/inventory` package is the current nontrivial library acceptance program. It combines
 modules, owning strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
