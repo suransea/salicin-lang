@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.208.0 - 2026-07-26
+
 - Added schema-1 SHA-256 incremental input fingerprints and the read-only
   `salic fingerprint` command. Keys include compiler/host, target, edition,
   embedded standard-library sources, resolved provider graph, dependency
