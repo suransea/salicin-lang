@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.204.0 - 2026-07-26
+
 - Added the conservative `salic fmt` formatter for individual files and root
   packages, with `--check` and dependency isolation. Formatting preserves
   every physical line and the complete logical token stream while normalizing
