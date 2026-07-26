@@ -224,8 +224,16 @@ Conditions are currently pure and `while` remains unit-valued. Move-only continu
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
 iteration factory or condition still require a more general carry transform.
-Residual child construction or polling in later sequential segments, and
-residual effects in recurring loops, are not implemented.
+Later sequential segments may construct and poll residual custom-effect or
+`Throws` children. Ownership moves through the active segment only; Pending,
+Ready, cancellation, error, and handler abandonment do not replay earlier
+segments and clean each initialized child once. Recurring `loop`, pre-test
+`while`, and post-test `while` support one residual child factory per
+iteration. A false pre-test condition constructs no child; a completed
+backedge yields before the next effectful factory is invoked. Multiple
+sequential awaits whose generated iteration future itself has a residual
+`poll`, effectful recurring conditions, and move-only factory or condition
+backedge state remain explicit diagnostics.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard

@@ -124,9 +124,11 @@ transition first destroys the completed child and transfers the await output,
 continuation captures, and retained locals into one private tuple. The source
 poll wrapper then executes that continuation under the enclosing handler.
 Pending and cancellation never execute it; success, error, and handler
-abandonment clean every transferred value once. A later continuation that
-constructs or polls another residual child, and residual recurring loops,
-remain outside this slice.
+abandonment clean every transferred value once. A later sequential segment
+may construct and poll another residual child. Handler ownership transfers to
+that active child only after cold construction; Pending returns it to the
+parent, Ready advances once, and cancellation or handler abandonment destroys
+exactly the initialized child.
 
 ## State Machines
 
@@ -180,14 +182,24 @@ a child returns `Pending` or the source loop exits.
 A pre-test `while` evaluates its condition before constructing the first iteration and after each
 `Continue`; a post-test loop skips only the first condition check. A false condition is
 `Break(())`, and no condition is evaluated while an active iteration is Pending. The current
-implementation requires a recurring condition to be pure; residual handler specialization is a
-separate milestone.
+implementation requires a recurring condition to be pure. Effectful conditions
+require a distinct resumable condition state and are rejected before lowering.
 
 When one source iteration contains multiple sequential suspension points, it is lowered to a
 finite, non-recursive iteration future. That child owns only the currently active nested segment
 and eventually produces the same step outcome. Its `Break(Output)` type is inferred after binding
 each awaited `Future.Output` in source order. Cancelling the parent delegates cleanup through this
-finite child chain.
+finite child chain. If that iteration child's own `poll` retains a residual
+effect row, recurring handler specialization is not yet composed through the
+nested poll and the source program is rejected.
+
+A recurring loop with one residual child factory per iteration is specialized
+under the enclosing handler. The child is constructed cold after a true
+pre-test condition, and never before it. Each completed `Continue` yields
+`Pending` at the source wrapper boundary, then constructs the next effectful
+child on the following external poll. `Ready`, child `Pending`, cancellation,
+`Throws`, and handler abandonment preserve one-shot construction and cleanup.
+Post-test loops skip only the first condition check.
 
 For a general unit-valued iteration body, `break` and `continue` at the current loop depth become
 early returns from that iteration future. Normal exits from nested `if` and `match` branches receive

@@ -19,27 +19,17 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Async Completion
+## Current Milestone: ABI Review And Interoperability
 
-Callable and continuation ownership, cold future state, cancellation, explicit
-polling, loop suspension, and the first direct-tail suspended residual path
-are implemented. The current milestone closes the remaining residual
-specialization shapes. Finite pure linear post-await segments and a final
-non-suspending residual continuation are now specialized without replaying
-earlier segments or retaining completed children.
+Async state machines now cover cold construction, explicit polling,
+cancellation, finite sequential and branch suspension, recurring loop
+suspension, and residual handler specialization for supported state shapes.
+Unsupported recursive, self-referential, move-only backedge, effectful
+condition, and nested residual iteration shapes receive source diagnostics.
 
-Remaining design:
-
-- residual child construction and polling in later sequential segments;
-- recurring loop suspension under residual handlers;
-- explicit rejection where a state shape cannot remain structural `Move`.
-
-Exit conditions:
-
-- ready, pending, cancellation, and drop paths run natively;
-- nested async and error handlers preserve effect order;
-- recursive async calls require explicit indirection;
-- suspension cannot duplicate continuations or owned state.
+The current milestone audits runtime representations and calling boundaries,
+then defines native calls, linkage, and verified C interoperability in that
+order. It is an experimental ABI definition, not a 1.0 stability promise.
 
 ## Test Throughput Foundation
 

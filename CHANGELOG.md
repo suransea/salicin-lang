@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+- Specialized recurring async `loop`, pre-test `while`, and post-test `while`
+  with one residual custom-effect or `Throws` child factory per iteration.
+  Cold condition gating avoids constructing a child for a false pre-test;
+  Ready backedges yield before the next effectful factory. Native coverage
+  verifies success, child Pending cancellation, error, handler abandonment,
+  repeated iteration, and exactly-once cleanup. Nested residual iteration
+  polls, effectful conditions, and move-only factory or condition carry remain
+  explicit source diagnostics.
+- Specialized residual child construction and polling in later sequential
+  async segments. The handler owns the active child while source code runs;
+  Pending returns it to parent state and Ready advances without replaying
+  prior segments. Native custom-effect and `Throws` coverage verifies success,
+  cancellation, abandonment, and one-shot cleanup.
+
 ## 0.199.0 - 2026-07-26
 
 - Specialized a final non-suspending async continuation that retains a custom

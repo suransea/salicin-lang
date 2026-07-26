@@ -24,15 +24,20 @@ let make_step(): Step with(Ask) = {
 }
 
 let main(): i32 = {
-  let future = async {
-    loop {
-      let done = await make_step()
-      if done {
-        break 42
-      } else {
-        continue()
+  Ask.handle ask { (resume) -> resume(false) } action {
+    let mut future = async {
+      loop {
+        let first = await make_step()
+        let second = await make_step()
+        if second {
+          break 42
+        } else {
+          continue()
+        }
       }
     }
+    match future.poll()
+      { Ready(value) -> value }
+      { Pending -> 0 }
   }
-  0
 }

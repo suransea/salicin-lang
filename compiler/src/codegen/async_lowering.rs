@@ -609,14 +609,17 @@ impl Analyzer {
             .collect::<Vec<_>>();
         let has_residual_effects =
             closure.throws_error.is_some() || !unsupported_effects.is_empty();
+        if let Some(awaited) = awaited.as_mut() {
+            awaited.source_loop_factory = has_residual_effects && awaited.loop_step.is_some();
+        }
 
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
             let heterogeneous_branch = matches!(
                 &awaited.ty,
                 Ty::Enum(name) if name.starts_with("$async$branch$")
             );
-            awaited.loop_step.is_none()
-                && awaited.loop_condition.is_none()
+            (awaited.loop_step.is_none()
+                || awaited.source_loop_factory && awaited.loop_carry_types.is_empty())
                 && (!heterogeneous_branch
                     || match &awaited.ty {
                         Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
@@ -933,6 +936,7 @@ impl Analyzer {
             throws_error: signature.throws_error,
             custom_effects: signature.custom_effects,
             source_poll: false,
+            source_loop_factory: false,
             field: 0,
             continuation: None,
             continuation_output: None,
@@ -1650,8 +1654,10 @@ impl Analyzer {
             .awaited
             .as_ref()
             .expect("suspended async template has an awaited child");
-        debug_assert!(awaited.loop_step.is_none());
-        debug_assert!(awaited.loop_condition.is_none());
+        debug_assert!(
+            awaited.loop_step.is_none()
+                || awaited.source_loop_factory && awaited.loop_carry_types.is_empty()
+        );
 
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
@@ -1893,6 +1899,43 @@ impl Analyzer {
                 kind: HirReadKind::Move,
             },
         };
+        let loop_condition = machine_awaited.loop_condition.as_ref().map(|condition| {
+            let arguments = condition
+                .fields
+                .iter()
+                .zip(&condition.capture_types)
+                .zip(&condition.capture_modes)
+                .map(|((&field, ty), mode)| {
+                    let place = async_field_place(0, self_ty.clone(), field, ty.clone());
+                    match mode {
+                        PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => {
+                            HirArgument::Copy(HirExpr {
+                                ty: ty.clone(),
+                                kind: HirExprKind::Read {
+                                    place,
+                                    kind: HirReadKind::Copy,
+                                },
+                            })
+                        }
+                        PassMode::Move => {
+                            unreachable!("move-only async loop condition captures are rejected")
+                        }
+                        PassMode::Inferred => {
+                            unreachable!("async condition capture modes are normalized")
+                        }
+                    }
+                })
+                .collect();
+            HirExpr {
+                ty: Ty::Bool,
+                kind: HirExprKind::Call {
+                    function: condition.function.clone(),
+                    arguments,
+                    consumed_callable: None,
+                    diverges: false,
+                },
+            }
+        });
         let full_body = suspended_poll_body(
             &self_ty,
             &machine_poll_ty,
@@ -1902,7 +1945,7 @@ impl Analyzer {
                 .map_or(&future.output, |(_, input, _, _)| input),
             &machine_awaited,
             bundle_value,
-            None,
+            loop_condition.clone(),
         );
         let HirExprKind::If {
             then_branch,
@@ -2330,6 +2373,107 @@ impl Analyzer {
             result: Ty::Unit,
             body: set_state(&self_ty, 4),
         });
+        let source_loop_condition_helpers = machine_awaited
+            .loop_condition
+            .as_ref()
+            .filter(|condition| !condition.post_test)
+            .and_then(|_| {
+                let condition_call = loop_condition.clone()?;
+                let condition_helper = format!("{poll_function}$loop$condition");
+                let done_helper = format!("{poll_function}$loop$done");
+                self.signatures.insert(
+                    condition_helper.clone(),
+                    FunctionSig {
+                        groups: vec![vec![self_parameter.clone()]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(Ty::Bool),
+                    },
+                );
+                self.signatures.insert(
+                    done_helper.clone(),
+                    FunctionSig {
+                        groups: vec![vec![self_parameter.clone()]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(machine_poll_ty.clone()),
+                    },
+                );
+                for (helper, result) in [
+                    (condition_helper.clone(), Type::Bool),
+                    (
+                        done_helper.clone(),
+                        Type::Named(
+                            self.lang_item_name(LangItemKind::Poll).to_owned(),
+                            vec![machine_output_source.clone()],
+                        ),
+                    ),
+                ] {
+                    self.functions.insert(
+                        helper.clone(),
+                        Function {
+                            name: helper.clone(),
+                            foreign: None,
+                            builtin: false,
+                            compile_groups: Vec::new(),
+                            groups: vec![vec![Param {
+                                mode: PassMode::Inferred,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "self".to_owned(),
+                                ty: self_source_reference.clone(),
+                            }]],
+                            return_type: Some(result),
+                            effects: pure_effects.clone(),
+                            where_predicates: Vec::new(),
+                            body: None,
+                        },
+                    );
+                    self.function_origins.insert(helper.clone(), origin.clone());
+                    self.function_accesses
+                        .insert(helper, self.nominal_accesses[name].clone());
+                }
+                self.lifted_functions.push(HirFunction {
+                    name: condition_helper.clone(),
+                    params: vec![HirParam {
+                        id: 0,
+                        name: "self".to_owned(),
+                        ty: self_reference.clone(),
+                        mode: PassMode::Inferred,
+                    }],
+                    result: Ty::Bool,
+                    body: condition_call,
+                });
+                self.lifted_functions.push(HirFunction {
+                    name: done_helper.clone(),
+                    params: vec![HirParam {
+                        id: 0,
+                        name: "self".to_owned(),
+                        ty: self_reference.clone(),
+                        mode: PassMode::Inferred,
+                    }],
+                    result: machine_poll_ty.clone(),
+                    body: HirExpr {
+                        ty: machine_poll_ty.clone(),
+                        kind: HirExprKind::Block(
+                            vec![HirStmt::Expr(set_state(&self_ty, 2))],
+                            Some(Box::new(poll_ready(
+                                &machine_poll_ty,
+                                &machine_poll_name,
+                                &future.output,
+                                HirExpr {
+                                    ty: Ty::Unit,
+                                    kind: HirExprKind::Unit,
+                                },
+                            ))),
+                        ),
+                    },
+                });
+                Some((condition_helper, done_helper))
+            });
 
         let source_next_helpers = awaited
             .next
@@ -3114,6 +3258,19 @@ impl Analyzer {
         } else {
             call_helper(start_helper, vec![resume, self_value()])
         };
+        let cold_poll =
+            if let Some((condition_helper, done_helper)) = &source_loop_condition_helpers {
+                Expr::If {
+                    condition: Box::new(call_helper(condition_helper.clone(), vec![self_value()])),
+                    then_branch: Box::new(cold_poll),
+                    else_branch: Some(Box::new(call_helper(
+                        done_helper.clone(),
+                        vec![self_value()],
+                    ))),
+                }
+            } else {
+                cold_poll
+            };
         let machine_body = Expr::If {
             condition: Box::new(Expr::Binary(
                 Box::new(state()),
@@ -3122,9 +3279,82 @@ impl Analyzer {
             )),
             then_branch: Box::new(Expr::Block(
                 vec![Stmt::Expr(call_helper(begin_helper, vec![self_value()]))],
-                Some(Box::new(cold_poll)),
+                Some(Box::new(cold_poll.clone())),
             )),
             else_branch: Some(Box::new(call_helper(wait_helper, vec![self_value()]))),
+        };
+        let machine_body = if awaited.source_loop_factory {
+            let loop_output = "$async$loop$machine$output".to_owned();
+            let restarted = Expr::Match {
+                scrutinee: Box::new(machine_body),
+                arms: vec![
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Pending".to_owned()],
+                            fields: crate::ast::PatternFields::Unit,
+                        },
+                        guard: None,
+                        body: Expr::If {
+                            condition: Box::new(Expr::Binary(
+                                Box::new(state()),
+                                BinaryOp::Eq,
+                                Box::new(Expr::Integer(4)),
+                            )),
+                            then_branch: Box::new(cold_poll.clone()),
+                            else_branch: Some(Box::new(Expr::Member(
+                                Box::new(Expr::Call(
+                                    Box::new(Expr::Name(
+                                        self.lang_item_name(LangItemKind::Poll).to_owned(),
+                                    )),
+                                    vec![CallArg {
+                                        label: None,
+                                        value: source_type_expression(&output_source),
+                                    }],
+                                )),
+                                "Pending".to_owned(),
+                            ))),
+                        },
+                    },
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Ready".to_owned()],
+                            fields: crate::ast::PatternFields::Positional(vec![
+                                crate::ast::Pattern::Binding(loop_output.clone()),
+                            ]),
+                        },
+                        guard: None,
+                        body: Expr::Call(
+                            Box::new(Expr::Member(
+                                Box::new(Expr::Call(
+                                    Box::new(Expr::Name(
+                                        self.lang_item_name(LangItemKind::Poll).to_owned(),
+                                    )),
+                                    vec![CallArg {
+                                        label: None,
+                                        value: source_type_expression(&output_source),
+                                    }],
+                                )),
+                                "Ready".to_owned(),
+                            )),
+                            vec![CallArg {
+                                label: None,
+                                value: Expr::Name(loop_output),
+                            }],
+                        ),
+                    },
+                ],
+            };
+            Expr::If {
+                condition: Box::new(Expr::Binary(
+                    Box::new(state()),
+                    BinaryOp::Eq,
+                    Box::new(Expr::Integer(4)),
+                )),
+                then_branch: Box::new(cold_poll.clone()),
+                else_branch: Some(Box::new(restarted)),
+            }
+        } else {
+            machine_body
         };
         let body = if let Some((residual, input_ty, input_source, input_modes)) =
             residual_transition
@@ -4061,19 +4291,35 @@ fn poll_async_loop_step(
             kind: HirReadKind::Move,
         },
     };
-    let continue_poll = HirExpr {
-        ty: Ty::Never,
-        kind: HirExprKind::Block(
-            initialize_carry
-                .into_iter()
-                .chain(std::iter::once(HirStmt::Expr(initialize_child)))
-                .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
-                .collect(),
-            Some(Box::new(HirExpr {
-                ty: Ty::Never,
-                kind: HirExprKind::Continue,
-            })),
-        ),
+    let continue_poll = if awaited.source_loop_factory {
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Block(
+                initialize_carry
+                    .into_iter()
+                    .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 4))))
+                    .collect(),
+                Some(Box::new(HirExpr {
+                    ty: Ty::Never,
+                    kind: HirExprKind::Break(Some(Box::new(poll_pending(poll_ty, poll_name)))),
+                })),
+            ),
+        }
+    } else {
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Block(
+                initialize_carry
+                    .into_iter()
+                    .chain(std::iter::once(HirStmt::Expr(initialize_child)))
+                    .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
+                    .collect(),
+                Some(Box::new(HirExpr {
+                    ty: Ty::Never,
+                    kind: HirExprKind::Continue,
+                })),
+            ),
+        }
     };
     let continue_poll = match loop_condition {
         Some(condition) => HirExpr {
@@ -4296,6 +4542,7 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) throws_error: Option<Ty>,
     pub(super) custom_effects: Vec<String>,
     pub(super) source_poll: bool,
+    pub(super) source_loop_factory: bool,
     pub(super) field: usize,
     pub(super) continuation: Option<String>,
     pub(super) continuation_output: Option<Ty>,
