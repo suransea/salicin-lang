@@ -1712,13 +1712,12 @@ impl Analyzer {
                         NominalKind::Struct,
                         template.compile_groups.iter().flatten().count(),
                     )
-                } else if let Some(template) = self.enum_templates.get(name) {
+                } else {
+                    let template = self.enum_templates.get(name)?;
                     (
                         NominalKind::Enum,
                         template.compile_groups.iter().flatten().count(),
                     )
-                } else {
-                    return None;
                 };
                 if source_arguments.len() != expected {
                     return None;
@@ -1754,10 +1753,9 @@ impl Analyzer {
     ) -> Option<(NominalKind, Ty, Type)> {
         let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
             (NominalKind::Struct, &template.compile_groups)
-        } else if let Some(template) = self.enum_templates.get(name) {
-            (NominalKind::Enum, &template.compile_groups)
         } else {
-            return None;
+            let template = self.enum_templates.get(name)?;
+            (NominalKind::Enum, &template.compile_groups)
         };
         if groups.len() != compile_groups.len() {
             return None;

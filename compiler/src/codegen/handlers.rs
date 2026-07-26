@@ -3834,18 +3834,17 @@ impl Analyzer {
         let (name, function, runtime_group_start) =
             if let Some(function) = self.functions.get(selected_name).cloned() {
                 (selected_name.to_owned(), function, 0)
-            } else if let Some(resolved) = self.explicit_generic_handler_function(
-                selected_name,
-                &groups,
-                &handler.source,
-                &handler.inference_context,
-            ) {
+            } else {
+                let resolved = self.explicit_generic_handler_function(
+                    selected_name,
+                    &groups,
+                    &handler.source,
+                    &handler.inference_context,
+                )?;
                 match resolved {
                     Ok(resolved) => resolved,
                     Err(()) => return Some(Err(())),
                 }
-            } else {
-                return None;
             };
         groups = groups[runtime_group_start..].to_vec();
         if !function
