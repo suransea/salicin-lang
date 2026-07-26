@@ -23,6 +23,12 @@ subset.
   the full `u128` domain; literal conversion and every arithmetic result are
   fallible and checked. An explicit 64-bit native target description replaces
   accidental dependence on Rust host pointer widths.
+- Added recursive tuple and fixed-array CTFE across literals, pure function
+  parameters and results, immutable locals, tuple projection, `usize`
+  bounds-checked array indexing, and nested tuple patterns. Aggregate
+  construction enforces deterministic 64-level nesting and 65,536-element or
+  node limits. Fixed-array runtime brackets now also use `usize`, removing the
+  former phase-specific `i32` index.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.

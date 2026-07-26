@@ -256,7 +256,7 @@ uninitialized.
 
 `core.ops.index.Index(Key)` is the single bracket protocol. Its `index(A: access)` method returns
 `borrow(A)(Output)`, so shared reads, explicit element borrows, and mutable assignment use one
-implementation without a separate `IndexMut`. Arrays implement `Index(i32)` through a validated
+implementation without a separate `IndexMut`. Arrays implement `Index(usize)` through a validated
 core intrinsic; Slice implements `Index(u64)` in source by forwarding to `at`.
 
 Capability modules are separated by semantics:

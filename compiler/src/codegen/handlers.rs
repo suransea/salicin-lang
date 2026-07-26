@@ -4419,7 +4419,7 @@ impl Analyzer {
                             value_source: None,
                             mutable: false,
                             name: index_name.clone(),
-                            annotation: Some(Type::I32),
+                            annotation: Some(Type::USize),
                             value: place_index.as_ref().clone(),
                         }));
                         borrowed_places.insert(

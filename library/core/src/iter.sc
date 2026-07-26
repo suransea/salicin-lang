@@ -29,7 +29,7 @@ pub let borrowed_item(comptime a: access, comptime t: type)(comptime r: region):
 pub let array_into_iter(comptime t: type)
   (comptime l: usize) = struct {
   values: array(t)(l),
-  next_index: i32,
+  next_index: usize,
 }
 
 extend(comptime t: type, comptime l: usize) array_into_iter(t)(l): iterator

@@ -22,7 +22,7 @@ let mark(calls: ptr(mut)(i32))(digit: i32): i32 = {
   }
 }
 
-let next_index(calls: ptr(mut)(i32)): i32 = {
+let next_index(calls: ptr(mut)(i32)): usize = {
   unsafe {
     *calls = *calls * 10 + 2
     1

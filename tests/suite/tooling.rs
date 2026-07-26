@@ -204,7 +204,7 @@ fn core_diagnostics_are_stable_source_level_contracts() {
             "array_index_type.sc",
             3,
             3,
-            "type mismatch for array index: expected `i32`, found `bool`",
+            "type mismatch for array index: expected `usize`, found `bool`",
         ),
         (
             "throw_in_plain_return.sc",

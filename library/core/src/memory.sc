@@ -11,11 +11,11 @@ pub let array(comptime t: type)
 pub let slice(comptime t: type): type = builtin()
 
 /// Routes fixed-size array brackets through the source-defined indexing protocol.
-extend(comptime t: type, comptime l: usize) array(t)(l): index(i32) {
+extend(comptime t: type, comptime l: usize) array(t)(l): index(usize) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
-    (key: i32): borrow(a)(t) = builtin()
+    (key: usize): borrow(a)(t) = builtin()
 }
 
 /// Provides operations on a borrowed contiguous sequence.

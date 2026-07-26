@@ -3214,8 +3214,7 @@ impl<'a> FunctionEmitter<'a> {
                 if self.terminated {
                     return Ok(Operand::never());
                 }
-                let wide_index = self.fresh_register();
-                self.instruction(format!("{wide_index} = sext i32 {} to i64", index.value()?));
+                let wide_index = index.value()?.to_owned();
                 let in_bounds = self.fresh_register();
                 self.instruction(format!("{in_bounds} = icmp ult i64 {wide_index}, {length}"));
                 let ok_label = self.fresh_label("index.ok");

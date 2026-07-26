@@ -337,8 +337,8 @@ The fixed-size array family is:
 Array(T: type)(L: usize)
 ```
 
-Array length is part of the type. Array indexing evaluates its base and index once and performs a
-bounds check.
+Array length is part of the type. Array indexing requires `usize`, evaluates
+its base and index once, and performs a bounds check.
 
 ## 5. Functions and Application
 

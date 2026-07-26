@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Composite Compile-Time Evaluation
 
-### Aggregate values
-
-- [ ] **CTFE-4 — Tuples and fixed arrays.** Add tuple and array literals,
-  projection, bounds-checked indexing, immutable binding, nested patterns, and
-  recursive normalization. Bound aggregate element count and nesting depth
-  before construction.
-
 ### Nominal values
 
 - [ ] **CTFE-5 — Struct values.** Evaluate concrete generic and non-generic

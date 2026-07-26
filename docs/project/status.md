@@ -120,10 +120,18 @@ and constant encoding use that description rather than Rust's host
 share exact signed/unsigned integer operations, including the full `u128`
 domain and signed minima.
 
-The type-level evaluator does not yet admit tuples, arrays, structs, or enums
-as intermediate values. Global constant evaluation supports scalar and
-aggregate literals but cannot yet call ordinary source functions. Extending
-the shared value through those evaluators is the active roadmap boundary.
+The type-level evaluator also admits recursively typed tuples and fixed
+arrays as function parameters, immutable locals, and results. It evaluates
+tuple/array literals, decimal tuple projection, `usize` array indexing,
+nested tuple patterns and bindings, and bounds failures. Aggregate types are
+rejected before construction beyond 64 nesting levels, 65,536 elements in one
+aggregate, or 65,536 normalized nodes. Fixed-array bracket syntax now uses
+`usize` at runtime as well as during CTFE.
+
+Structs and enums are not yet admitted as intermediate values. Global
+constant evaluation supports scalar and aggregate literals but cannot yet
+call ordinary source functions. Extending the shared value through those
+evaluators is the active roadmap boundary.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,

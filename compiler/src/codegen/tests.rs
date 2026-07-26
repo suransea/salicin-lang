@@ -2746,6 +2746,69 @@ let main(): i32 = { 0 }
 }
 
 #[test]
+fn ctfe_evaluates_nested_tuples_and_fixed_arrays() {
+    let llvm = compile_text(
+        r#"
+let unpack(value: (i8, (usize, bool))): usize = {
+  match value
+    { (_, (length, true)) -> length }
+    { _ -> 0 }
+}
+
+let keep_array(
+  values: array(usize)(3)
+): array(usize)(3) = {
+  values
+}
+
+let select(
+  values: array(usize)(3),
+  index: usize
+): usize = {
+  values[index]
+}
+
+let composite_length(seed: usize): usize = {
+  let tuple: (i8, (usize, bool)) = (7, (seed, true))
+  let projected: usize = tuple.1.0
+  let values: array(usize)(3) = keep_array([0, unpack(tuple), 9])
+  let combined: (array(usize)(3), (usize, bool)) =
+    (values, (projected, true))
+  match combined
+    { (items, (length, true)) -> select(items, 1) + length - seed }
+    { _ -> 0 }
+}
+
+let read(values: array(i32)(composite_length(3))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("nested tuples and fixed arrays should evaluate during ctfe");
+    assert!(llvm.contains("[3 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_rejects_dynamic_array_indexes_out_of_bounds() {
+    let errors = compile_unresolved_text(
+        r#"
+let invalid_length(index: usize): usize = {
+  let values: array(usize)(2) = [10, 20]
+  values[index]
+}
+let read(values: array(i32)(invalid_length(2))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("ctfe array index 2 is out of bounds for length 2")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn ctfe_rejects_runtime_mutation_and_reports_arithmetic_failures() {
     let mutation = compile_unresolved_text(
         r#"
@@ -8110,7 +8173,7 @@ let main(): i32 = {
 fn emits_dynamic_array_bounds_check_before_inbounds_gep_and_hoists_allocas() {
     let ir = compile_text(
         r#"
-let read(values: array(i32)(2), index: i32): i32 = { values[index] }
+let read(values: array(i32)(2), index: usize): i32 = { values[index] }
 let main(): i32 = { read([40, 2], 1) }
 "#,
     )
@@ -8124,6 +8187,18 @@ let main(): i32 = { read([40, 2], 1) }
     let gep = function.find("getelementptr inbounds").unwrap();
     assert!(bounds < trap && trap < gep);
     assert!(function.rfind("alloca").unwrap() < function.find("br i1").unwrap());
+
+    let wrong_index = compile_text(
+        "let read(values: array(i32)(2), index: i32): i32 = { values[index] }\n\
+         let main(): i32 = { read([40, 2], 1) }\n",
+    )
+    .unwrap_err();
+    assert!(
+        wrong_index
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("expected `usize`, found `i32`")),
+        "{wrong_index:?}"
+    );
 }
 
 #[test]
@@ -9128,7 +9203,7 @@ let take(): payload = { [payload { value: 1 }, payload { value: 2 }][1] }
 #[test]
 fn cleanup_plan_dynamic_index_uses_only_pre_registered_constant_paths() {
     let plan = cleanup_plan_text(
-        "let take(values: array(i32)(3), index: i32): i32 = { values[index] }\n",
+        "let take(values: array(i32)(3), index: usize): i32 = { values[index] }\n",
         "take",
     );
     assert!(plan.move_paths.iter().all(|path| {

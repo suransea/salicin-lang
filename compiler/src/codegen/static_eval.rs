@@ -2,11 +2,13 @@ use std::collections::HashMap;
 
 use crate::ast::{BinaryOp, Expr, Function, PassMode, Pattern, StaticExpr, Stmt, Type, UnaryOp};
 
-use super::ctfe_value::{CtfeValue, IntegerEvalError};
+use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
 use super::hir::Ty;
 use super::Analyzer;
 
 const STATIC_EVALUATION_FUEL: usize = 1_024;
+const MAX_CTFE_AGGREGATE_ELEMENTS: usize = 65_536;
+const MAX_CTFE_VALUE_NESTING: usize = 64;
 
 impl Analyzer {
     pub(super) fn evaluate_static_usize(&mut self, expression: &StaticExpr) -> Option<u64> {
@@ -168,7 +170,7 @@ impl Analyzer {
                     function.name, parameter.name
                 ));
             }
-            let parameter_ty = Self::static_scalar_type(&parameter.ty).ok_or_else(|| {
+            let parameter_ty = Self::static_value_type(&parameter.ty).ok_or_else(|| {
                 format!(
                     "ctfe parameter `{}.{}` has unsupported type `{}`",
                     function.name,
@@ -176,6 +178,7 @@ impl Analyzer {
                     Self::source_type_name(&parameter.ty)
                 )
             })?;
+            Self::validate_static_value_type(&parameter_ty)?;
             if argument.ty != parameter_ty {
                 return Err(format!(
                     "ctfe argument for `{}.{}` has type `{}`, expected `{parameter_ty}`",
@@ -189,13 +192,15 @@ impl Analyzer {
                 function.name
             )
         })?;
-        Self::static_scalar_type(return_type).ok_or_else(|| {
+        let result = Self::static_value_type(return_type).ok_or_else(|| {
             format!(
                 "ctfe function `{}` has unsupported result type `{}`",
                 function.name,
                 Self::source_type_name(return_type)
             )
-        })
+        })?;
+        Self::validate_static_value_type(&result)?;
+        Ok(result)
     }
 
     fn evaluate_static_body(
@@ -217,6 +222,118 @@ impl Analyzer {
             }
             Expr::Bool(value) => CtfeValue::bool(*value),
             Expr::Unit => CtfeValue::unit(),
+            Expr::Tuple(fields) => {
+                if fields.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                    return Err(format!(
+                        "ctfe tuple exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-element limit"
+                    ));
+                }
+                let expected_fields = match expected {
+                    Some(Ty::Tuple(expected_fields)) if expected_fields.len() == fields.len() => {
+                        Some(expected_fields.as_slice())
+                    }
+                    Some(Ty::Tuple(expected_fields)) => {
+                        return Err(format!(
+                            "ctfe tuple length mismatch: expected {}, found {}",
+                            expected_fields.len(),
+                            fields.len()
+                        ));
+                    }
+                    Some(expected) => {
+                        return Err(format!(
+                            "ctfe tuple cannot be used where `{expected}` is expected"
+                        ));
+                    }
+                    None => None,
+                };
+                let values = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        self.evaluate_static_body(
+                            field,
+                            expected_fields.map(|fields| &fields[index]),
+                            locals,
+                            fuel,
+                            active_calls,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ty = Ty::Tuple(values.iter().map(|value| value.ty.clone()).collect());
+                Self::validate_static_value_type(&ty)?;
+                CtfeValue {
+                    ty,
+                    kind: CtfeValueKind::Tuple(values),
+                }
+            }
+            Expr::Array(elements) => {
+                if elements.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                    return Err(format!(
+                        "ctfe array exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-element limit"
+                    ));
+                }
+                let (element_ty, expected_length) = match expected {
+                    Some(Ty::Array(element, length)) => {
+                        (Some(element.as_ref().clone()), Some(*length))
+                    }
+                    Some(expected) => {
+                        return Err(format!(
+                            "ctfe array cannot be used where `{expected}` is expected"
+                        ));
+                    }
+                    None => (None, None),
+                };
+                if let Some(length) = expected_length {
+                    if elements.len() as u64 != length {
+                        return Err(format!(
+                            "ctfe array length mismatch: expected {length}, found {}",
+                            elements.len()
+                        ));
+                    }
+                }
+                let Some((first, rest)) = elements.split_first() else {
+                    let Some(element_ty) = element_ty else {
+                        return Err(
+                            "empty ctfe array requires an expected fixed-array type".to_owned()
+                        );
+                    };
+                    let ty = Ty::Array(Box::new(element_ty), 0);
+                    Self::validate_static_value_type(&ty)?;
+                    return Ok(CtfeValue {
+                        ty,
+                        kind: CtfeValueKind::Array(Vec::new()),
+                    });
+                };
+                let first = self.evaluate_static_body(
+                    first,
+                    element_ty.as_ref(),
+                    locals,
+                    fuel,
+                    active_calls,
+                )?;
+                let element_ty = element_ty.unwrap_or_else(|| first.ty.clone());
+                let mut values = vec![Self::expect_static_type(
+                    first,
+                    &element_ty,
+                    "ctfe array element",
+                )?];
+                for element in rest {
+                    let value = self.evaluate_static_body(
+                        element,
+                        Some(&element_ty),
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?;
+                    values.push(value);
+                }
+                let ty = Ty::Array(Box::new(element_ty), values.len() as u64);
+                Self::validate_static_value_type(&ty)?;
+                CtfeValue {
+                    ty,
+                    kind: CtfeValueKind::Array(values),
+                }
+            }
             Expr::Name(name) => locals
                 .get(name)
                 .cloned()
@@ -298,7 +415,7 @@ impl Analyzer {
                     .zip(&function.groups[0])
                     .map(|(argument, parameter)| {
                         let parameter_ty =
-                            Self::static_scalar_type(&parameter.ty).ok_or_else(|| {
+                            Self::static_value_type(&parameter.ty).ok_or_else(|| {
                                 format!(
                                     "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
                                     parameter.name,
@@ -316,6 +433,50 @@ impl Analyzer {
                     .collect::<Result<Vec<_>, _>>()?;
                 self.evaluate_static_call(function_name, &arguments, fuel, active_calls)?
             }
+            Expr::Member(base, member) => {
+                let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
+                let Ty::Tuple(fields) = &base.ty else {
+                    return Err(format!(
+                        "ctfe projection `{member}` requires a tuple, found `{}`",
+                        base.ty
+                    ));
+                };
+                let index = member.parse::<usize>().map_err(|_| {
+                    format!("ctfe tuple projection requires a decimal index, found `{member}`")
+                })?;
+                let field_ty = fields.get(index).ok_or_else(|| {
+                    format!(
+                        "ctfe tuple index {index} is out of bounds for tuple of length {}",
+                        fields.len()
+                    )
+                })?;
+                let value = base
+                    .projection(index)
+                    .cloned()
+                    .ok_or_else(|| "invalid ctfe tuple projection".to_owned())?;
+                Self::expect_static_type(value, field_ty, "ctfe tuple projection")?
+            }
+            Expr::Index { base, index } => {
+                let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
+                let CtfeValueKind::Array(elements) = &base.kind else {
+                    return Err(format!(
+                        "ctfe indexing requires a fixed array, found `{}`",
+                        base.ty
+                    ));
+                };
+                let index = self
+                    .evaluate_static_body(index, Some(&Ty::USize), locals, fuel, active_calls)?
+                    .usize_value()
+                    .ok_or_else(|| "ctfe array index must be `usize`".to_owned())?;
+                let index = usize::try_from(index)
+                    .map_err(|_| "ctfe array index is out of bounds".to_owned())?;
+                elements.get(index).cloned().ok_or_else(|| {
+                    format!(
+                        "ctfe array index {index} is out of bounds for length {}",
+                        elements.len()
+                    )
+                })?
+            }
             Expr::Block(statements, tail) => {
                 let mut block_locals = locals.clone();
                 for statement in statements {
@@ -325,7 +486,7 @@ impl Analyzer {
                                 .annotation
                                 .as_ref()
                                 .map(|annotation| {
-                                    Self::static_scalar_type(annotation).ok_or_else(|| {
+                                    Self::static_value_type(annotation).ok_or_else(|| {
                                         format!(
                                             "ctfe local `{}` has unsupported type `{}`",
                                             binding.name,
@@ -334,6 +495,9 @@ impl Analyzer {
                                     })
                                 })
                                 .transpose()?;
+                            if let Some(annotation) = &annotation {
+                                Self::validate_static_value_type(annotation)?;
+                            }
                             let value = self.evaluate_static_body(
                                 &binding.value,
                                 annotation.as_ref(),
@@ -479,6 +643,30 @@ impl Analyzer {
             Expr::Name(name) => locals.get(name).map(|value| value.ty.clone()),
             Expr::Bool(_) => Some(Ty::Bool),
             Expr::Unit => Some(Ty::Unit),
+            Expr::Tuple(fields) => Some(Ty::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.static_expression_type_hint(field, locals))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Expr::Array(elements) => {
+                let element = elements
+                    .first()
+                    .and_then(|element| self.static_expression_type_hint(element, locals))?;
+                Some(Ty::Array(Box::new(element), elements.len() as u64))
+            }
+            Expr::Member(base, member) => {
+                let Ty::Tuple(fields) = self.static_expression_type_hint(base, locals)? else {
+                    return None;
+                };
+                fields.get(member.parse::<usize>().ok()?).cloned()
+            }
+            Expr::Index { base, .. } => {
+                let Ty::Array(element, _) = self.static_expression_type_hint(base, locals)? else {
+                    return None;
+                };
+                Some(*element)
+            }
             Expr::Unary(UnaryOp::Not, _) => Some(Ty::Bool),
             Expr::Unary(UnaryOp::Neg, operand) => self.static_expression_type_hint(operand, locals),
             Expr::Binary(left, operator, right) => match operator {
@@ -505,7 +693,7 @@ impl Analyzer {
                 function
                     .return_type
                     .as_ref()
-                    .and_then(Self::static_scalar_type)
+                    .and_then(Self::static_value_type)
             }
             Expr::Block(_, Some(tail)) => self.static_expression_type_hint(tail, locals),
             Expr::If {
@@ -542,17 +730,29 @@ impl Analyzer {
                     Err(_) => Ok(false),
                 }
             }
-            Pattern::Tuple(fields) if value.ty == Ty::Unit && fields.is_empty() => Ok(true),
+            Pattern::Tuple(fields) => match (&value.kind, &value.ty) {
+                (CtfeValueKind::Tuple(values), Ty::Tuple(types))
+                    if fields.len() == values.len() && values.len() == types.len() =>
+                {
+                    for (field, value) in fields.iter().zip(values) {
+                        if !Self::static_pattern_matches(field, value, locals)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                _ => Err(format!(
+                    "tuple pattern cannot match ctfe value of type `{}`",
+                    value.ty
+                )),
+            },
             Pattern::Wildcard => Ok(true),
             Pattern::Binding(name) => {
                 locals.insert(name.clone(), value.clone());
                 Ok(true)
             }
-            Pattern::Integer(_)
-            | Pattern::Bool(_)
-            | Pattern::Tuple(_)
-            | Pattern::Constructor { .. } => {
-                Err("pattern is outside the scalar ctfe subset".to_owned())
+            Pattern::Integer(_) | Pattern::Bool(_) | Pattern::Constructor { .. } => {
+                Err("pattern is outside the tuple-and-scalar ctfe subset".to_owned())
             }
         }
     }
@@ -641,7 +841,7 @@ impl Analyzer {
         }
     }
 
-    fn static_scalar_type(source: &Type) -> Option<Ty> {
+    fn static_value_type(source: &Type) -> Option<Ty> {
         Some(match source {
             Type::I8 => Ty::I8,
             Type::I16 => Ty::I16,
@@ -657,14 +857,83 @@ impl Analyzer {
             Type::USize => Ty::USize,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
+            Type::Tuple(fields) => Ty::Tuple(
+                fields
+                    .iter()
+                    .map(Self::static_value_type)
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Type::Array(element, length) => {
+                Ty::Array(Box::new(Self::static_value_type(element)?), *length)
+            }
+            Type::ArrayApplication {
+                element,
+                length: crate::ast::USizeConst::Literal(length),
+                ..
+            } => Ty::Array(Box::new(Self::static_value_type(element)?), *length),
             _ => return None,
         })
     }
 
     fn source_type_name(source: &Type) -> String {
-        Self::static_scalar_type(source)
+        Self::static_value_type(source)
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| format!("{source:?}"))
+    }
+
+    fn validate_static_value_type(ty: &Ty) -> Result<(), String> {
+        fn visit(ty: &Ty, depth: usize, nodes: &mut usize) -> Result<(), String> {
+            *nodes = nodes
+                .checked_add(1)
+                .ok_or_else(|| "ctfe value node count overflowed".to_owned())?;
+            if *nodes > MAX_CTFE_AGGREGATE_ELEMENTS {
+                return Err(format!(
+                    "ctfe value exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-node limit"
+                ));
+            }
+            match ty {
+                Ty::Tuple(fields) => {
+                    if depth >= MAX_CTFE_VALUE_NESTING {
+                        return Err(format!(
+                            "ctfe value exceeds the {MAX_CTFE_VALUE_NESTING}-level nesting limit"
+                        ));
+                    }
+                    if fields.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                        return Err(format!(
+                            "ctfe tuple exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-element limit"
+                        ));
+                    }
+                    for field in fields {
+                        visit(field, depth + 1, nodes)?;
+                    }
+                }
+                Ty::Array(element, length) => {
+                    if depth >= MAX_CTFE_VALUE_NESTING {
+                        return Err(format!(
+                            "ctfe value exceeds the {MAX_CTFE_VALUE_NESTING}-level nesting limit"
+                        ));
+                    }
+                    let length = usize::try_from(*length).map_err(|_| {
+                        format!(
+                            "ctfe array exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-element limit"
+                        )
+                    })?;
+                    if length > MAX_CTFE_AGGREGATE_ELEMENTS {
+                        return Err(format!(
+                            "ctfe array exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-element limit"
+                        ));
+                    }
+                    for _ in 0..length {
+                        visit(element, depth + 1, nodes)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        let mut nodes = 0;
+        visit(ty, 0, &mut nodes)
     }
 
     fn consume_static_fuel(fuel: &mut usize) -> Result<(), String> {
@@ -672,5 +941,26 @@ impl Analyzer {
             .checked_sub(1)
             .ok_or_else(|| "evaluation exceeded the 1024-step limit".to_owned())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Analyzer, Ty, MAX_CTFE_AGGREGATE_ELEMENTS, MAX_CTFE_VALUE_NESTING};
+
+    #[test]
+    fn aggregate_type_limits_are_checked_before_ctfe_construction() {
+        let oversized = Ty::Array(Box::new(Ty::U8), (MAX_CTFE_AGGREGATE_ELEMENTS as u64) + 1);
+        assert!(Analyzer::validate_static_value_type(&oversized)
+            .unwrap_err()
+            .contains("element limit"));
+
+        let mut nested = Ty::U8;
+        for _ in 0..=MAX_CTFE_VALUE_NESTING {
+            nested = Ty::Tuple(vec![nested]);
+        }
+        assert!(Analyzer::validate_static_value_type(&nested)
+            .unwrap_err()
+            .contains("nesting limit"));
     }
 }

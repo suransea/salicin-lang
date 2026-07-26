@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use super::flow::LowerCtx;
 use super::hir::{HirExpr, HirExprKind, HirIndex, LoanId, Ty};
-use super::lower::{error_expr, integer_literal_value, BoundMethodConstraint};
+use super::lower::{error_expr, integer_literal_value, BoundMethodConstraint, TypeProbe};
 use super::Analyzer;
 
 impl Analyzer {
@@ -90,14 +90,14 @@ impl Analyzer {
         let implements_index = self.trait_impls.keys().any(|implementation| {
             implementation.self_ty == base.ty
                 && implementation.trait_ref.name == self.lang_item_name(LangItemKind::Index)
-                && implementation.trait_ref.arguments == [Ty::I32]
+                && implementation.trait_ref.arguments == [Ty::USize]
         });
         if !implements_index {
             self.error(format!(
-                "type `{}` does not implement `Index(i32)` required by array brackets",
+                "type `{}` does not implement `Index(usize)` required by array brackets",
                 self.diagnostic_type_name(&base.ty)
             ));
-            let _ = self.lower_expr(index, Some(&Ty::I32), context);
+            let _ = self.lower_expr(index, Some(&Ty::USize), context);
             return error_expr();
         }
         let Ty::Array(element, length) = &base.ty else {
@@ -105,8 +105,13 @@ impl Analyzer {
         };
         let element_ty = element.as_ref().clone();
         let length = *length;
-        let lowered_index = self.lower_expr(index, None, context);
-        self.require_same_type(&lowered_index.ty, &Ty::I32, "array index");
+        let index_hint = matches!(
+            self.probe_expr_ty(index, None, context),
+            TypeProbe::Defaultable(_)
+        )
+        .then_some(&Ty::USize);
+        let lowered_index = self.lower_expr(index, index_hint, context);
+        self.require_same_type(&lowered_index.ty, &Ty::USize, "array index");
 
         let moves = !self.is_copy_type(&element_ty);
         if moves && integer_literal_value(index).is_none() {

@@ -199,7 +199,7 @@ impl Analyzer {
                         self.error("internal staged handler index is unavailable");
                         return None;
                     };
-                    self.require_same_type(&index_local.ty, &Ty::I32, "array index");
+                    self.require_same_type(&index_local.ty, &Ty::USize, "array index");
                     if !self.is_copy_type(&element) {
                         self.error(format!(
                             "dynamic indexed borrows require copyable elements, found `{}`",
