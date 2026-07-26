@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.200.0 - 2026-07-26
+
 - Specialized recurring async `loop`, pre-test `while`, and post-test `while`
   with one residual custom-effect or `Throws` child factory per iteration.
   Cold condition gating avoids constructing a child for a false pre-test;
