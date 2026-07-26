@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.207.0 - 2026-07-26
+
 - Added strict typed lockfile consumption and reproducible lock modes.
   `--locked` requires the complete workspace/path provider graph to match the
   current manifests; `--frozen` adds a no-network contract. Missing,
