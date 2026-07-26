@@ -4094,13 +4094,22 @@ impl Analyzer {
                     let [(_, canonical)] = candidates.as_slice() else {
                         return;
                     };
-                    Some(Expr::Call(
+                    let mut call = Expr::Call(
                         Box::new(Expr::Name(canonical.clone())),
                         vec![CallArg {
                             label: None,
                             value: (**receiver).clone(),
                         }],
-                    ))
+                    );
+                    let group_count = self
+                        .functions
+                        .get(canonical)
+                        .or_else(|| self.function_templates.get(canonical))
+                        .map_or(1, |function| function.groups.len());
+                    for _ in 1..group_count {
+                        call = Expr::Call(Box::new(call), Vec::new());
+                    }
+                    Some(call)
                 }
                 _ => None,
             };

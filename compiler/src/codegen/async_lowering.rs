@@ -556,9 +556,15 @@ impl Analyzer {
             awaited.continuation_output = Some(closure.result.clone());
             awaited.continuation_unsafe_effect = closure.unsafe_effect;
             if continuation_has_await {
-                let Some(next) = self.resolve_awaited_future(&closure.result) else {
+                let Some(mut next) = self.resolve_awaited_future_with_residual(&closure.result)
+                else {
                     return super::lower::error_expr();
                 };
+                if let Some(error) = next.throws_error.clone() {
+                    continuation_residual_throws = Some(error);
+                }
+                continuation_residual_custom.extend(next.custom_effects.iter().cloned());
+                next.source_poll = next.throws_error.is_some() || !next.custom_effects.is_empty();
                 awaited.next = Some(Box::new(next));
             }
             continuation_captures = closure.captures;
@@ -851,6 +857,18 @@ impl Analyzer {
     }
 
     fn resolve_awaited_future(&mut self, ty: &Ty) -> Option<AwaitedFutureInfo> {
+        self.resolve_awaited_future_impl(ty, false)
+    }
+
+    fn resolve_awaited_future_with_residual(&mut self, ty: &Ty) -> Option<AwaitedFutureInfo> {
+        self.resolve_awaited_future_impl(ty, true)
+    }
+
+    fn resolve_awaited_future_impl(
+        &mut self,
+        ty: &Ty,
+        allow_residual: bool,
+    ) -> Option<AwaitedFutureInfo> {
         let origin = self
             .current_origin
             .as_deref()
@@ -893,7 +911,9 @@ impl Analyzer {
             .get(&poll_function)
             .cloned()
             .expect("registered Future poll has a signature");
-        if signature.throws_error.is_some() || !signature.custom_effects.is_empty() {
+        if !allow_residual
+            && (signature.throws_error.is_some() || !signature.custom_effects.is_empty())
+        {
             self.error(
                 "await residual Throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
             );
@@ -910,6 +930,9 @@ impl Analyzer {
             poll_ty,
             poll_function,
             unsafe_effect: signature.unsafe_effect,
+            throws_error: signature.throws_error,
+            custom_effects: signature.custom_effects,
+            source_poll: false,
             field: 0,
             continuation: None,
             continuation_output: None,
@@ -2308,6 +2331,599 @@ impl Analyzer {
             body: set_state(&self_ty, 4),
         });
 
+        let source_next_helpers = awaited
+            .next
+            .as_deref()
+            .filter(|next| next.source_poll)
+            .and_then(|next| {
+                let next_source = self.source_type_for_ty(&next.ty)?;
+                let owner_ty = Ty::Pointer {
+                    pointee: Box::new(self_ty.clone()),
+                    mutable: true,
+                };
+                let owner_source = self.source_type_for_ty(&owner_ty)?;
+                let owner = format!("{poll_function}$next$owner");
+                let take = format!("{poll_function}$next$take");
+                let put = format!("{poll_function}$next$put");
+                let complete = format!("{poll_function}$next$complete");
+                let extract = format!("{poll_function}$next$extract");
+                let poll = format!("{poll_function}$next$poll");
+                let next_poll_source = self.functions.get(&next.poll_function)?.clone();
+                next_poll_source.body.as_ref()?;
+                let owned_poll_ty = Ty::Tuple(vec![next.poll_ty.clone(), next.ty.clone()]);
+                let owned_poll_source = Type::Tuple(vec![
+                    next_poll_source.return_type.clone()?,
+                    next_source.clone(),
+                ]);
+                self.signatures.insert(
+                    owner.clone(),
+                    FunctionSig {
+                        groups: vec![vec![self_parameter.clone()]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(owner_ty.clone()),
+                    },
+                );
+                self.signatures.insert(
+                    take.clone(),
+                    FunctionSig {
+                        groups: vec![vec![ParamSig {
+                            name: "owner".to_owned(),
+                            ty: owner_ty.clone(),
+                            mode: PassMode::Copy,
+                        }]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(next.ty.clone()),
+                    },
+                );
+                self.signatures.insert(
+                    put.clone(),
+                    FunctionSig {
+                        groups: vec![vec![
+                            ParamSig {
+                                name: "next".to_owned(),
+                                ty: next.ty.clone(),
+                                mode: PassMode::Move,
+                            },
+                            ParamSig {
+                                name: "owner".to_owned(),
+                                ty: owner_ty.clone(),
+                                mode: PassMode::Copy,
+                            },
+                        ]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(Ty::Unit),
+                    },
+                );
+                self.signatures.insert(
+                    complete.clone(),
+                    FunctionSig {
+                        groups: vec![vec![
+                            ParamSig {
+                                name: "next".to_owned(),
+                                ty: next.ty.clone(),
+                                mode: PassMode::Move,
+                            },
+                            ParamSig {
+                                name: "owner".to_owned(),
+                                ty: owner_ty.clone(),
+                                mode: PassMode::Copy,
+                            },
+                        ]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(Ty::Unit),
+                    },
+                );
+                self.signatures.insert(
+                    extract.clone(),
+                    FunctionSig {
+                        groups: vec![vec![ParamSig {
+                            name: "next".to_owned(),
+                            ty: next.ty.clone(),
+                            mode: PassMode::MutBorrow,
+                        }]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(next.ty.clone()),
+                    },
+                );
+                self.signatures.insert(
+                    poll.clone(),
+                    FunctionSig {
+                        groups: vec![vec![ParamSig {
+                            name: "next".to_owned(),
+                            ty: next.ty.clone(),
+                            mode: PassMode::Move,
+                        }]],
+                        unsafe_effect: next.unsafe_effect,
+                        throws_error: next.throws_error.clone(),
+                        custom_effects: next.custom_effects.clone(),
+                        result: Some(owned_poll_ty),
+                    },
+                );
+                for (helper, parameters, result) in [
+                    (
+                        owner.clone(),
+                        vec![Param {
+                            mode: PassMode::Inferred,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "self".to_owned(),
+                            ty: self_source_reference.clone(),
+                        }],
+                        owner_source.clone(),
+                    ),
+                    (
+                        take.clone(),
+                        vec![Param {
+                            mode: PassMode::Copy,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "owner".to_owned(),
+                            ty: owner_source.clone(),
+                        }],
+                        next_source.clone(),
+                    ),
+                    (
+                        put.clone(),
+                        vec![
+                            Param {
+                                mode: PassMode::Move,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "next".to_owned(),
+                                ty: next_source.clone(),
+                            },
+                            Param {
+                                mode: PassMode::Copy,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "owner".to_owned(),
+                                ty: owner_source.clone(),
+                            },
+                        ],
+                        Type::Unit,
+                    ),
+                    (
+                        complete.clone(),
+                        vec![
+                            Param {
+                                mode: PassMode::Move,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "next".to_owned(),
+                                ty: next_source.clone(),
+                            },
+                            Param {
+                                mode: PassMode::Copy,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "owner".to_owned(),
+                                ty: owner_source,
+                            },
+                        ],
+                        Type::Unit,
+                    ),
+                ] {
+                    self.functions.insert(
+                        helper.clone(),
+                        Function {
+                            name: helper.clone(),
+                            foreign: None,
+                            builtin: false,
+                            compile_groups: Vec::new(),
+                            groups: vec![parameters],
+                            return_type: Some(result),
+                            effects: pure_effects.clone(),
+                            where_predicates: Vec::new(),
+                            body: None,
+                        },
+                    );
+                    self.function_origins.insert(helper.clone(), origin.clone());
+                    self.function_accesses
+                        .insert(helper, self.nominal_accesses[name].clone());
+                }
+                self.functions.insert(
+                    extract.clone(),
+                    Function {
+                        name: extract.clone(),
+                        foreign: None,
+                        builtin: false,
+                        compile_groups: Vec::new(),
+                        groups: vec![vec![Param {
+                            mode: PassMode::MutBorrow,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "next".to_owned(),
+                            ty: next_source.clone(),
+                        }]],
+                        return_type: Some(next_source.clone()),
+                        effects: pure_effects.clone(),
+                        where_predicates: Vec::new(),
+                        body: None,
+                    },
+                );
+                self.function_origins
+                    .insert(extract.clone(), origin.clone());
+                self.function_accesses
+                    .insert(extract.clone(), self.nominal_accesses[name].clone());
+                let owned = "$async$owned$next".to_owned();
+                let output = "$async$owned$poll".to_owned();
+                let returned = "$async$returned$next".to_owned();
+                self.functions.insert(
+                    poll.clone(),
+                    Function {
+                        name: poll.clone(),
+                        foreign: None,
+                        builtin: false,
+                        compile_groups: Vec::new(),
+                        groups: vec![vec![Param {
+                            mode: PassMode::Move,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "next".to_owned(),
+                            ty: next_source.clone(),
+                        }]],
+                        return_type: Some(owned_poll_source),
+                        effects: next_poll_source.effects,
+                        where_predicates: Vec::new(),
+                        body: Some(Expr::Block(
+                            vec![
+                                Stmt::Let(crate::ast::Binding {
+                                    mutable: true,
+                                    name: owned.clone(),
+                                    annotation: Some(next_source),
+                                    value: Expr::Name("next".to_owned()),
+                                    value_source: None,
+                                }),
+                                Stmt::Let(crate::ast::Binding {
+                                    mutable: false,
+                                    name: output.clone(),
+                                    annotation: None,
+                                    value: Expr::Call(
+                                        Box::new(Expr::Member(
+                                            Box::new(Expr::Name(owned.clone())),
+                                            "poll".to_owned(),
+                                        )),
+                                        Vec::new(),
+                                    ),
+                                    value_source: None,
+                                }),
+                                Stmt::Let(crate::ast::Binding {
+                                    mutable: false,
+                                    name: returned.clone(),
+                                    annotation: None,
+                                    value: Expr::Call(
+                                        Box::new(Expr::Name(extract.clone())),
+                                        vec![CallArg {
+                                            label: None,
+                                            value: Expr::Name(owned),
+                                        }],
+                                    ),
+                                    value_source: None,
+                                }),
+                            ],
+                            Some(Box::new(Expr::Tuple(vec![
+                                Expr::Name(output),
+                                Expr::Name(returned),
+                            ]))),
+                        )),
+                    },
+                );
+                self.function_origins.insert(poll.clone(), origin.clone());
+                self.function_accesses
+                    .insert(poll.clone(), self.nominal_accesses[name].clone());
+
+                let next_place = async_field_place(0, self_ty.clone(), next.field, next.ty.clone());
+                let local = 61_000;
+                self.lifted_functions.push(HirFunction {
+                    name: owner.clone(),
+                    params: vec![HirParam {
+                        id: 0,
+                        name: "self".to_owned(),
+                        ty: self_reference.clone(),
+                        mode: PassMode::Inferred,
+                    }],
+                    result: owner_ty.clone(),
+                    body: HirExpr {
+                        ty: owner_ty.clone(),
+                        kind: HirExprKind::RawAddress {
+                            place: HirPlace {
+                                local: 0,
+                                root_ty: self_ty.clone(),
+                                projections: Vec::new(),
+                                dynamic_index: None,
+                                ty: self_ty.clone(),
+                                capability: LocalCapability::MutParam,
+                                root_mutable: true,
+                                loan: None,
+                                indirect: true,
+                            },
+                        },
+                    },
+                });
+                let extracted = 61_100;
+                self.lifted_functions.push(HirFunction {
+                    name: extract,
+                    params: vec![HirParam {
+                        id: 0,
+                        name: "next".to_owned(),
+                        ty: next.ty.clone(),
+                        mode: PassMode::MutBorrow,
+                    }],
+                    result: next.ty.clone(),
+                    body: HirExpr {
+                        ty: next.ty.clone(),
+                        kind: HirExprKind::Block(
+                            vec![
+                                HirStmt::Let(super::hir::HirBinding {
+                                    id: extracted,
+                                    name: "extracted".to_owned(),
+                                    ty: next.ty.clone(),
+                                    mutable: false,
+                                    value: HirExpr {
+                                        ty: next.ty.clone(),
+                                        kind: HirExprKind::RawTake(Box::new(HirExpr {
+                                            ty: Ty::Pointer {
+                                                pointee: Box::new(next.ty.clone()),
+                                                mutable: true,
+                                            },
+                                            kind: HirExprKind::RawAddress {
+                                                place: HirPlace {
+                                                    local: 0,
+                                                    root_ty: next.ty.clone(),
+                                                    projections: Vec::new(),
+                                                    dynamic_index: None,
+                                                    ty: next.ty.clone(),
+                                                    capability: LocalCapability::MutParam,
+                                                    root_mutable: true,
+                                                    loan: None,
+                                                    indirect: false,
+                                                },
+                                            },
+                                        })),
+                                    },
+                                }),
+                                HirStmt::Expr(HirExpr {
+                                    ty: Ty::Unit,
+                                    kind: HirExprKind::Assign {
+                                        place: HirPlace {
+                                            local: 0,
+                                            root_ty: next.ty.clone(),
+                                            projections: vec![0],
+                                            dynamic_index: None,
+                                            ty: Ty::I32,
+                                            capability: LocalCapability::MutParam,
+                                            root_mutable: true,
+                                            loan: None,
+                                            indirect: false,
+                                        },
+                                        value: Box::new(HirExpr {
+                                            ty: Ty::I32,
+                                            kind: HirExprKind::Integer(3),
+                                        }),
+                                        assignment: AssignmentKind::Overwrite,
+                                        root_initialized: true,
+                                    },
+                                }),
+                            ],
+                            Some(Box::new(HirExpr {
+                                ty: next.ty.clone(),
+                                kind: HirExprKind::Read {
+                                    place: HirPlace {
+                                        local: extracted,
+                                        root_ty: next.ty.clone(),
+                                        projections: Vec::new(),
+                                        dynamic_index: None,
+                                        ty: next.ty.clone(),
+                                        capability: LocalCapability::Owned,
+                                        root_mutable: false,
+                                        loan: None,
+                                        indirect: false,
+                                    },
+                                    kind: HirReadKind::Move,
+                                },
+                            })),
+                        ),
+                    },
+                });
+                self.lifted_functions.push(HirFunction {
+                    name: take.clone(),
+                    params: vec![HirParam {
+                        id: 0,
+                        name: "owner".to_owned(),
+                        ty: owner_ty.clone(),
+                        mode: PassMode::Copy,
+                    }],
+                    result: next.ty.clone(),
+                    body: HirExpr {
+                        ty: next.ty.clone(),
+                        kind: HirExprKind::Block(
+                            vec![
+                                HirStmt::Let(super::hir::HirBinding {
+                                    id: local,
+                                    name: "next".to_owned(),
+                                    ty: next.ty.clone(),
+                                    mutable: false,
+                                    value: HirExpr {
+                                        ty: next.ty.clone(),
+                                        kind: HirExprKind::RawTake(Box::new(HirExpr {
+                                            ty: Ty::Pointer {
+                                                pointee: Box::new(next.ty.clone()),
+                                                mutable: true,
+                                            },
+                                            kind: HirExprKind::RawAddress {
+                                                place: next_place.clone(),
+                                            },
+                                        })),
+                                    },
+                                }),
+                                HirStmt::Expr(set_state(&self_ty, 3)),
+                            ],
+                            Some(Box::new(HirExpr {
+                                ty: next.ty.clone(),
+                                kind: HirExprKind::Read {
+                                    place: HirPlace {
+                                        local,
+                                        root_ty: next.ty.clone(),
+                                        projections: Vec::new(),
+                                        dynamic_index: None,
+                                        ty: next.ty.clone(),
+                                        capability: LocalCapability::Owned,
+                                        root_mutable: false,
+                                        loan: None,
+                                        indirect: false,
+                                    },
+                                    kind: HirReadKind::Move,
+                                },
+                            })),
+                        ),
+                    },
+                });
+                self.lifted_functions.push(HirFunction {
+                    name: put.clone(),
+                    params: vec![
+                        HirParam {
+                            id: local,
+                            name: "next".to_owned(),
+                            ty: next.ty.clone(),
+                            mode: PassMode::Move,
+                        },
+                        HirParam {
+                            id: 0,
+                            name: "owner".to_owned(),
+                            ty: owner_ty.clone(),
+                            mode: PassMode::Copy,
+                        },
+                    ],
+                    result: Ty::Unit,
+                    body: HirExpr {
+                        ty: Ty::Unit,
+                        kind: HirExprKind::Block(
+                            vec![
+                                HirStmt::Expr(HirExpr {
+                                    ty: Ty::Unit,
+                                    kind: HirExprKind::RawInit {
+                                        pointer: Box::new(HirExpr {
+                                            ty: Ty::Pointer {
+                                                pointee: Box::new(next.ty.clone()),
+                                                mutable: true,
+                                            },
+                                            kind: HirExprKind::RawAddress { place: next_place },
+                                        }),
+                                        value: Box::new(HirExpr {
+                                            ty: next.ty.clone(),
+                                            kind: HirExprKind::Read {
+                                                place: HirPlace {
+                                                    local,
+                                                    root_ty: next.ty.clone(),
+                                                    projections: Vec::new(),
+                                                    dynamic_index: None,
+                                                    ty: next.ty.clone(),
+                                                    capability: LocalCapability::Owned,
+                                                    root_mutable: false,
+                                                    loan: None,
+                                                    indirect: false,
+                                                },
+                                                kind: HirReadKind::Move,
+                                            },
+                                        }),
+                                    },
+                                }),
+                                HirStmt::Expr(set_state(&self_ty, 2)),
+                            ],
+                            Some(Box::new(HirExpr {
+                                ty: Ty::Unit,
+                                kind: HirExprKind::Unit,
+                            })),
+                        ),
+                    },
+                });
+                self.lifted_functions.push(HirFunction {
+                    name: complete.clone(),
+                    params: vec![
+                        HirParam {
+                            id: local,
+                            name: "next".to_owned(),
+                            ty: next.ty.clone(),
+                            mode: PassMode::Move,
+                        },
+                        HirParam {
+                            id: 0,
+                            name: "owner".to_owned(),
+                            ty: owner_ty,
+                            mode: PassMode::Copy,
+                        },
+                    ],
+                    result: Ty::Unit,
+                    body: HirExpr {
+                        ty: Ty::Unit,
+                        kind: HirExprKind::Block(
+                            vec![
+                                HirStmt::Expr(HirExpr {
+                                    ty: Ty::Unit,
+                                    kind: HirExprKind::RawInit {
+                                        pointer: Box::new(HirExpr {
+                                            ty: Ty::Pointer {
+                                                pointee: Box::new(next.ty.clone()),
+                                                mutable: true,
+                                            },
+                                            kind: HirExprKind::RawAddress {
+                                                place: async_field_place(
+                                                    0,
+                                                    self_ty.clone(),
+                                                    next.field,
+                                                    next.ty.clone(),
+                                                ),
+                                            },
+                                        }),
+                                        value: Box::new(HirExpr {
+                                            ty: next.ty.clone(),
+                                            kind: HirExprKind::Read {
+                                                place: HirPlace {
+                                                    local,
+                                                    root_ty: next.ty.clone(),
+                                                    projections: Vec::new(),
+                                                    dynamic_index: None,
+                                                    ty: next.ty.clone(),
+                                                    capability: LocalCapability::Owned,
+                                                    root_mutable: false,
+                                                    loan: None,
+                                                    indirect: false,
+                                                },
+                                                kind: HirReadKind::Move,
+                                            },
+                                        }),
+                                    },
+                                }),
+                                HirStmt::Expr(set_state(&self_ty, 4)),
+                            ],
+                            Some(Box::new(HirExpr {
+                                ty: Ty::Unit,
+                                kind: HirExprKind::Unit,
+                            })),
+                        ),
+                    },
+                });
+                Some((owner, take, put, complete, poll))
+            });
+
         let layout = self.struct_layouts[name].clone();
         let mut capture_helpers = Vec::new();
         for (index, mode) in future.capture_modes.iter().enumerate() {
@@ -2607,6 +3223,143 @@ impl Analyzer {
         } else {
             machine_body
         };
+        let body = if let Some((owner_next, take_next, put_next, complete_next, poll_next_helper)) =
+            source_next_helpers
+        {
+            let parent_poll_type = Expr::Call(
+                Box::new(Expr::Name(
+                    self.lang_item_name(LangItemKind::Poll).to_owned(),
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: source_type_expression(&output_source),
+                }],
+            );
+            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "Pending".to_owned());
+            let ready_value = |value| {
+                Expr::Call(
+                    Box::new(Expr::Member(
+                        Box::new(parent_poll_type.clone()),
+                        "Ready".to_owned(),
+                    )),
+                    vec![CallArg { label: None, value }],
+                )
+            };
+            let child = "$async$chained$child".to_owned();
+            let returned_child = "$async$chained$returned".to_owned();
+            let owner = "$async$chained$owner".to_owned();
+            let child_poll = "$async$chained$poll".to_owned();
+            let output = "$async$chained$output".to_owned();
+            let poll_next = Expr::Block(
+                vec![
+                    Stmt::Let(crate::ast::Binding {
+                        mutable: false,
+                        name: owner.clone(),
+                        annotation: None,
+                        value: call_helper(owner_next, vec![self_value()]),
+                        value_source: None,
+                    }),
+                    Stmt::Let(crate::ast::Binding {
+                        mutable: false,
+                        name: child.clone(),
+                        annotation: None,
+                        value: call_helper(take_next, vec![Expr::Name(owner.clone())]),
+                        value_source: None,
+                    }),
+                ],
+                Some(Box::new(Expr::Match {
+                    scrutinee: Box::new(call_helper(poll_next_helper, vec![Expr::Name(child)])),
+                    arms: vec![crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Tuple(vec![
+                            crate::ast::Pattern::Binding(child_poll.clone()),
+                            crate::ast::Pattern::Binding(returned_child.clone()),
+                        ]),
+                        guard: None,
+                        body: Expr::Match {
+                            scrutinee: Box::new(Expr::Name(child_poll)),
+                            arms: vec![
+                                crate::ast::MatchArm {
+                                    pattern: crate::ast::Pattern::Constructor {
+                                        path: vec!["Pending".to_owned()],
+                                        fields: crate::ast::PatternFields::Unit,
+                                    },
+                                    guard: None,
+                                    body: Expr::Block(
+                                        vec![Stmt::Expr(call_helper(
+                                            put_next,
+                                            vec![
+                                                Expr::Name(returned_child.clone()),
+                                                Expr::Name(owner.clone()),
+                                            ],
+                                        ))],
+                                        Some(Box::new(pending.clone())),
+                                    ),
+                                },
+                                crate::ast::MatchArm {
+                                    pattern: crate::ast::Pattern::Constructor {
+                                        path: vec!["Ready".to_owned()],
+                                        fields: crate::ast::PatternFields::Positional(vec![
+                                            crate::ast::Pattern::Binding(output.clone()),
+                                        ]),
+                                    },
+                                    guard: None,
+                                    body: Expr::Block(
+                                        vec![Stmt::Expr(call_helper(
+                                            complete_next,
+                                            vec![Expr::Name(returned_child), Expr::Name(owner)],
+                                        ))],
+                                        Some(Box::new(ready_value(Expr::Name(output)))),
+                                    ),
+                                },
+                            ],
+                        },
+                    }],
+                })),
+            );
+            let machine_output = "$async$machine$output".to_owned();
+            let after_machine = Expr::Match {
+                scrutinee: Box::new(body),
+                arms: vec![
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Pending".to_owned()],
+                            fields: crate::ast::PatternFields::Unit,
+                        },
+                        guard: None,
+                        body: Expr::If {
+                            condition: Box::new(Expr::Binary(
+                                Box::new(state()),
+                                BinaryOp::Eq,
+                                Box::new(Expr::Integer(2)),
+                            )),
+                            then_branch: Box::new(poll_next.clone()),
+                            else_branch: Some(Box::new(pending)),
+                        },
+                    },
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Ready".to_owned()],
+                            fields: crate::ast::PatternFields::Positional(vec![
+                                crate::ast::Pattern::Binding(machine_output.clone()),
+                            ]),
+                        },
+                        guard: None,
+                        body: ready_value(Expr::Name(machine_output)),
+                    },
+                ],
+            };
+            Expr::If {
+                condition: Box::new(Expr::Binary(
+                    Box::new(state()),
+                    BinaryOp::Eq,
+                    Box::new(Expr::Integer(2)),
+                )),
+                then_branch: Box::new(poll_next),
+                else_branch: Some(Box::new(after_machine)),
+            }
+        } else {
+            body
+        };
         self.functions.insert(
             poll_function.clone(),
             Function {
@@ -2882,15 +3635,19 @@ fn suspended_poll_body(
                     ty: poll_ty.clone(),
                     kind: HirExprKind::If {
                         condition: Box::new(state_is(self_ty, 2)),
-                        then_branch: Box::new(poll_awaited(
-                            self_ty,
-                            poll_ty,
-                            poll_name,
-                            output,
-                            next,
-                            AwaitPollState::new(5, 6, 3),
-                            None,
-                        )),
+                        then_branch: Box::new(if next.source_poll {
+                            poll_pending(poll_ty, poll_name)
+                        } else {
+                            poll_awaited(
+                                self_ty,
+                                poll_ty,
+                                poll_name,
+                                output,
+                                next,
+                                AwaitPollState::new(5, 6, 3),
+                                None,
+                            )
+                        }),
                         else_branch: Some(Box::new(trap())),
                     },
                 })),
@@ -3152,15 +3909,23 @@ fn poll_awaited(
                     HirStmt::Expr(initialize_next),
                     HirStmt::Expr(set_state(self_ty, 2)),
                 ],
-                Some(Box::new(poll_awaited(
-                    self_ty,
-                    poll_ty,
-                    poll_name,
-                    parent_output,
-                    next,
-                    AwaitPollState::new(state.next_output_local, state.next_output_local + 100, 3),
-                    None,
-                ))),
+                Some(Box::new(if next.source_poll {
+                    poll_pending(poll_ty, poll_name)
+                } else {
+                    poll_awaited(
+                        self_ty,
+                        poll_ty,
+                        poll_name,
+                        parent_output,
+                        next,
+                        AwaitPollState::new(
+                            state.next_output_local,
+                            state.next_output_local + 100,
+                            3,
+                        ),
+                        None,
+                    )
+                })),
             ),
         }
     } else {
@@ -3528,6 +4293,9 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) poll_ty: Ty,
     pub(super) poll_function: String,
     pub(super) unsafe_effect: bool,
+    pub(super) throws_error: Option<Ty>,
+    pub(super) custom_effects: Vec<String>,
+    pub(super) source_poll: bool,
     pub(super) field: usize,
     pub(super) continuation: Option<String>,
     pub(super) continuation_output: Option<Ty>,
