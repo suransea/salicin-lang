@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+## 0.206.1 - 2026-07-26
+
+- Migrated the tracked inventory example to source-aware lockfile format 2.
+
 ## 0.206.0 - 2026-07-26
 
 - Added rooted and virtual workspaces with explicit members, `--package`
