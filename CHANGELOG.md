@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.206.0 - 2026-07-26
+
 - Added rooted and virtual workspaces with explicit members, `--package`
   selection, shared build and lock roots, workspace-wide formatting, and
   workspace-complete dependency lock graphs. Lockfile format 2 records
