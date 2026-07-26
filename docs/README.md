@@ -47,6 +47,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   ownership transfer, cleanup, effects, and returns.
 - [Native linkage](project/native-linkage.md): package-qualified exports, ABI fingerprints,
   generic ownership, and cross-module agreement.
+- [C interoperability](project/c-interoperability.md): verified scalar calls, raw pointers,
+  `struct(c)` layout, and rejected ABI categories.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

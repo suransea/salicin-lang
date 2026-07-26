@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+- Verified the bounded C interoperability surface against the native host
+  Clang ABI. Cross-language tests cover every signed, unsigned, pointer-sized,
+  and 128-bit integer in parameter and return positions, plus bidirectional
+  raw-pointer access to nested `struct(c)` storage containing integer,
+  pointer, fixed-array, and nested aggregate fields. The new support matrix
+  explicitly rejects by-value arrays and aggregates, bool, borrows, Unit
+  parameters, and typed function values until target ABI lowering supports
+  their required coercions and attributes.
+
 ## 0.202.0 - 2026-07-26
 
 - Exported concrete primary-package `pub` functions and non-Unit globals with

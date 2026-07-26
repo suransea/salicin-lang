@@ -85,6 +85,37 @@ fn link_and_run_ir(ir: &str, description: &str) -> Output {
         .unwrap_or_else(|error| panic!("run {description}: {error}"))
 }
 
+fn link_and_run_ir_with_c(ir: &str, c_source: &str, description: &str) -> Output {
+    let temporary = TestDirectory::new();
+    let ir_path = temporary.write("module.ll", ir);
+    let c_path = temporary.write("interop.c", c_source);
+    let executable = temporary.join("program");
+    let linked = Command::new("/usr/bin/clang")
+        .arg("-Wno-override-module")
+        .arg("-std=c11")
+        .arg("-x")
+        .arg("ir")
+        .arg(&ir_path)
+        .arg("-x")
+        .arg("c")
+        .arg(&c_path)
+        .arg("-x")
+        .arg("none")
+        .arg(test_allocator_object())
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap_or_else(|error| panic!("link {description}: {error}"));
+    assert!(
+        linked.status.success(),
+        "{description}: {}",
+        output_text(&linked)
+    );
+    Command::new(executable)
+        .output()
+        .unwrap_or_else(|error| panic!("run {description}: {error}"))
+}
+
 fn run_source_in_process(path: &Path) -> Output {
     let source = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
@@ -3117,6 +3148,105 @@ fn c_struct_representation_preserves_layout_and_rejects_invalid_fields() {
 }
 
 #[test]
+fn c_struct_layout_matches_c_through_raw_pointers() {
+    let source = r#"
+let Inner = struct(c) {
+  small: i16,
+  wide: u64,
+}
+
+let Record = struct(c) {
+  tag: u8,
+  inner: Inner,
+  huge: i128,
+  values: Array(u16)(3),
+  next: Ptr(u8),
+}
+
+let c_record_size(): u64 = foreign(c)
+let c_record_align(): u64 = foreign(c)
+let c_verify_record(record: Ptr(Record)): i32 = foreign(c)
+let c_fill_record(record: Ptr(mut)(Record)): () = foreign(c)
+
+let main(): i32 = {
+  let byte: u8 = 31
+  let mut record = Record { tag: 7, inner: Inner { small: -3, wide: 1000 }, huge: -4000, values: [11, 13, 17], next: Ptr(borrow(byte)) }
+  let verified = unsafe {
+    c_record_size() == size_of(Record) &&
+    c_record_align() == align_of(Record) &&
+    c_verify_record(Ptr(borrow(record))) == 42
+  }
+  do {
+    unsafe {
+      c_fill_record(Ptr(mut)(borrow(mut)(record)))
+    }
+  }
+  if verified &&
+    record.tag == 9 &&
+    record.inner.small == -5 &&
+    record.inner.wide == 2000 &&
+    record.huge == -8000 &&
+    record.values[0] == 19 &&
+    record.values[1] == 23 &&
+    record.values[2] == 29 {
+    42
+  } else {
+    0
+  }
+}
+"#;
+    let c_source = r#"
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct {
+  int16_t small;
+  uint64_t wide;
+} Inner;
+
+typedef struct {
+  uint8_t tag;
+  Inner inner;
+  __int128 huge;
+  uint16_t values[3];
+  const uint8_t *next;
+} Record;
+
+size_t c_record_size(void) {
+  return sizeof(Record);
+}
+
+size_t c_record_align(void) {
+  return _Alignof(Record);
+}
+
+int32_t c_verify_record(const Record *record) {
+  return record->tag == 7 &&
+         record->inner.small == -3 &&
+         record->inner.wide == 1000 &&
+         record->huge == -4000 &&
+         record->values[0] == 11 &&
+         record->values[1] == 13 &&
+         record->values[2] == 17 &&
+         *record->next == 31 ? 42 : 0;
+}
+
+void c_fill_record(Record *record) {
+  record->tag = 9;
+  record->inner.small = -5;
+  record->inner.wide = 2000;
+  record->huge = -8000;
+  record->values[0] = 19;
+  record->values[1] = 23;
+  record->values[2] = 29;
+}
+"#;
+    let ir = compile_source(source).expect("compile C layout interop program");
+    let output = link_and_run_ir_with_c(&ir, c_source, "C aggregate pointer layout");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
     let fixtures = ["ffi_c_abs.sc", "ffi_c_memset.sc"];
     for (name, output) in batched_native_fixture_outputs(&fixtures) {
@@ -3133,6 +3263,99 @@ fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
     assert!(ir.contains("declare i32 @abs(i32)"));
     assert!(ir.contains("call i32 @abs(i32"));
     assert!(!ir.contains("define i32 @abs"));
+}
+
+#[test]
+fn c_ffi_integer_widths_match_c_parameters_and_returns() {
+    let source = r#"
+let c_i8(): i8 = foreign(c)
+let c_i16(): i16 = foreign(c)
+let c_i32(): i32 = foreign(c)
+let c_i64(): i64 = foreign(c)
+let c_i128(): i128 = foreign(c)
+let c_isize(): isize = foreign(c)
+let c_u8(): u8 = foreign(c)
+let c_u16(): u16 = foreign(c)
+let c_u32(): u32 = foreign(c)
+let c_u64(): u64 = foreign(c)
+let c_u128(): u128 = foreign(c)
+let c_usize(): usize = foreign(c)
+let c_accept(
+  a: i8,
+  b: i16,
+  c: i32,
+  d: i64,
+  e: i128,
+  f: isize,
+  g: u8,
+  h: u16,
+  i: u32,
+  j: u64,
+  k: u128,
+  l: usize,
+): i32 = foreign(c)
+
+let main(): i32 = {
+  unsafe {
+    if c_i8() == -8 &&
+      c_i16() == -16 &&
+      c_i32() == -32 &&
+      c_i64() == -64 &&
+      c_i128() == -128 &&
+      c_isize() == -42 &&
+      c_u8() == 8 &&
+      c_u16() == 16 &&
+      c_u32() == 32 &&
+      c_u64() == 64 &&
+      c_u128() == 128 &&
+      c_usize() == 42 &&
+      c_accept(-8, -16, -32, -64, -128, -42, 8, 16, 32, 64, 128, 42) == 42 {
+      42
+    } else {
+      0
+    }
+  }
+}
+"#;
+    let c_source = r#"
+#include <stdint.h>
+#include <stddef.h>
+
+int8_t c_i8(void) { return -8; }
+int16_t c_i16(void) { return -16; }
+int32_t c_i32(void) { return -32; }
+int64_t c_i64(void) { return -64; }
+__int128 c_i128(void) { return -128; }
+intptr_t c_isize(void) { return -42; }
+uint8_t c_u8(void) { return 8; }
+uint16_t c_u16(void) { return 16; }
+uint32_t c_u32(void) { return 32; }
+uint64_t c_u64(void) { return 64; }
+unsigned __int128 c_u128(void) { return 128; }
+uintptr_t c_usize(void) { return 42; }
+
+int32_t c_accept(
+  int8_t a,
+  int16_t b,
+  int32_t c,
+  int64_t d,
+  __int128 e,
+  intptr_t f,
+  uint8_t g,
+  uint16_t h,
+  uint32_t i,
+  uint64_t j,
+  unsigned __int128 k,
+  uintptr_t l
+) {
+  return a == -8 && b == -16 && c == -32 && d == -64 &&
+         e == -128 && f == -42 && g == 8 && h == 16 &&
+         i == 32 && j == 64 && k == 128 && l == 42 ? 42 : 0;
+}
+"#;
+    let ir = compile_source(source).expect("compile C integer ABI program");
+    let output = link_and_run_ir_with_c(&ir, c_source, "C integer ABI");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
 #[test]
@@ -3310,6 +3533,23 @@ fn c_ffi_rejects_unsafe_calls_and_private_abi_types() {
             "ffi_bool_result.sc",
             "has unsupported C ABI result type `bool`",
         ),
+        (
+            "ffi_array_parameter.sc",
+            "has unsupported C ABI type `Array(i32)(2)`",
+        ),
+        (
+            "ffi_c_struct_parameter.sc",
+            "has unsupported C ABI type `Pair`",
+        ),
+        (
+            "ffi_c_struct_result.sc",
+            "has unsupported C ABI result type `Pair`",
+        ),
+        (
+            "ffi_function_parameter.sc",
+            "has unsupported C ABI type `(i32): i32`",
+        ),
+        ("ffi_unit_parameter.sc", "has unsupported C ABI type `()`"),
         (
             "ffi_curried.sc",
             "C ABI functions require exactly one runtime parameter group",

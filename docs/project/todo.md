@@ -13,24 +13,18 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-The async and native-linkage milestones are complete. Execution order is
-strict: `ABI-C-1` -> tooling and package work.
+The async and ABI milestones are complete. Tooling and package work now
+proceeds in listed order.
 
-## P0: C Interoperability
-
-- [ ] **ABI-C-1: Complete the verified C interoperability surface**
-
-Review `struct(c)` and `foreign(c, ...)` against supported targets, document
-which scalar, pointer, array, aggregate, and function signatures are accepted,
-and add cross-language layout and call tests. Keep compiler-owned `builtin()`
-definitions orthogonal to this boundary.
-
-## P1: Tooling And Packages
-
-Entry gate: `ABI-C-1` is complete.
+## P0: Tooling
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**
+
+## P1: Packages And Incremental Compilation
+
+Entry gate: tooling syntax and span contracts are complete.
+
 - [ ] **PKG-WORKSPACE-1: Design workspaces and registry dependency identities**
 - [ ] **PKG-REPRO-1: Specify reproducible dependency resolution**
 - [ ] **INCR-1: Define stable incremental-compilation inputs**

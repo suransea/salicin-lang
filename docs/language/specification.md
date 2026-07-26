@@ -786,8 +786,13 @@ recoverable unwind mechanism.
 Calling the declaration implicitly requires `Unsafe`; the declaration does
 not spell an explicit effect row. The optional second argument is a validated
 ASCII linker symbol. When omitted, it defaults to the Salicin declaration
-name. The stable foreign subset consists of explicitly supported scalar and
-raw-pointer signatures.
+name. The foreign subset accepts every signed, unsigned, pointer-sized, and
+128-bit integer plus raw pointers as parameters and results; `()` is accepted
+only as a result. It rejects `bool`, Unit parameters, arrays, aggregates,
+borrows, slices, and callable values. A C array or `struct(c)` therefore
+crosses this function boundary behind `Ptr` rather than by value. The complete
+target mapping and cross-language evidence are specified by the
+[C interoperability contract](../project/c-interoperability.md).
 
 ```sc fragment
 let read(

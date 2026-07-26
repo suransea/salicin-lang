@@ -255,9 +255,14 @@ Implemented package features include:
 - local path dependencies and `salicin.lock`;
 - package ownership and trait coherence boundaries.
 
-The C import boundary supports validated ASCII link names and the documented integer and raw-pointer
-subset. Foreign calls require `unsafe`. A frozen Salicin ABI, registry dependencies, workspaces,
-and a precompiled distribution format are not defined.
+The verified [C interoperability boundary](c-interoperability.md) supports
+validated ASCII link names, every Salicin integer width, raw pointers, and
+Unit results. Foreign calls require `unsafe`. `struct(c)` layout is verified
+against host Clang through nested, array, integer, and pointer fields; C reads
+and writes those records behind raw pointers. By-value aggregates, arrays,
+bool, borrows, and typed function pointers remain rejected. A frozen Salicin
+ABI, registry dependencies, workspaces, and a precompiled distribution format
+are not defined.
 
 The experimental native [ABI representation audit](abi-review.md) specifies
 the current 64-bit host-target mapping for every emitted first-class value.

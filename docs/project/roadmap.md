@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Verified C Interoperability
+## Current Milestone: Formatter Syntax Invariants
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -27,11 +27,10 @@ suspension, and residual handler specialization for supported state shapes.
 Unsupported recursive, self-referential, move-only backedge, effectful
 condition, and nested residual iteration shapes receive source diagnostics.
 
-The runtime representation audit, native calling convention, and exported
-symbol contract are complete. The current milestone verifies `struct(c)` and
-`foreign(c, ...)` against the supported target with cross-language layout and
-call evidence. This remains an experimental ABI definition, not a 1.0
-stability promise.
+The runtime representation audit, native calling convention, exported symbol
+contract, and bounded C interoperability are complete. The current milestone
+defines formatter-preserving syntax invariants before an LSP, workspace,
+registry identity, or incremental compilation work begins.
 
 ## Test Throughput Foundation
 
@@ -114,6 +113,15 @@ nominal contracts, incompatible declarations cannot silently bind, generic
 specializations belong to the consumer, and compiler-generated definitions
 remain internal. Independent LLVM modules link and execute through this
 contract. Precompiled package interfaces remain later distribution work.
+
+## Completed C Interoperability
+
+The [C interoperability contract](c-interoperability.md) defines the native
+64-bit host-Clang boundary. Cross-language tests cover every integer width,
+raw pointers, and bidirectional access to nested `struct(c)` storage
+containing integer, pointer, array, and nested aggregate fields. By-value
+arrays and aggregates, bool, borrows, and typed function pointers are rejected
+until target ABI lowering explicitly supports them.
 
 ## Later Ecosystem Milestone
 

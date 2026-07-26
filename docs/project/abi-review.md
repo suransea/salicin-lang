@@ -39,8 +39,9 @@ rather than host `usize::BITS`.
 | `EffectCallable(I, O, A)` | `{ entry ptr, drop ptr, environment ptr, active-flag ptr }` | native, compiler-private |
 
 Salicin structs and enums deliberately have no C status. `struct(c)` is the
-only aggregate admitted to the C data model, while the current foreign-call
-surface accepts only integers, raw pointers, and `()` results.
+only aggregate admitted to the C data model. The verified
+[C interoperability contract](c-interoperability.md) accepts integers and raw
+pointers in calls, `()` results, and pointer access to `struct(c)` storage.
 
 ## Function Boundaries
 
@@ -81,8 +82,9 @@ declaration.
 
 `struct(c)` validates non-empty field lists recursively. Accepted fields are
 integers, raw pointers, non-zero fixed arrays of accepted fields, and nested
-concrete `struct(c)` instances. Cross-language conformance and the final
-supported scalar/aggregate call surface belong to `ABI-C-1`.
+concrete `struct(c)` instances. Cross-language tests verify this layout in
+both directions through raw pointers. Aggregate values remain rejected in
+foreign signatures until a target ABI classifier handles coercion and `sret`.
 
 ## Audit Conclusions
 
@@ -95,5 +97,4 @@ supported scalar/aggregate call surface belong to `ABI-C-1`.
 - Native call ownership participates in the separately emitted linkage
   contract.
 - Concrete primary-package `pub` definitions have experimental native exports.
-- The C surface is bounded and source-validated, but aggregate calls still
-  require cross-language verification.
+- The bounded C surface is source-validated and cross-language verified.
