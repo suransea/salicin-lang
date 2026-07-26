@@ -13,18 +13,18 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-The async, ABI, formatter, and editor-span milestones are complete. Package
-and incremental-compilation work now proceeds in listed order.
+The async, ABI, formatter, editor-span, and workspace-identity milestones are
+complete. Resolution and incremental-compilation work now proceeds in listed
+order.
 
-## P0: Workspaces
-
-- [ ] **PKG-WORKSPACE-1: Design workspaces and registry dependency identities**
-
-## P1: Reproducibility And Incremental Compilation
-
-Entry gate: workspace and package-identity contracts are complete.
+## P0: Reproducible Resolution
 
 - [ ] **PKG-REPRO-1: Specify reproducible dependency resolution**
+
+## P1: Incremental Compilation
+
+Entry gate: dependency resolution and lockfile reuse are complete.
+
 - [ ] **INCR-1: Define stable incremental-compilation inputs**
 
 ## Definition of Done

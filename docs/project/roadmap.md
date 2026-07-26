@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Workspaces And Registry Identities
+## Current Milestone: Reproducible Dependency Resolution
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -29,9 +29,10 @@ condition, and nested residual iteration shapes receive source diagnostics.
 
 The runtime representation audit, native calling convention, exported symbol
 contract, bounded C interoperability, conservative formatter, and editor span
-contract are complete. The current milestone defines workspace membership and
-stable dependency identities before reproducible resolution or incremental
-compilation begins.
+contract, workspace membership, and source-aware provider identity are
+complete. The current milestone defines deterministic registry and path
+dependency selection, lockfile reuse, checksums, and offline behavior before
+incremental compilation begins.
 
 ## Test Throughput Foundation
 
@@ -141,11 +142,20 @@ and source-graph analysis route source-backed errors to their documents;
 location-free fallbacks are explicitly distinguished from exact ranges.
 Unicode, cross-file, and complete failure-fixture coverage pin the boundary.
 
+## Completed Workspaces And Provider Identity
+
+The [workspace contract](workspaces.md) supports rooted and virtual manifests,
+explicit non-nested members, `--package` selection, shared build and lock
+roots, and workspace-wide formatting. Lockfile format 2 records portable
+workspace/path source identities. Compiler canonical names and native symbols
+use resolved `(source, name, exact version)` provider identity, allowing equal
+package declarations from distinct providers without conflation.
+
 ## Later Ecosystem Milestone
 
 Package compatibility follows the completed tooling foundation:
 
-- workspaces and reproducible dependency resolution;
+- reproducible dependency resolution;
 - incremental compilation keyed by stable semantic inputs.
 
 No milestone may freeze a public ABI, package registry protocol, or compatibility promise while the

@@ -32,6 +32,38 @@ pub struct Manifest {
     pub package_root: PathBuf,
 }
 
+/// A validated workspace rooted at one `salicin.toml`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Workspace {
+    /// Canonical absolute path to the workspace root manifest.
+    pub manifest_path: PathBuf,
+    /// Canonical absolute directory containing the workspace manifest.
+    pub root: PathBuf,
+    /// The package declared by the root manifest, when it is not virtual.
+    pub root_package: Option<Manifest>,
+    /// All non-root members, sorted by canonical manifest path.
+    pub members: Vec<Manifest>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectManifest {
+    Package(Manifest),
+    Workspace(Workspace),
+}
+
+impl Workspace {
+    /// Iterate over the root package, when present, followed by members.
+    pub fn packages(&self) -> impl Iterator<Item = &Manifest> {
+        self.root_package.iter().chain(self.members.iter())
+    }
+
+    /// Find one member by its declared package name.
+    pub fn package_named(&self, name: &str) -> Option<&Manifest> {
+        self.packages()
+            .find(|manifest| manifest.package.name == name)
+    }
+}
+
 /// One validated local path dependency from `[dependencies]`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Dependency {
@@ -181,6 +213,24 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<Manifest, ManifestError> 
     validate_manifest(raw, manifest_path)
 }
 
+/// Load and validate a workspace root manifest.
+pub fn load_workspace(path: impl AsRef<Path>) -> Result<Workspace, ManifestError> {
+    let manifest_path = resolve_manifest_path(path.as_ref())?;
+    let raw = read_raw_manifest(&manifest_path)?;
+    validate_workspace(raw, manifest_path)
+}
+
+/// Load either a package manifest or a workspace root.
+pub fn load_project(path: impl AsRef<Path>) -> Result<ProjectManifest, ManifestError> {
+    let manifest_path = resolve_manifest_path(path.as_ref())?;
+    let raw = read_raw_manifest(&manifest_path)?;
+    if raw.workspace.is_some() {
+        validate_workspace(raw, manifest_path).map(ProjectManifest::Workspace)
+    } else {
+        validate_manifest(raw, manifest_path).map(ProjectManifest::Package)
+    }
+}
+
 fn resolve_manifest_path(path: &Path) -> Result<PathBuf, ManifestError> {
     let manifest_path = if path.is_dir() {
         path.join(MANIFEST_FILE_NAME)
@@ -210,7 +260,13 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         .expect("a canonical file path always has a parent")
         .to_path_buf();
 
-    let package = validate_package(&raw.package, &manifest_path)?;
+    let package = raw.package.as_ref().ok_or_else(|| {
+        ManifestError::invalid(
+            &manifest_path,
+            "virtual workspace manifests do not define a package; select a workspace member",
+        )
+    })?;
+    let package = validate_package(package, &manifest_path)?;
 
     let dependencies = validate_dependencies(raw.dependencies, &package_root, &manifest_path)?;
 
@@ -297,6 +353,122 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
     })
 }
 
+fn validate_workspace(
+    raw: RawManifest,
+    manifest_path: PathBuf,
+) -> Result<Workspace, ManifestError> {
+    let workspace = raw.workspace.as_ref().ok_or_else(|| {
+        ManifestError::invalid(
+            &manifest_path,
+            "manifest does not contain a `[workspace]` table",
+        )
+    })?;
+    let root = manifest_path
+        .parent()
+        .expect("a canonical file path always has a parent")
+        .to_path_buf();
+    let root_package = if raw.package.is_some() {
+        Some(validate_manifest(raw.clone(), manifest_path.clone())?)
+    } else {
+        None
+    };
+    let mut members = BTreeMap::new();
+    let mut names = HashMap::new();
+    if let Some(package) = &root_package {
+        names.insert(package.package.name.clone(), package.manifest_path.clone());
+    }
+
+    for member in &workspace.members {
+        if !is_portable_relative_dependency_path(member) || lexically_escapes_root(member) {
+            return Err(ManifestError::invalid(
+                &manifest_path,
+                format!(
+                    "workspace member path `{}` must be a non-empty portable relative path within the workspace root",
+                    member.display()
+                ),
+            ));
+        }
+        let candidate = root.join(member);
+        let member_manifest = if candidate.is_dir() {
+            candidate.join(MANIFEST_FILE_NAME)
+        } else {
+            candidate
+        };
+        let canonical = fs::canonicalize(&member_manifest).map_err(|source| {
+            ManifestError::invalid(
+                &manifest_path,
+                format!(
+                    "workspace member `{}` does not contain an accessible `{MANIFEST_FILE_NAME}`: {source}",
+                    member.display()
+                ),
+            )
+        })?;
+        if !canonical.starts_with(&root)
+            || canonical.file_name().and_then(|name| name.to_str()) != Some(MANIFEST_FILE_NAME)
+            || !canonical.is_file()
+        {
+            return Err(ManifestError::invalid(
+                &manifest_path,
+                format!(
+                    "workspace member `{}` must name a package beneath the workspace root",
+                    member.display()
+                ),
+            ));
+        }
+        if canonical == manifest_path {
+            return Err(ManifestError::invalid(
+                &manifest_path,
+                "the workspace root package is already an implicit member",
+            ));
+        }
+        if members.contains_key(&canonical) {
+            return Err(ManifestError::invalid(
+                &manifest_path,
+                format!(
+                    "workspace member `{}` resolves to the same manifest more than once",
+                    member.display()
+                ),
+            ));
+        }
+        let member_raw = read_raw_manifest(&canonical)?;
+        if member_raw.workspace.is_some() {
+            return Err(ManifestError::invalid(
+                &canonical,
+                "workspace members cannot declare a nested `[workspace]` table",
+            ));
+        }
+        let member_package = validate_manifest(member_raw, canonical.clone())?;
+        if let Some(previous) = names.insert(
+            member_package.package.name.clone(),
+            member_package.manifest_path.clone(),
+        ) {
+            return Err(ManifestError::invalid(
+                &manifest_path,
+                format!(
+                    "workspace package name `{}` is declared by both `{}` and `{}`",
+                    member_package.package.name,
+                    previous.display(),
+                    member_package.manifest_path.display()
+                ),
+            ));
+        }
+        members.insert(canonical, member_package);
+    }
+
+    if root_package.is_none() && members.is_empty() {
+        return Err(ManifestError::invalid(
+            &manifest_path,
+            "virtual workspace has no members",
+        ));
+    }
+    Ok(Workspace {
+        manifest_path,
+        root,
+        root_package,
+        members: members.into_values().collect(),
+    })
+}
+
 fn validate_package(raw: &RawPackage, manifest_path: &Path) -> Result<Package, ManifestError> {
     if !is_ascii_kebab_case(&raw.name) {
         return Err(ManifestError::invalid(
@@ -363,7 +535,13 @@ fn validate_dependencies(
         let dependency_manifest =
             resolve_dependency_manifest_path(package_root, manifest_path, &alias, &raw.path)?;
         let dependency_raw = read_raw_manifest(&dependency_manifest)?;
-        let package = validate_package(&dependency_raw.package, &dependency_manifest)?;
+        let raw_package = dependency_raw.package.as_ref().ok_or_else(|| {
+            ManifestError::invalid(
+                &dependency_manifest,
+                format!("dependency `{alias}` points to a virtual workspace, not a package"),
+            )
+        })?;
+        let package = validate_package(raw_package, &dependency_manifest)?;
         let dependency_root = dependency_manifest
             .parent()
             .expect("a canonical manifest path always has a parent")
@@ -679,10 +857,13 @@ fn is_kebab_segment(segment: &str, require_leading_letter: bool) -> bool {
     bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
-    package: RawPackage,
+    #[serde(default)]
+    package: Option<RawPackage>,
+    #[serde(default)]
+    workspace: Option<RawWorkspace>,
     #[serde(default)]
     lib: Option<RawLib>,
     #[serde(default)]
@@ -691,7 +872,7 @@ struct RawManifest {
     dependencies: BTreeMap<String, RawDependency>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPackage {
     name: String,
@@ -699,23 +880,29 @@ struct RawPackage {
     edition: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLib {
     path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBin {
     name: String,
     path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawDependency {
     path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspace {
+    members: Vec<PathBuf>,
 }
 
 #[cfg(test)]
@@ -1049,6 +1236,107 @@ alpha_util = { path = "../alpha" }
             .unwrap_err()
             .to_string();
         assert!(error.contains("library target"), "{error}");
+    }
+
+    #[test]
+    fn loads_virtual_and_root_package_workspaces_in_stable_order() {
+        let temp = TempDir::new();
+        write_test_package(&temp, "members/zeta", "zeta", "");
+        write_test_package(&temp, "members/alpha", "alpha", "");
+        temp.write(
+            MANIFEST_FILE_NAME,
+            "[workspace]\nmembers = [\"members/zeta\", \"members/alpha\"]\n",
+        );
+
+        let virtual_workspace = load_workspace(temp.path()).unwrap();
+        assert!(virtual_workspace.root_package.is_none());
+        assert_eq!(
+            virtual_workspace
+                .members
+                .iter()
+                .map(|member| member.package.name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
+
+        temp.write("src/lib.sc", "pub let root(): i32 = { 0 }\n");
+        temp.write(
+            MANIFEST_FILE_NAME,
+            "[package]\nname = \"root\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[workspace]\nmembers = [\"members/alpha\"]\n",
+        );
+        let rooted = load_workspace(temp.path()).unwrap();
+        assert_eq!(rooted.root_package.as_ref().unwrap().package.name, "root");
+        assert_eq!(rooted.members[0].package.name, "alpha");
+    }
+
+    #[test]
+    fn rejects_invalid_duplicate_and_nested_workspace_members() {
+        let temp = TempDir::new();
+        write_test_package(&temp, "member", "member", "");
+        temp.write(
+            MANIFEST_FILE_NAME,
+            "[workspace]\nmembers = [\"member\", \"member/salicin.toml\"]\n",
+        );
+        let duplicate = load_workspace(temp.path()).unwrap_err().to_string();
+        assert!(
+            duplicate.contains("same manifest more than once"),
+            "{duplicate}"
+        );
+
+        temp.write(
+            "member/salicin.toml",
+            "[package]\nname = \"member\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[workspace]\nmembers = []\n",
+        );
+        temp.write(MANIFEST_FILE_NAME, "[workspace]\nmembers = [\"member\"]\n");
+        let nested = load_workspace(temp.path()).unwrap_err().to_string();
+        assert!(nested.contains("nested `[workspace]`"), "{nested}");
+
+        temp.write(
+            MANIFEST_FILE_NAME,
+            "[workspace]\nmembers = [\"../outside\"]\n",
+        );
+        let escaping = load_workspace(temp.path()).unwrap_err().to_string();
+        assert!(escaping.contains("within the workspace root"), "{escaping}");
+    }
+
+    #[test]
+    fn rejects_empty_virtual_workspaces_and_duplicate_package_names() {
+        let temp = TempDir::new();
+        temp.write(MANIFEST_FILE_NAME, "[workspace]\nmembers = []\n");
+        let empty = load_workspace(temp.path()).unwrap_err().to_string();
+        assert!(empty.contains("has no members"), "{empty}");
+
+        write_test_package(&temp, "one", "same", "");
+        write_test_package(&temp, "two", "same", "");
+        temp.write(
+            MANIFEST_FILE_NAME,
+            "[workspace]\nmembers = [\"one\", \"two\"]\n",
+        );
+        let duplicate = load_workspace(temp.path()).unwrap_err().to_string();
+        assert!(duplicate.contains("package name `same`"), "{duplicate}");
+    }
+
+    #[test]
+    fn package_loader_rejects_virtual_workspace_and_virtual_dependency() {
+        let temp = TempDir::new();
+        temp.write("virtual/salicin.toml", "[workspace]\nmembers = []\n");
+        let virtual_root = load_manifest(temp.path().join("virtual"))
+            .unwrap_err()
+            .to_string();
+        assert!(virtual_root.contains("virtual workspace"), "{virtual_root}");
+
+        temp.write("app/src/main.sc", "let main(): i32 = { 0 }\n");
+        temp.write(
+            "app/salicin.toml",
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\nvirtual = { path = \"../virtual\" }\n",
+        );
+        let dependency = load_manifest(temp.path().join("app"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            dependency.contains("virtual workspace, not a package"),
+            "{dependency}"
+        );
     }
 
     fn write_test_package(temp: &TempDir, directory: &str, name: &str, extra: &str) {

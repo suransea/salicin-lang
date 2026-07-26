@@ -748,8 +748,11 @@ let shared = super.shared
 A dependency package name may begin an absolute dependency path. An alias has the visibility of its
 `let` declaration; `pub let` and `pub(package) let` therefore provide explicit facade exports.
 
-Project metadata lives in `salicin.toml`. A library target starts at `src/lib.sc`; a binary target
-starts at `src/main.sc`. Local dependency resolution is recorded in `salicin.lock`.
+Project metadata lives in `salicin.toml`. A library target starts at
+`src/lib.sc`; a binary target starts at `src/main.sc`. A root `[workspace]`
+contains explicit relative member paths. Membership does not create a
+dependency: each package still declares its direct dependencies. Workspace
+resolution is recorded in one root `salicin.lock`.
 
 The executable entry point is:
 

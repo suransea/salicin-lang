@@ -8,10 +8,13 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::lockfile::{write_package_lockfile, LOCKFILE_NAME};
+use salicin_lang::lockfile::{
+    generate_lockfile_at, generate_workspace_lockfile, portable_relative_path,
+    write_lockfile_if_changed, LOCKFILE_NAME,
+};
 use salicin_lang::manifest::{
-    load_dependency_graph, DependencyGraph, Manifest, Target, TargetKind, MANIFEST_FILE_NAME,
-    SOURCE_FILE_EXTENSION,
+    load_dependency_graph, load_project, DependencyGraph, Manifest, ProjectManifest, Target,
+    TargetKind, MANIFEST_FILE_NAME, SOURCE_FILE_EXTENSION,
 };
 use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
@@ -26,13 +29,13 @@ const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c"
 const HELP: &str = "Salicin compiler
 
 Usage:
-  salic build [path] [--bin <name>] [-o <path>]
-  salic check [path] [--bin <name> | --lib]
-  salic emit-ir [path] [--bin <name> | --lib] [-o <path>]
+  salic build [path] [-p <package>] [--bin <name>] [-o <path>]
+  salic check [path] [-p <package>] [--bin <name> | --lib]
+  salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [-o <path>]
   salic fmt [path] [--check]
-  salic run [path] [--bin <name>] [-- <args>...]
-  salic test [path] [--bin <name>]
-  salic [path] [--bin <name>] [-o <path>]
+  salic run [path] [-p <package>] [--bin <name>] [-- <args>...]
+  salic test [path] [-p <package>] [--bin <name>]
+  salic [path] [-p <package>] [--bin <name>] [-o <path>]
 
 Commands:
     build      Compile a Salicin binary target to a native executable
@@ -47,6 +50,7 @@ Options:
       --check          Check formatting without writing (fmt only)
       --bin <name>     Select a binary target from salicin.toml
       --lib            Select the library target (check and emit-ir only)
+  -p, --package <name> Select a workspace package
   -h, --help           Print this help
   -V, --version        Print the compiler version
 
@@ -63,15 +67,18 @@ enum ParsedArgs {
 enum Action {
     Build {
         input: Option<PathBuf>,
+        package: Option<String>,
         bin: Option<String>,
         output: Option<PathBuf>,
     },
     Check {
         input: Option<PathBuf>,
+        package: Option<String>,
         target: TargetSelection,
     },
     EmitIr {
         input: Option<PathBuf>,
+        package: Option<String>,
         target: TargetSelection,
         output: Option<PathBuf>,
     },
@@ -81,11 +88,13 @@ enum Action {
     },
     Run {
         input: Option<PathBuf>,
+        package: Option<String>,
         bin: Option<String>,
         args: Vec<OsString>,
     },
     Test {
         input: Option<PathBuf>,
+        package: Option<String>,
         bin: Option<String>,
     },
 }
@@ -99,6 +108,7 @@ enum TargetSelection {
 
 struct CompileArgs {
     input: Option<PathBuf>,
+    package: Option<String>,
     output: Option<PathBuf>,
     target: TargetSelection,
 }
@@ -134,6 +144,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let Some(first) = args.first() else {
         return Ok(ParsedArgs::Action(Action::Build {
             input: None,
+            package: None,
             bin: None,
             output: None,
         }));
@@ -162,6 +173,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             let bin = selection_bin(parsed.target, "build")?;
             Action::Build {
                 input: parsed.input,
+                package: parsed.package,
                 bin,
                 output: parsed.output,
             }
@@ -170,6 +182,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             let parsed = parse_compile_args("check", &args[1..], false, true)?;
             Action::Check {
                 input: parsed.input,
+                package: parsed.package,
                 target: parsed.target,
             }
         }
@@ -177,6 +190,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             let parsed = parse_compile_args("emit-ir", &args[1..], true, true)?;
             Action::EmitIr {
                 input: parsed.input,
+                package: parsed.package,
                 target: parsed.target,
                 output: parsed.output,
             }
@@ -191,11 +205,15 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             let bin = selection_bin(parsed.target, "test")?;
             Action::Test {
                 input: parsed.input,
+                package: parsed.package,
                 bin,
             }
         }
         _ if starts_with_dash(first)
-            && !matches!(first.to_str(), Some("-o" | "--output" | "--bin")) =>
+            && !matches!(
+                first.to_str(),
+                Some("-o" | "--output" | "--bin" | "-p" | "--package")
+            ) =>
         {
             return Err(format!("unknown option '{}'", first.to_string_lossy()));
         }
@@ -204,6 +222,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             let bin = selection_bin(parsed.target, "build")?;
             Action::Build {
                 input: parsed.input,
+                package: parsed.package,
                 bin,
                 output: parsed.output,
             }
@@ -247,6 +266,7 @@ fn parse_compile_args(
 ) -> Result<CompileArgs, String> {
     let mut input = None;
     let mut output = None;
+    let mut package = None;
     let mut target = TargetSelection::Default;
     let mut index = 0;
 
@@ -267,6 +287,24 @@ fn parse_compile_args(
                 ));
             };
             output = Some(PathBuf::from(path));
+        } else if is(argument, "-p") || is(argument, "--package") {
+            if package.is_some() {
+                return Err(format!("'{command}' accepts only one package selector"));
+            }
+            index += 1;
+            let Some(name) = args.get(index).and_then(|value| value.to_str()) else {
+                return Err(format!(
+                    "'{}' requires a UTF-8 package name",
+                    argument.to_string_lossy()
+                ));
+            };
+            if name.is_empty() {
+                return Err(format!(
+                    "'{}' requires a non-empty package name",
+                    argument.to_string_lossy()
+                ));
+            }
+            package = Some(name.to_owned());
         } else if is(argument, "--bin") {
             if !matches!(target, TargetSelection::Default) {
                 return Err(format!("'{command}' accepts only one target selector"));
@@ -305,6 +343,7 @@ fn parse_compile_args(
 
     Ok(CompileArgs {
         input,
+        package,
         output,
         target,
     })
@@ -335,6 +374,7 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
     let bin = selection_bin(parsed.target, "run")?;
     Ok(Action::Run {
         input: parsed.input,
+        package: parsed.package,
         bin,
         args: program_args,
     })
@@ -342,9 +382,15 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
 
 fn execute(action: Action) -> i32 {
     match action {
-        Action::Build { input, bin, output } => {
+        Action::Build {
+            input,
+            package,
+            bin,
+            output,
+        } => {
             let target = match resolve_input(
                 input.as_deref(),
+                package.as_deref(),
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -378,8 +424,12 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
-        Action::Check { input, target } => {
-            let target = match resolve_input(input.as_deref(), target, false) {
+        Action::Check {
+            input,
+            package,
+            target,
+        } => {
+            let target = match resolve_input(input.as_deref(), package.as_deref(), target, false) {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
@@ -390,10 +440,11 @@ fn execute(action: Action) -> i32 {
         }
         Action::EmitIr {
             input,
+            package,
             target,
             output,
         } => {
-            let target = match resolve_input(input.as_deref(), target, false) {
+            let target = match resolve_input(input.as_deref(), package.as_deref(), target, false) {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
@@ -421,9 +472,15 @@ fn execute(action: Action) -> i32 {
             Ok(code) => code,
             Err(message) => report_driver_error(message),
         },
-        Action::Run { input, bin, args } => {
+        Action::Run {
+            input,
+            package,
+            bin,
+            args,
+        } => {
             let target = match resolve_input(
                 input.as_deref(),
+                package.as_deref(),
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -442,9 +499,14 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
-        Action::Test { input, bin } => {
+        Action::Test {
+            input,
+            package,
+            bin,
+        } => {
             let target = match resolve_input(
                 input.as_deref(),
+                package.as_deref(),
                 bin.map_or(TargetSelection::Default, TargetSelection::Bin),
                 true,
             ) {
@@ -495,6 +557,7 @@ struct ResolvedPackage {
     id: PackageId,
     name: String,
     version: String,
+    identity: String,
     is_primary: bool,
     dependencies: BTreeMap<String, PackageId>,
     source: PathBuf,
@@ -537,13 +600,14 @@ fn report_driver_error(message: String) -> i32 {
 
 fn resolve_input(
     input: Option<&Path>,
+    package: Option<&str>,
     selection: TargetSelection,
     binary_only: bool,
 ) -> Result<ResolvedTarget, String> {
     if let Some(path) = input {
         if path.extension() == Some(OsStr::new(SOURCE_FILE_EXTENSION)) {
-            if !matches!(selection, TargetSelection::Default) {
-                return Err("target selectors require a salicin.toml package input".into());
+            if package.is_some() || !matches!(selection, TargetSelection::Default) {
+                return Err("package and target selectors require a salicin.toml input".into());
             }
             return Ok(ResolvedTarget {
                 source: path.to_path_buf(),
@@ -569,18 +633,43 @@ fn resolve_input(
         None => find_manifest_from_current_dir()?,
     };
 
-    let graph = load_dependency_graph(&manifest_path).map_err(|error| error.to_string())?;
+    let mut project = load_project(&manifest_path).map_err(|error| error.to_string())?;
+    let mut implicit_package = None;
+    if let ProjectManifest::Package(manifest) = &project {
+        if let Some(workspace) = find_containing_workspace(manifest)? {
+            implicit_package = Some(manifest.package.name.clone());
+            project = ProjectManifest::Workspace(workspace);
+        }
+    }
+    let selected_package = package.or(implicit_package.as_deref());
+    let (package_manifest, project_root) = select_project_package(&project, selected_package)?;
+    let graph = load_dependency_graph(&package_manifest.manifest_path)
+        .map_err(|error| error.to_string())?;
+    let lock_graph = workspace_lock_graph(&project, &graph)?;
     let selected = select_manifest_target(graph.root(), selection, binary_only)?;
-    let packages = resolve_project_packages(&graph, &selected)?;
-    write_package_lockfile(&graph).map_err(|error| {
+    let packages = resolve_project_packages(&graph, &selected, &project, &project_root)?;
+    let lockfile_path = project_root.join(LOCKFILE_NAME);
+    let workspace_members = match &project {
+        ProjectManifest::Package(_) => HashSet::new(),
+        ProjectManifest::Workspace(workspace) => workspace
+            .packages()
+            .map(|member| member.package_root.clone())
+            .collect(),
+    };
+    let lockfile = if workspace_members.is_empty() {
+        generate_lockfile_at(&lock_graph, &project_root)
+    } else {
+        generate_workspace_lockfile(&lock_graph, &project_root, &workspace_members)
+    };
+    write_lockfile_if_changed(&lockfile_path, &lockfile).map_err(|error| {
         format!(
             "could not write lockfile '{}': {error}",
-            graph.root().package_root.join(LOCKFILE_NAME).display()
+            lockfile_path.display()
         )
     })?;
 
     let mut protected_inputs = Vec::new();
-    for manifest in &graph.packages {
+    for manifest in &lock_graph.packages {
         protected_inputs.push(manifest.manifest_path.clone());
         protected_inputs.extend(manifest.targets().map(|target| target.path.clone()));
     }
@@ -588,12 +677,12 @@ fn resolve_input(
         protected_inputs.push(package.source.clone());
         protected_inputs.extend(package.module_sources.iter().map(|(path, _)| path.clone()));
     }
-    protected_inputs.push(graph.root().package_root.join(LOCKFILE_NAME));
+    protected_inputs.push(lockfile_path);
 
     Ok(ResolvedTarget {
         source: selected.path,
         project: Some(ProjectTarget {
-            package_root: graph.root().package_root.clone(),
+            package_root: project_root,
             target_name: selected.name,
             packages,
         }),
@@ -602,9 +691,55 @@ fn resolve_input(
     })
 }
 
+fn find_containing_workspace(
+    member: &Manifest,
+) -> Result<Option<salicin_lang::manifest::Workspace>, String> {
+    let mut directory = member.package_root.parent();
+    while let Some(parent) = directory {
+        let candidate = parent.join(MANIFEST_FILE_NAME);
+        if candidate.is_file() {
+            match load_project(&candidate).map_err(|error| error.to_string())? {
+                ProjectManifest::Workspace(workspace)
+                    if workspace
+                        .packages()
+                        .any(|package| package.manifest_path == member.manifest_path) =>
+                {
+                    return Ok(Some(workspace));
+                }
+                _ => {}
+            }
+        }
+        directory = parent.parent();
+    }
+    Ok(None)
+}
+
+fn workspace_lock_graph(
+    project: &ProjectManifest,
+    selected: &DependencyGraph,
+) -> Result<DependencyGraph, String> {
+    let ProjectManifest::Workspace(workspace) = project else {
+        return Ok(selected.clone());
+    };
+    let mut packages = BTreeMap::new();
+    for member in workspace.packages() {
+        let graph =
+            load_dependency_graph(&member.manifest_path).map_err(|error| error.to_string())?;
+        for manifest in graph.packages {
+            packages.insert(manifest.manifest_path.clone(), manifest);
+        }
+    }
+    Ok(DependencyGraph {
+        root_manifest_path: selected.root_manifest_path.clone(),
+        packages: packages.into_values().collect(),
+    })
+}
+
 fn resolve_project_packages(
     graph: &DependencyGraph,
     selected: &Target,
+    project: &ProjectManifest,
+    project_root: &Path,
 ) -> Result<Vec<ResolvedPackage>, String> {
     let ids: HashMap<PathBuf, PackageId> = graph
         .packages
@@ -647,6 +782,7 @@ fn resolve_project_packages(
             id: ids[&manifest.manifest_path],
             name: manifest.package.name.clone(),
             version: manifest.package.version.to_string(),
+            identity: resolved_package_identity(project, project_root, manifest),
             is_primary,
             dependencies,
             source: root_source,
@@ -654,6 +790,30 @@ fn resolve_project_packages(
         });
     }
     Ok(packages)
+}
+
+fn resolved_package_identity(
+    project: &ProjectManifest,
+    project_root: &Path,
+    manifest: &Manifest,
+) -> String {
+    let workspace_member = match project {
+        ProjectManifest::Package(_) => false,
+        ProjectManifest::Workspace(workspace) => workspace
+            .packages()
+            .any(|member| member.manifest_path == manifest.manifest_path),
+    };
+    let category = if workspace_member {
+        "workspace"
+    } else {
+        "path"
+    };
+    format!(
+        "{category}:{}|{}@{}",
+        portable_relative_path(project_root, &manifest.package_root),
+        manifest.package.name,
+        manifest.package.version
+    )
 }
 
 fn discover_package_module_sources(
@@ -849,25 +1009,80 @@ fn resolve_format_paths(input: Option<&Path>) -> Result<Vec<PathBuf>, String> {
         }
         None => find_manifest_from_current_dir()?,
     };
-    let graph = load_dependency_graph(&manifest_path).map_err(|error| error.to_string())?;
-    let root = graph.root();
-    let mut paths = root
-        .targets()
-        .map(|target| target.path.clone())
-        .collect::<Vec<_>>();
-    let source_root = root.package_root.join("src");
-    if source_root.is_dir() {
-        collect_sc_files(&source_root, &mut paths)?;
+    let project = load_project(&manifest_path).map_err(|error| error.to_string())?;
+    let mut paths = Vec::new();
+    match &project {
+        ProjectManifest::Package(package) => collect_manifest_source_paths(package, &mut paths)?,
+        ProjectManifest::Workspace(workspace) => {
+            for package in workspace.packages() {
+                collect_manifest_source_paths(package, &mut paths)?;
+            }
+        }
     }
     paths.sort();
     paths.dedup();
     if paths.is_empty() {
-        return Err(format!(
-            "package '{}' contains no Salicin source files",
-            root.package.name
-        ));
+        return Err("selected package or workspace contains no Salicin source files".into());
     }
     Ok(paths)
+}
+
+fn collect_manifest_source_paths(
+    manifest: &Manifest,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    paths.extend(manifest.targets().map(|target| target.path.clone()));
+    let source_root = manifest.package_root.join("src");
+    if source_root.is_dir() {
+        collect_sc_files(&source_root, paths)?;
+    }
+    Ok(())
+}
+
+fn select_project_package<'a>(
+    project: &'a ProjectManifest,
+    package: Option<&str>,
+) -> Result<(&'a Manifest, PathBuf), String> {
+    match project {
+        ProjectManifest::Package(manifest) => {
+            if let Some(requested) = package {
+                if requested != manifest.package.name {
+                    return Err(format!(
+                        "package manifest defines `{}`, not requested package `{requested}`",
+                        manifest.package.name
+                    ));
+                }
+            }
+            Ok((manifest, manifest.package_root.clone()))
+        }
+        ProjectManifest::Workspace(workspace) => {
+            let selected = if let Some(requested) = package {
+                workspace.package_named(requested).ok_or_else(|| {
+                    let available = workspace
+                        .packages()
+                        .map(|member| member.package.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "workspace has no package named `{requested}`; available packages: {available}"
+                    )
+                })?
+            } else if let Some(root) = workspace.root_package.as_ref() {
+                root
+            } else {
+                match workspace.members.as_slice() {
+                    [only] => only,
+                    _ => {
+                        return Err(
+                            "virtual workspace has multiple packages; choose one with --package <name>"
+                                .into(),
+                        );
+                    }
+                }
+            };
+            Ok((selected, workspace.root.clone()))
+        }
+    }
 }
 
 fn select_manifest_target(
@@ -1036,6 +1251,7 @@ fn read_source_packages(target: &ResolvedTarget) -> Result<Vec<SourcePackage>, (
                 id: package.id,
                 name: package.name.clone(),
                 version: package.version.clone(),
+                identity: package.identity.clone(),
                 is_primary: package.is_primary,
                 dependencies: package.dependencies.clone(),
                 sources,

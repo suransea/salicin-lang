@@ -53,6 +53,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   idempotence, and deliberate limits.
 - [Editor span contract](project/editor-spans.md): UTF-8 byte ranges, UTF-16 positions,
   diagnostic phases, and multi-document routing.
+- [Workspace and package identity](project/workspaces.md): membership, package selection,
+  shared artifacts, and resolved provider identity.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

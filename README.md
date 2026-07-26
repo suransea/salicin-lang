@@ -47,8 +47,10 @@ test("arithmetic") {
 }
 ```
 
-Project builds use `salicin.toml`, discover `src/lib.sc` and `src/main.sc`, and place artifacts
-under `build/`. Local path dependencies are recorded in `salicin.lock`.
+Project builds use `salicin.toml`, discover `src/lib.sc` and `src/main.sc`, and
+place artifacts under `build/`. A root `[workspace]` lists package members;
+`--package` selects a member, and the workspace shares its root `build`
+directory and `salicin.lock`. Local path dependencies remain explicit.
 
 ## Repository layout
 

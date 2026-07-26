@@ -23,7 +23,8 @@ The implementation lives under `compiler/src`:
 - `editor.rs` exposes token ranges and phased frontend diagnostics in UTF-8
   bytes and zero-based UTF-16 coordinates. It analyzes either one document or
   a complete source graph without coupling the compiler to an LSP transport.
-- `manifest.rs`, `lockfile.rs`, and `modules.rs` load project graphs and resolve names.
+- `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
+  preserve resolved provider identities, and resolve names.
 - `core.rs` and `alloc.rs` load and validate compiler-matched standard-library declarations.
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:

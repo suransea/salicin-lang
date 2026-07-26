@@ -209,6 +209,7 @@ fn batched_native_fixture_outputs(names: &[&str]) -> Vec<(String, Output)> {
                     id: PackageId(0),
                     name: "fixtures".to_owned(),
                     version: "0.0.0".to_owned(),
+                    identity: "fixtures@0.0.0".to_owned(),
                     is_primary: true,
                     dependencies: BTreeMap::new(),
                     sources,
@@ -3473,6 +3474,7 @@ fn package_qualified_exports_link_across_independent_llvm_modules() {
             id: PackageId(0),
             name: name.to_owned(),
             version: "1.0.0".to_owned(),
+            identity: format!("{name}@1.0.0"),
             is_primary: true,
             dependencies: BTreeMap::new(),
             sources: vec![SourceUnit {
@@ -3543,6 +3545,7 @@ fn export_contracts_are_stable_and_reject_incompatible_binding() {
             id: PackageId(id),
             name: name.to_owned(),
             version: version.to_owned(),
+            identity: format!("{name}@{version}"),
             is_primary: primary,
             dependencies: dependencies
                 .iter()
@@ -3609,6 +3612,27 @@ fn export_contracts_are_stable_and_reject_incompatible_binding() {
         exported_function_symbols(&i32_ir),
         exported_function_symbols(&i64_ir),
         "incompatible declarations must not bind to one export"
+    );
+
+    let mut public_provider = source_package(
+        0,
+        "same",
+        "1.0.0",
+        true,
+        &[],
+        "pub let answer(): i32 = { 42 }\n",
+    );
+    public_provider.identity = "registry:public|same@1.0.0".to_owned();
+    let mut private_provider = public_provider.clone();
+    private_provider.identity = "registry:private|same@1.0.0".to_owned();
+    let public_ir =
+        compile_library_source_packages(&[public_provider]).expect("compile public provider");
+    let private_ir =
+        compile_library_source_packages(&[private_provider]).expect("compile private provider");
+    assert_ne!(
+        exported_function_symbols(&public_ir),
+        exported_function_symbols(&private_ir),
+        "provider source must participate in native identity"
     );
 }
 
@@ -5400,6 +5424,148 @@ path = "src/broken.sc"
         fs::read_to_string(&dependency_library_path).unwrap(),
         dependency_library
     );
+}
+
+#[test]
+fn virtual_workspace_selects_packages_and_shares_lock_and_build_roots() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "salicin.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/math\", \"packages/tooling\"]\n",
+    );
+    workspace.write(
+        "packages/app/salicin.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nmath = { path = \"../math\" }\n",
+    );
+    workspace.write(
+        "packages/app/src/main.sc",
+        "let main(): i32 = { math.answer() }\n",
+    );
+    workspace.write(
+        "packages/math/salicin.toml",
+        "[package]\nname = \"math\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "packages/math/src/lib.sc",
+        "pub let answer(): i32 = { 42 }\n",
+    );
+    workspace.write(
+        "packages/tooling/salicin.toml",
+        "[package]\nname = \"tooling\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "packages/tooling/src/lib.sc",
+        "pub let independent(): i32 = { 7 }\n",
+    );
+
+    let ambiguous = salic()
+        .arg("check")
+        .arg(&workspace.0)
+        .output()
+        .expect("reject ambiguous virtual workspace");
+    assert_eq!(
+        ambiguous.status.code(),
+        Some(2),
+        "{}",
+        output_text(&ambiguous)
+    );
+    assert!(
+        String::from_utf8_lossy(&ambiguous.stderr).contains("--package"),
+        "{}",
+        output_text(&ambiguous)
+    );
+
+    let run = salic()
+        .arg("run")
+        .arg(&workspace.0)
+        .arg("-p")
+        .arg("app")
+        .output()
+        .expect("run selected workspace package");
+    assert_eq!(run.status.code(), Some(42), "{}", output_text(&run));
+    let lock = fs::read_to_string(workspace.join("salicin.lock")).expect("read workspace lock");
+    assert_eq!(lock.matches("[[package]]").count(), 3, "{lock}");
+    assert!(lock.contains("name = \"tooling\""), "{lock}");
+    assert!(
+        lock.contains("source = \"workspace:packages/app\""),
+        "{lock}"
+    );
+    assert!(
+        lock.contains("source = \"workspace:packages/tooling\""),
+        "{lock}"
+    );
+    assert!(!workspace.join("packages/app/salicin.lock").exists());
+
+    fs::remove_file(workspace.join("salicin.lock")).expect("remove workspace lock");
+    let direct_member = salic()
+        .arg("check")
+        .arg(workspace.join("packages/app"))
+        .output()
+        .expect("select a member while retaining workspace ownership");
+    assert!(
+        direct_member.status.success(),
+        "{}",
+        output_text(&direct_member)
+    );
+    assert!(workspace.join("salicin.lock").is_file());
+    assert!(!workspace.join("packages/app/salicin.lock").exists());
+
+    let build = salic()
+        .arg("build")
+        .arg(&workspace.0)
+        .arg("--package")
+        .arg("app")
+        .output()
+        .expect("build selected workspace package");
+    assert!(build.status.success(), "{}", output_text(&build));
+    let executable = if cfg!(windows) { "app.exe" } else { "app" };
+    assert!(workspace.join(&format!("build/{executable}")).is_file());
+    assert!(!workspace.join("packages/app/build").exists());
+
+    let missing = salic()
+        .arg("check")
+        .arg(&workspace.0)
+        .arg("-p")
+        .arg("missing")
+        .output()
+        .expect("reject unknown workspace package");
+    assert_eq!(missing.status.code(), Some(2), "{}", output_text(&missing));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("available packages: app, math, tooling"),
+        "{}",
+        output_text(&missing)
+    );
+}
+
+#[test]
+fn rooted_workspace_defaults_to_its_root_package_and_formats_members() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "salicin.toml",
+        "[package]\nname = \"root-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[workspace]\nmembers = [\"member\"]\n",
+    );
+    workspace.write("src/main.sc", "let main():i32={13}\n");
+    workspace.write(
+        "member/salicin.toml",
+        "[package]\nname = \"member\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    let member_source = workspace.write("member/src/lib.sc", "pub let answer():i32={\n7\n}\n");
+
+    let run = salic()
+        .arg("run")
+        .arg(&workspace.0)
+        .output()
+        .expect("run root workspace package by default");
+    assert_eq!(run.status.code(), Some(13), "{}", output_text(&run));
+
+    let format = salic()
+        .arg("fmt")
+        .arg(&workspace.0)
+        .output()
+        .expect("format all workspace members");
+    assert!(format.status.success(), "{}", output_text(&format));
+    let formatted = fs::read_to_string(member_source).expect("read formatted member");
+    assert!(formatted.contains("\n  7\n"), "{formatted}");
 }
 
 #[test]

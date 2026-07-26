@@ -50,6 +50,8 @@ pub struct SourcePackage {
     pub id: PackageId,
     pub name: String,
     pub version: String,
+    /// Resolved provider identity, including source, package name, and version.
+    pub identity: String,
     pub is_primary: bool,
     pub dependencies: BTreeMap<String, PackageId>,
     pub sources: Vec<SourceUnit>,
@@ -78,6 +80,7 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
         id: PackageId(0),
         name: "source".to_owned(),
         version: "0.0.0".to_owned(),
+        identity: "source@0.0.0".to_owned(),
         is_primary: true,
         dependencies: BTreeMap::new(),
         sources: sources.to_vec(),
@@ -101,6 +104,7 @@ pub(crate) fn resolve_embedded_sources(sources: &[SourceUnit]) -> Result<Program
             id: PackageId(0),
             name: "core".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            identity: format!("core@{}", env!("CARGO_PKG_VERSION")),
             is_primary: true,
             dependencies: BTreeMap::new(),
             sources: sources.to_vec(),
@@ -120,6 +124,7 @@ pub(crate) fn resolve_embedded_alloc_sources(
             id: PackageId(0),
             name: "alloc".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            identity: format!("alloc@{}", env!("CARGO_PKG_VERSION")),
             is_primary: true,
             dependencies: BTreeMap::new(),
             sources: sources.to_vec(),
@@ -246,15 +251,10 @@ fn resolve_packages_impl(
         let mut program =
             Program::with_metadata(items, item_visibilities, item_origins, Vec::new());
         program.primary_package = primary.id.0;
-        program.primary_package_identity = format!("{}@{}", primary.name, primary.version);
+        program.primary_package_identity = primary.identity.clone();
         program.package_identities = packages
             .iter()
-            .map(|package| {
-                (
-                    package.id.0,
-                    format!("{}@{}", package.name, package.version),
-                )
-            })
+            .map(|package| (package.id.0, package.identity.clone()))
             .chain([
                 (
                     PackageId::CORE.0,
@@ -637,7 +637,7 @@ fn validate_package_layout(
     let mut package_roots = HashMap::new();
     let mut package_identities = HashMap::new();
     for package in packages {
-        let identity = format!("{}@{}", package.name, package.version);
+        let identity = package.identity.clone();
         if let Some(previous) = package_identities.insert(identity.clone(), package.id) {
             diagnostics.push(format!(
                 "<packages>: error: packages #{} and #{} have duplicate identity `{identity}`",
@@ -718,12 +718,10 @@ fn validate_package_layout(
 
     for package in packages {
         let package_name = format!("#{}", package.id.0);
-        let package_root = package_roots.get(&package.id).cloned().unwrap_or_else(|| {
-            vec![stable_package_root(&format!(
-                "{}@{}",
-                package.name, package.version
-            ))]
-        });
+        let package_root = package_roots
+            .get(&package.id)
+            .cloned()
+            .unwrap_or_else(|| vec![stable_package_root(&package.identity)]);
 
         let roots = package
             .sources
@@ -3996,6 +3994,7 @@ mod tests {
             id: PackageId(id),
             name: format!("package-{id}"),
             version: "0.0.0".to_owned(),
+            identity: format!("package-{id}@0.0.0"),
             is_primary,
             dependencies: dependencies
                 .iter()
@@ -4073,14 +4072,48 @@ mod tests {
         );
         primary.name = "same".to_owned();
         primary.version = "1.0.0".to_owned();
+        primary.identity = "registry:public|same@1.0.0".to_owned();
         dependency.name = "same".to_owned();
         dependency.version = "1.0.0".to_owned();
+        dependency.identity = "registry:public|same@1.0.0".to_owned();
 
         let diagnostics =
             resolve_packages(&[primary, dependency]).expect_err("duplicate identity must fail");
-        assert!(diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.contains("duplicate identity `same@1.0.0`")));
+        assert!(diagnostics.iter().any(
+            |diagnostic| diagnostic.contains("duplicate identity `registry:public|same@1.0.0`")
+        ));
+    }
+
+    #[test]
+    fn distinct_providers_may_share_a_package_name_and_version() {
+        let mut primary = package(
+            1,
+            true,
+            &[("dependency", 2)],
+            vec![unit("primary.sc", &[], "let main(): i32 = { 0 }\n", true)],
+        );
+        let mut dependency = package(
+            2,
+            false,
+            &[],
+            vec![unit(
+                "dependency.sc",
+                &[],
+                "pub let answer(): i32 = { 42 }\n",
+                true,
+            )],
+        );
+        primary.name = "same".to_owned();
+        primary.version = "1.0.0".to_owned();
+        primary.identity = "workspace:app|same@1.0.0".to_owned();
+        dependency.name = "same".to_owned();
+        dependency.version = "1.0.0".to_owned();
+        dependency.identity = "registry:public|same@1.0.0".to_owned();
+
+        let program =
+            resolve_packages(&[primary, dependency]).expect("distinct providers are unambiguous");
+        assert_eq!(program.package_identities[&1], "workspace:app|same@1.0.0");
+        assert_eq!(program.package_identities[&2], "registry:public|same@1.0.0");
     }
 
     #[test]

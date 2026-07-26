@@ -18,7 +18,9 @@ current capability inventory. It does not record release history; see the
   runner by `salic test`, with source-order execution and named failures;
 - source-declared pass-fixture tests batched into native runners by semantic
   group, while process-terminating fixtures remain isolated;
-- project manifests, local path dependencies, and deterministic lockfiles.
+- package and virtual workspace manifests, explicit workspace members,
+  `--package` selection, local path dependencies, shared build roots, and
+  deterministic source-aware lockfiles.
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, phased precision metadata, and multi-document routing.
 
@@ -257,7 +259,10 @@ Implemented package features include:
 - `self`, `super`, `root`, package, and dependency paths;
 - entity aliases and explicit re-exports;
 - `salicin.toml` projects with library and binary roots;
-- local path dependencies and `salicin.lock`;
+- rooted and virtual workspaces with explicit non-nested members;
+- local path dependencies and workspace-root `salicin.lock` format 2;
+- resolved provider identities separating workspace, path, registry, and
+  compiler-owned sources from package name and exact version;
 - package ownership and trait coherence boundaries.
 
 The verified [C interoperability boundary](c-interoperability.md) supports
@@ -266,8 +271,8 @@ Unit results. Foreign calls require `unsafe`. `struct(c)` layout is verified
 against host Clang through nested, array, integer, and pointer fields; C reads
 and writes those records behind raw pointers. By-value aggregates, arrays,
 bool, borrows, and typed function pointers remain rejected. A frozen Salicin
-ABI, registry dependencies, workspaces, and a precompiled distribution format
-are not defined.
+Registry version selection and transport, a frozen ABI, and a precompiled
+distribution format are not defined.
 
 The experimental native [ABI representation audit](abi-review.md) specifies
 the current 64-bit host-target mapping for every emitted first-class value.

@@ -29,11 +29,14 @@ ABI identity and layout metadata but do not create standalone linker symbols.
 
 ## Stable Identity
 
-Every package graph carries a stable `name@version` identity independently of
-its temporary numeric package ID. Dependency canonical names use that stable
-identity, so graph traversal order cannot change an exported contract.
-Duplicate `name@version` providers in one graph are rejected before semantic
-analysis and identify both package IDs.
+Every package graph carries a resolved `(source, name, exact version)`
+identity independently of its temporary numeric package ID. Workspace and
+path sources use portable lock-root-relative paths; registry sources use
+their normalized registry name. Dependency canonical names use that full
+identity, so graph traversal order and absolute checkout paths cannot change
+an exported contract. Duplicate full providers are rejected before semantic
+analysis and identify both package IDs; equal names and versions from
+different providers remain distinct.
 
 An exported symbol contains three logical components:
 

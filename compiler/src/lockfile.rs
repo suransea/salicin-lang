@@ -1,5 +1,6 @@
 //! Deterministic `salicin.lock` generation for local path dependencies.
 
+use std::collections::HashSet;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as IoWrite};
@@ -12,7 +13,7 @@ use semver::Version;
 use crate::manifest::{DependencyGraph, Edition};
 
 pub const LOCKFILE_NAME: &str = "salicin.lock";
-pub const LOCKFILE_FORMAT_VERSION: u32 = 1;
+pub const LOCKFILE_FORMAT_VERSION: u32 = 2;
 
 /// Deterministic lock data derived from a complete dependency graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,7 +26,19 @@ impl Lockfile {
     /// Build sorted lock data. Package paths are relative to the root package
     /// whenever both paths share a filesystem root.
     pub fn from_graph(graph: &DependencyGraph) -> Self {
-        let root = graph.root();
+        Self::from_graph_root(graph, &graph.root().package_root)
+    }
+
+    /// Build sorted lock data relative to an explicit package or workspace root.
+    pub fn from_graph_root(graph: &DependencyGraph, root: &Path) -> Self {
+        Self::from_graph_root_with_workspace_members(graph, root, &HashSet::new())
+    }
+
+    pub fn from_graph_root_with_workspace_members(
+        graph: &DependencyGraph,
+        root: &Path,
+        workspace_members: &HashSet<PathBuf>,
+    ) -> Self {
         let mut packages: Vec<LockedPackage> = graph
             .packages
             .iter()
@@ -37,7 +50,8 @@ impl Lockfile {
                         alias: dependency.alias.clone(),
                         name: dependency.package.name.clone(),
                         version: dependency.package.version.clone(),
-                        path: lock_path(&root.package_root, &dependency.path),
+                        path: portable_relative_path(root, &dependency.path),
+                        source: package_source(root, &dependency.path, workspace_members),
                     })
                     .collect();
                 dependencies.sort_by(|left, right| {
@@ -51,7 +65,8 @@ impl Lockfile {
                     name: manifest.package.name.clone(),
                     version: manifest.package.version.clone(),
                     edition: manifest.package.edition,
-                    path: lock_path(&root.package_root, &manifest.package_root),
+                    path: portable_relative_path(root, &manifest.package_root),
+                    source: package_source(root, &manifest.package_root, workspace_members),
                     dependencies,
                 }
             })
@@ -81,6 +96,7 @@ impl Lockfile {
             write_toml_field(&mut output, "name", &package.name);
             write_toml_field(&mut output, "version", &package.version.to_string());
             write_toml_field(&mut output, "edition", package.edition.as_str());
+            write_toml_field(&mut output, "source", &package.source);
             write_toml_field(&mut output, "path", &package.path);
 
             for dependency in &package.dependencies {
@@ -88,6 +104,7 @@ impl Lockfile {
                 write_toml_field(&mut output, "alias", &dependency.alias);
                 write_toml_field(&mut output, "name", &dependency.name);
                 write_toml_field(&mut output, "version", &dependency.version.to_string());
+                write_toml_field(&mut output, "source", &dependency.source);
                 write_toml_field(&mut output, "path", &dependency.path);
             }
         }
@@ -101,6 +118,7 @@ pub struct LockedPackage {
     pub name: String,
     pub version: Version,
     pub edition: Edition,
+    pub source: String,
     pub path: String,
     pub dependencies: Vec<LockedDependency>,
 }
@@ -111,12 +129,25 @@ pub struct LockedDependency {
     pub alias: String,
     pub name: String,
     pub version: Version,
+    pub source: String,
     pub path: String,
 }
 
 /// Generate deterministic lock data from a previously validated graph.
 pub fn generate_lockfile(graph: &DependencyGraph) -> Lockfile {
     Lockfile::from_graph(graph)
+}
+
+pub fn generate_lockfile_at(graph: &DependencyGraph, root: &Path) -> Lockfile {
+    Lockfile::from_graph_root(graph, root)
+}
+
+pub fn generate_workspace_lockfile(
+    graph: &DependencyGraph,
+    root: &Path,
+    workspace_members: &HashSet<PathBuf>,
+) -> Lockfile {
+    Lockfile::from_graph_root_with_workspace_members(graph, root, workspace_members)
 }
 
 /// Generate canonical lockfile text from a previously validated graph.
@@ -173,13 +204,22 @@ fn toml_string(value: &str) -> String {
     escaped
 }
 
-fn lock_path(root: &Path, target: &Path) -> String {
+pub fn portable_relative_path(root: &Path, target: &Path) -> String {
     let path = relative_path(root, target).unwrap_or_else(|| target.to_path_buf());
     if path.as_os_str().is_empty() {
         return ".".to_owned();
     }
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+fn package_source(root: &Path, target: &Path, workspace_members: &HashSet<PathBuf>) -> String {
+    let category = if workspace_members.contains(target) {
+        "workspace"
+    } else {
+        "path"
+    };
+    format!("{category}:{}", portable_relative_path(root, target))
 }
 
 fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
@@ -339,9 +379,11 @@ mod tests {
         );
         assert!(first.contains("path = \".\""));
         assert!(first.contains("path = \"../shared\""));
+        assert!(first.contains("source = \"path:.\""));
+        assert!(first.contains("source = \"path:../shared\""));
         assert!(!first.contains(&temp.0.display().to_string()));
         let parsed: toml::Value = toml::from_str(&first).unwrap();
-        assert_eq!(parsed["format"].as_integer(), Some(1));
+        assert_eq!(parsed["format"].as_integer(), Some(2));
     }
 
     #[test]

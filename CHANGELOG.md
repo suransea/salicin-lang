@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Added rooted and virtual workspaces with explicit members, `--package`
+  selection, shared build and lock roots, workspace-wide formatting, and
+  workspace-complete dependency lock graphs. Lockfile format 2 records
+  portable workspace/path source identities, and compiler canonical names and
+  native symbols now use resolved provider source plus package name and exact
+  version rather than conflating equal name/version declarations.
+
 ## 0.205.0 - 2026-07-26
 
 - Added a transport-independent editor analysis API with exact UTF-8 token
