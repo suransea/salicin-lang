@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.205.0 - 2026-07-26
+
 - Added a transport-independent editor analysis API with exact UTF-8 token
   byte ranges, zero-based UTF-16 positions, phased lexer/parser/resolver/
   semantic diagnostics, explicit exact-versus-fallback precision, and
