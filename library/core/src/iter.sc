@@ -10,10 +10,10 @@ pub let iterator = trait {
 /// Protocol for values that can be converted into an iterator.
 pub let into_iterator = trait {
   /// Iterator type produced from `Self`.
-  let into_iter: type
+  let iter: type
   /// Consumes `self` and returns an iterator over its values.
   let into_iter(move self)
-    (): into_iter
+    (): iter
 }
 
 let array = core.memory.array
@@ -48,7 +48,7 @@ where t: core.marker.copyable {
 
 extend(comptime t: type, comptime l: usize) array(t)(l): into_iterator
 where t: core.marker.copyable {
-  let into_iter = array_into_iter(t)(l)
+  let iter = array_into_iter(t)(l)
   let into_iter(move self)(): array_into_iter(t)(l) = {
     array_into_iter(t)(l) { values: self, next_index: 0 }
   }
@@ -76,7 +76,7 @@ extend(comptime a: access, comptime t: type) slice_iter(a)(t): iterator {
 }
 
 extend(comptime a: access, comptime t: type) slice_iter(a)(t): into_iterator {
-  let into_iter = slice_iter(a)(t)
+  let iter = slice_iter(a)(t)
   let into_iter(move self)(): slice_iter(a)(t) = { self }
 }
 

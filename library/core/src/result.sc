@@ -8,7 +8,7 @@ pub let result(comptime e: type)
 }
 
 /// Provides `?.` chaining for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain_operator {
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain {
   /// The success payload type.
   let item = t
   /// Rebuilds `Result(Error)` around a transformed success type.
@@ -25,7 +25,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain
 }
 
 /// Provides `??` fallback evaluation for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coalesce_operator {
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coalesce {
   /// The success payload type returned by coalescing.
   let item = t
 
@@ -40,7 +40,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coale
 }
 
 /// Provides postfix `!` extraction for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwrap_operator {
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwrap {
   let output = t
 
   let unwrap(move self): t = {
@@ -51,7 +51,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwra
 }
 
 /// Provides postfix `!` effect raising for `Result`.
-extend(comptime e: type, comptime t: type) result(e)(t): core.flow.raise_operator {
+extend(comptime e: type, comptime t: type) result(e)(t): core.flow.raise {
   let output = t
   let error = e
 

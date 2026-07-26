@@ -18,12 +18,6 @@ impl Analyzer {
             self.error("struct literal requires a struct type name");
             return error_expr();
         };
-        if context.lookup(name).is_some() {
-            self.error(format!(
-                "local value `{name}` cannot be used as a struct literal constructor"
-            ));
-            return error_expr();
-        }
         if context.has_type_parameter(name) {
             self.error(format!(
                 "type parameter `{name}` cannot be used as a struct literal constructor"

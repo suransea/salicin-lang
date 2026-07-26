@@ -645,7 +645,10 @@ fn valid_box_from_raw_method(function: &Function) -> bool {
         && function.return_type == Some(applied("box", named("t")))
         && function.effects
             == crate::ast::FunctionEffects {
-                custom: vec![Type::Named("core.unsafe.unsafe_effect".to_owned(), Vec::new())],
+                custom: vec![Type::Named(
+                    "core.unsafe.unsafe_effect".to_owned(),
+                    Vec::new(),
+                )],
                 ..crate::ast::FunctionEffects::default()
             }
         && function.where_predicates.is_empty()
@@ -1204,7 +1207,7 @@ fn valid_vec_index_extension(extension: &crate::ast::ExtendDef) -> bool {
         if matches!(group.as_slice(), [parameter]
             if parameter.name == "t" && parameter.kind == Sort::Type))
         && extension.target == applied("vec", named("t"))
-        && extension.trait_ref == Some(applied("index_operator", Type::U64))
+        && extension.trait_ref == Some(applied("index", Type::U64))
         && extension.where_predicates.is_empty()
         && matches!(extension.members.as_slice(), [
             crate::ast::ExtendMember::Const(output),
@@ -1284,10 +1287,10 @@ fn valid_vec_into_iterator_extension(extension: &crate::ast::ExtendDef) -> bool 
         && extension.trait_ref == Some(named("into_iterator"))
         && extension.where_predicates.is_empty()
         && matches!(extension.members.as_slice(), [
-            crate::ast::ExtendMember::Const(into_iter),
+            crate::ast::ExtendMember::Const(iter),
             crate::ast::ExtendMember::Function(method),
-        ] if into_iter.name == "into_iter"
-            && into_iter.value == crate::ast::Expr::Call(
+        ] if iter.name == "iter"
+            && iter.value == crate::ast::Expr::Call(
                 Box::new(crate::ast::Expr::Name("vec_into_iter".to_owned())),
                 vec![crate::ast::CallArg {
                     label: None,
@@ -1356,7 +1359,8 @@ mod tests {
 
     #[test]
     fn rejects_box_read_without_its_copy_proof() {
-        let source = alloc_source().replacen("where T: Copy = {\n  unsafe {", "= {\n  unsafe {", 1);
+        let source =
+            alloc_source().replacen("where t: copyable = {\n  unsafe {", "= {\n  unsafe {", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_read without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
@@ -1365,8 +1369,8 @@ mod tests {
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
         let source = alloc_source().replacen(
-            "let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
-            "let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\n= {\n  unsafe {",
+            "let box_write(comptime t: type)(boxed: borrow(mut)(box(t)))(copy value: t): ()\nwhere t: copyable = {\n  unsafe {",
+            "let box_write(comptime t: type)(boxed: borrow(mut)(box(t)))(copy value: t): ()\n= {\n  unsafe {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1377,8 +1381,8 @@ mod tests {
     #[test]
     fn rejects_box_from_raw_without_unsafe_effect() {
         let source = alloc_source().replacen(
-            "let from_raw(pointer: Ptr(mut)(T)): Box(T) with(core.unsafe.unsafe_effect) = {",
-            "let from_raw(pointer: Ptr(mut)(T)): Box(T) = {",
+            "let from_raw(pointer: ptr(mut)(t)): box(t) with(core.unsafe.unsafe_effect) = {",
+            "let from_raw(pointer: ptr(mut)(t)): box(t) = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1389,8 +1393,8 @@ mod tests {
     #[test]
     fn rejects_box_into_raw_without_ownership_transfer() {
         let source = alloc_source().replacen(
-            "let box_into_raw(T: type)(move boxed: Box(T)): Ptr(mut)(T)",
-            "let box_into_raw(T: type)(boxed: borrow(Box(T))): Ptr(mut)(T)",
+            "let box_into_raw(comptime t: type)(move boxed: box(t)): ptr(mut)(t)",
+            "let box_into_raw(comptime t: type)(boxed: borrow(box(t))): ptr(mut)(t)",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1401,8 +1405,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_box_extension() {
         let source = alloc_source().replacen(
-            "let read(self: borrow(Self))(): T = { box_read(self) }",
-            "let peek(self: borrow(Self))(): T = { box_read(self) }",
+            "let read(self: borrow(self))(): t = { box_read(self) }",
+            "let peek(self: borrow(self))(): t = { box_read(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1412,11 +1416,8 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_vec_representation() {
-        let source = alloc_source().replacen(
-            "  storage_capacity: u64,",
-            "  exposed_capacity: u64,",
-            1,
-        );
+        let source =
+            alloc_source().replacen("  storage_capacity: u64,", "  exposed_capacity: u64,", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("malformed Vec representation must fail bootstrap validation");
         assert!(error.to_string().contains("alloc Vec"));
@@ -1425,8 +1426,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
         let source = alloc_source().replacen(
-            "extend(T: type) Vec(T): Drop {\n  /// Drops all initialized elements and deallocates storage.\n  let drop(self: borrow(mut)(Self))(): () = {",
-            "extend(T: type) Vec(T): Drop {\n  /// Drops all initialized elements and deallocates storage.\n  let release(self: borrow(mut)(Self))(): () = {",
+            "extend(comptime t: type) vec(t): droppable {\n  /// Drops all initialized elements and deallocates storage.\n  let drop(self: borrow(mut)(self))(): () = {",
+            "extend(comptime t: type) vec(t): droppable {\n  /// Drops all initialized elements and deallocates storage.\n  let release(self: borrow(mut)(self))(): () = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1437,8 +1438,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_owning_extension() {
         let source = alloc_source().replacen(
-            "let pop(self: borrow(mut)(Self))(): Option(T) = { vec_pop(self) }",
-            "let take(self: borrow(mut)(Self))(): Option(T) = { vec_pop(self) }",
+            "let pop(self: borrow(mut)(self))(): option(t) = { vec_pop(self) }",
+            "let take(self: borrow(mut)(self))(): option(t) = { vec_pop(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1449,8 +1450,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_vec_extension() {
         let source = alloc_source().replacen(
-            "let read(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }",
-            "let peek(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }",
+            "let read(self: borrow(self))(index: u64): t = { vec_read(self)(index) }",
+            "let peek(self: borrow(self))(index: u64): t = { vec_read(self)(index) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

@@ -1,7 +1,7 @@
 // Primitive pointer and layout contracts. The source declarations define the
 // public identities and signatures; the compiler supplies representation,
 // authority checks, and target-specific lowering after validating this module.
-let index_operator = core.ops.index_operator
+let index = core.ops.index
 
 /// Fixed-size array type with compile-time element type and length.
 pub let array(comptime t: type)
@@ -11,7 +11,7 @@ pub let array(comptime t: type)
 pub let slice(comptime t: type): type = builtin()
 
 /// Routes fixed-size array brackets through the source-defined indexing protocol.
-extend(comptime t: type, comptime l: usize) array(t)(l): index_operator(i32) {
+extend(comptime t: type, comptime l: usize) array(t)(l): index(i32) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
@@ -36,7 +36,7 @@ extend(comptime t: type) slice(t) {
 }
 
 /// Routes bracket access through the source-defined indexing protocol.
-extend(comptime t: type) slice(t): index_operator(u64) {
+extend(comptime t: type) slice(t): index(u64) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))

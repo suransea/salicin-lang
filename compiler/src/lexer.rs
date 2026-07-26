@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn recognizes_extend_as_a_keyword() {
-        let tokens = lex("extend A { let identity(T: type)(value: T) = value }").unwrap();
+        let tokens = lex("extend a { let identity(comptime t: type)(value: t) = value }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Extend));
         assert!(tokens
             .iter()
@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn recognizes_trait_as_a_keyword() {
-        let tokens = lex("let Foo = trait { let Item: type }").unwrap();
+        let tokens = lex("let foo = trait { let item: type }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Trait));
         assert!(tokens
             .iter()
@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn recognizes_region_parameters_and_names() {
         let tokens =
-            lex("let choose(R: region)(value: borrow(R)(i32)): borrow(R)(i32)").unwrap();
+            lex("let choose(comptime r: region)(value: borrow(r)(i32)): borrow(r)(i32)").unwrap();
         assert!(tokens
             .iter()
             .any(|token| token.kind == TokenKind::Ident("region".to_owned())));
@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn keeps_legacy_import_words_contextual_but_reserves_path_anchors() {
-        let tokens = lex("pub use root.net.Client as HttpClient\nuse super.self.helper").unwrap();
+        let tokens = lex("pub use root.net.client as http_client\nuse super.self.helper").unwrap();
         for kind in [TokenKind::Root, TokenKind::Super] {
             assert!(tokens.iter().any(|token| token.kind == kind));
         }

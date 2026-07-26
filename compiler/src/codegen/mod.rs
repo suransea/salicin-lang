@@ -628,8 +628,8 @@ impl Analyzer {
                             LangItemKind::MoveParameters,
                             LangItemKind::ComptimeParameters,
                         ]
-                            .into_iter()
-                            .any(|kind| self.is_lang_item_name(&source_name, kind))
+                        .into_iter()
+                        .any(|kind| self.is_lang_item_name(&source_name, kind))
                         && function.compile_groups.as_slice().iter().flatten().count() == 1
                         && function.compile_groups[0][0].kind == Sort::Parameters
                         && function.groups.is_empty()
@@ -3619,10 +3619,17 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
+            let has_receiver = schema_function_has_receiver(&function);
             if let Some(body) = &mut function.body {
-                substitute_type_expression_parameters(body, &substitutions);
-                if let Some(target_name) = nominal_name(&target) {
-                    substitute_self_expression_target(body, target_name);
+                let mut body_substitutions = substitutions.clone();
+                if has_receiver {
+                    body_substitutions.remove("self");
+                }
+                substitute_type_expression_parameters(body, &body_substitutions);
+                if !has_receiver {
+                    if let Some(target_name) = nominal_name(&target) {
+                        substitute_self_expression_target(body, target_name);
+                    }
                 }
             }
             if !method_compile_parameter_groups_match(&expected, &function) {
@@ -4163,8 +4170,10 @@ impl Analyzer {
                     self_substitution
                         .insert("self".to_owned(), Type::Named(target.clone(), Vec::new()));
                     substitute_function_types(&mut function, &self_substitution);
-                    if let Some(body) = &mut function.body {
-                        substitute_self_expression_target(body, &target);
+                    if !is_method {
+                        if let Some(body) = &mut function.body {
+                            substitute_self_expression_target(body, &target);
+                        }
                     }
                     let mut canonical = if is_method {
                         inherent_method_name(&target, &short_name)
@@ -5306,8 +5315,10 @@ impl Analyzer {
                 .where_predicates
                 .extend(function.where_predicates.clone());
             substitute_function_types(&mut template, &self_substitution);
-            if let Some(body) = &mut template.body {
-                substitute_self_expression_target(body, target_template);
+            if !schema_function_has_receiver(&template) {
+                if let Some(body) = &mut template.body {
+                    substitute_self_expression_target(body, target_template);
+                }
             }
             self.function_template_order.push(canonical.clone());
             self.function_templates.insert(canonical.clone(), template);

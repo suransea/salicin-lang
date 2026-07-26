@@ -183,10 +183,10 @@ impl Analyzer {
             return error_expr();
         };
         let variant_name = match (boundary.kind, success) {
-            (Some(StandardFallibleKind::Option), true) => "Some",
-            (Some(StandardFallibleKind::Option), false) => "None",
-            (Some(StandardFallibleKind::Result), true) => "Ok",
-            (Some(StandardFallibleKind::Result), false) => "Err",
+            (Some(StandardFallibleKind::Option), true) => "some",
+            (Some(StandardFallibleKind::Option), false) => "none",
+            (Some(StandardFallibleKind::Result), true) => "ok",
+            (Some(StandardFallibleKind::Result), false) => "err",
             (None, _) => {
                 self.error("internal error: custom return boundary requires protocol conversion");
                 return error_expr();
@@ -243,8 +243,8 @@ impl Analyzer {
     ) -> Option<CompileParam> {
         let template = self.enum_templates.get(enum_name)?;
         let payload_variant = match kind {
-            StandardFallibleKind::Option => "Some",
-            StandardFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "some",
+            StandardFallibleKind::Result => "ok",
         };
         let payload_name = template
             .variants
@@ -312,8 +312,8 @@ impl Analyzer {
         }
 
         let success_variant = match inferred.kind {
-            StandardFallibleKind::Option => "Some",
-            StandardFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "some",
+            StandardFallibleKind::Result => "ok",
         };
         if inferred.variant != success_variant {
             return None;

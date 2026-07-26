@@ -20,7 +20,74 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Standard Library Usability
+## P0: Composite Compile-Time Evaluation
+
+### Value model and contract
+
+- [ ] **CTFE-1 — Composite CTFE contract.** Document supported value types,
+  typing and phase rules, equality and normalization, source constructs,
+  evaluation order, resource exclusion, complexity budgets, diagnostics, and
+  the boundary between runtime-typed CTFE values and erased `StaticValue`
+  metadata. Keep runtime nominal types distinct from `sort`s.
+
+- [ ] **CTFE-2 — Unified typed value IR.** Replace the separate scalar CTFE
+  value and global `ConstValue` aggregate model with one typed recursive value
+  representation carrying exact integer type, tuple/array shape, nominal
+  identity, enum variant, and payload. Preserve a narrow adapter for erased
+  sort values rather than encoding composites as marker-shaped source types.
+
+### Builtin and aggregate values
+
+- [ ] **CTFE-3 — Complete builtin scalars.** Support Unit, `Bool`, all signed
+  and unsigned integer widths, `isize`, and `usize` in CTFE function
+  parameters, locals, operators, patterns, and results. Use checked,
+  width-aware arithmetic and explicit fallible conversions with target-aware
+  pointer widths.
+
+- [ ] **CTFE-4 — Tuples and fixed arrays.** Add tuple and array literals,
+  projection, bounds-checked indexing, immutable binding, nested patterns, and
+  recursive normalization. Bound aggregate element count and nesting depth
+  before construction.
+
+### Nominal values
+
+- [ ] **CTFE-5 — Struct values.** Evaluate concrete generic and non-generic
+  struct construction, labeled fields, field access, nested structs,
+  destructuring, function arguments, and return values. Reject unsized,
+  address-dependent, allocating, or custom-`Drop` fields before evaluation.
+
+- [ ] **CTFE-6 — Enum values and matching.** Evaluate unit, tuple, and named
+  enum variants; payload construction and binding; exhaustive `match`; guards;
+  nested values; and standard `Option`/`Result` computations without exposing
+  backend discriminant layout as source semantics.
+
+### Pure calls and consumers
+
+- [ ] **CTFE-7 — General pure function calls.** Extend CTFE calls to accepted
+  runtime parameter groups, labels, generic substitution, methods or
+  associated functions where statically resolved, cross-module declarations,
+  immutable blocks, `if`, `match`, and bounded value-changing recursion.
+  Continue to reject effects, borrowing, closures, foreign/builtin bodies,
+  mutation, and unavailable source definitions.
+
+- [ ] **CTFE-8 — Shared constant consumers.** Route dependent array lengths
+  and global constant initialization through the unified evaluator. Preserve
+  exact nominal types and target layout while keeping path, declaration order,
+  and module traversal out of normalized identity.
+
+### Acceptance
+
+- [ ] **CTFE-9 — Rejection and determinism proof.** Cover every supported
+  scalar and composite family plus type mismatches, overflow, invalid
+  shifts/indexes, non-exhaustive patterns, generic substitution, recursive
+  layout, repeated-call cycles, fuel exhaustion, aggregate limits,
+  cross-module identity, stable diagnostics, deterministic IR, and native
+  global values.
+
+P0 is complete only when every CTFE task and the roadmap milestone exit
+conditions are satisfied.
+
+## P1: Standard Library Usability
 
 ### Foundation
 
@@ -152,10 +219,10 @@ status and changelog instead of remaining as a checked archive.
   errors, early exits, allocation balance, deterministic output, and
   documentation examples.
 
-P0 is complete only when every workstream above and the roadmap milestone exit
+P1 is complete only when every workstream above and the roadmap milestone exit
 conditions are satisfied.
 
-## P1: Persistent Incremental Builds
+## P2: Persistent Incremental Builds
 
 - [ ] **INCR-2 — Persistent cache contract.** Specify the cache root, schema
   version, fingerprint mapping, LLVM IR payload, metadata, atomic publication,
@@ -258,6 +325,8 @@ A task is complete only when:
 ## Design Candidates
 
 - per-package incremental compilation and dependency interface hashes;
+- compile-time mutation, loops, allocation, and resource-bearing values;
+- runtime nominal values as compile-parameter classifiers;
 - networking, asynchronous IO, time, subprocess, and platform services;
 - advanced Unicode, regex, hashing, and unordered collections;
 - completion and partial-program recovery;

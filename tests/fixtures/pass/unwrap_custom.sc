@@ -1,10 +1,10 @@
-let unwrap_operator = std.flow.unwrap_operator
+let unwrap = std.flow.unwrap
 
 let present = enum {
   value(i32),
 }
 
-extend present: unwrap_operator {
+extend present: unwrap {
   let output = i32
 
   let unwrap(move self): i32 = {

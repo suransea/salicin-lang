@@ -1,7 +1,7 @@
-let index_operator = std.ops.index_operator
+let index = std.ops.index
 
 let bag = struct { value: i32 }
-extend bag: index_operator(i32) {
+extend bag: index(i32) {
   let output = i32
   let index(comptime a: access)
     (self: borrow(a)(self))

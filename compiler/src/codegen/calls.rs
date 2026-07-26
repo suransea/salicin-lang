@@ -15,11 +15,7 @@ pub(super) fn empty_trailing_closure_constructor(expression: &Expr) -> Option<&E
     let Expr::Call(constructor, arguments) = expression.unlocated() else {
         return None;
     };
-    let [CallArg {
-        label: None,
-        value,
-    }] = arguments.as_slice()
-    else {
+    let [CallArg { label: None, value }] = arguments.as_slice() else {
         return None;
     };
     let Expr::Closure(parameters, body) = value.unlocated() else {

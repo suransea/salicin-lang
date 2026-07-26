@@ -67,10 +67,7 @@ fn formatter_is_idempotent_checks_without_writing_and_formats_packages() {
          [dependencies]\n\
          dep = { path = \"../dep\" }\n",
     );
-    let main = workspace.write(
-        "app/src/main.sc",
-        "let main(): i32 = {\ndep.answer()\n}\n",
-    );
+    let main = workspace.write("app/src/main.sc", "let main(): i32 = {\ndep.answer()\n}\n");
     let module = workspace.write(
         "app/src/local.sc",
         "pub(package) let value(): i32 = {\n1\n}\n",

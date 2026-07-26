@@ -1,5 +1,5 @@
 /// Trait used by `?.` to transform successful container payloads.
-pub let chain_operator = trait {
+pub let chain = trait {
   /// Payload type read from the successful case.
   let item: type
   /// Type constructor used to rebuild the container with a new payload.
@@ -12,7 +12,7 @@ pub let chain_operator = trait {
 }
 
 /// Trait used by `??` to extract a value or evaluate a fallback.
-pub let coalesce_operator = trait {
+pub let coalesce = trait {
   /// Payload type produced by coalescing.
   let item: type
 
@@ -23,7 +23,7 @@ pub let coalesce_operator = trait {
 }
 
 /// Trait used by postfix `!!` to assert success and extract a payload.
-pub let unwrap_operator = trait {
+pub let unwrap = trait {
   /// Payload type produced by unwrapping.
   let output: type
 
@@ -32,7 +32,7 @@ pub let unwrap_operator = trait {
 }
 
 /// Trait used by postfix `!` to turn a stored failure into `Throws`.
-pub let raise_operator = trait {
+pub let raise = trait {
   /// Successful payload type.
   let output: type
   /// Error type introduced into the effect row.

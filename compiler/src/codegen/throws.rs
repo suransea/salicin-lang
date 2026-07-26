@@ -388,7 +388,7 @@ impl Analyzer {
                     Box::new(Expr::Call(
                         Box::new(Expr::Member(
                             Box::new(Expr::Name(result_name.clone())),
-                            "Ok".to_owned(),
+                            "ok".to_owned(),
                         )),
                         vec![CallArg {
                             label: None,
@@ -411,7 +411,7 @@ impl Analyzer {
                     Box::new(Expr::Call(
                         Box::new(Expr::Member(
                             Box::new(Expr::Name(result_name)),
-                            "Err".to_owned(),
+                            "err".to_owned(),
                         )),
                         vec![CallArg {
                             label: None,
@@ -1062,7 +1062,7 @@ impl Analyzer {
         let arms = vec![
             MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Ok".to_owned()],
+                    path: vec!["ok".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
                         OUTPUT_BINDING.to_owned(),
                     )]),
@@ -1072,7 +1072,7 @@ impl Analyzer {
             },
             MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Err".to_owned()],
+                    path: vec!["err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
                         ERROR_BINDING.to_owned(),
                     )]),

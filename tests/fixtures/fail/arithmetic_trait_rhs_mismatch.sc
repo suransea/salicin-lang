@@ -1,9 +1,9 @@
-let div_operator = std.ops.div_operator
+let div = std.ops.div
 
 let number = struct { value: i32 }
 let divisor = struct { value: i32 }
 
-extend number: div_operator(i32) {
+extend number: div(i32) {
   let output = i32
   let div(self)(rhs: i32): i32 = { self.value / rhs }
 }

@@ -13,12 +13,14 @@ work in the [changelog](../../CHANGELOG.md).
 Salicin's next phase turns the implemented language core into a compiler that
 can support daily development. The near-term order is deliberately:
 
-1. make ordinary programs practical with text, collections, host IO, and test
+1. make compile-time evaluation understand ordinary scalar and composite
+   values;
+2. make ordinary programs practical with text, collections, host IO, and test
    support;
-2. make unchanged builds reusable;
-3. make source analysis continuously available to editors;
-4. build source navigation on structured semantic identities;
-5. make locked third-party source dependencies reproducible.
+3. make unchanged builds reusable;
+4. make source analysis continuously available to editors;
+5. build source navigation on structured semantic identities;
+6. make locked third-party source dependencies reproducible.
 
 New language surface is not a near-term goal unless one of those outcomes
 requires it. Every milestone must continue to preserve:
@@ -45,7 +47,69 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Standard Library Usability
+## Now: Composite Compile-Time Evaluation
+
+Salicin currently has two deliberately bounded but overlapping constant
+systems. Type-level CTFE evaluates pure `usize`/`Bool` expressions for
+dependent array lengths, while global constant emission separately represents
+integers, booleans, Unit, tuples, arrays, structs, and enums. The current
+milestone replaces that split implementation with one typed CTFE value and
+evaluation boundary, then makes ordinary plain-data values available inside
+pure compile-time calls.
+
+Runtime `struct` and `enum` declarations remain runtime types; this milestone
+does not turn them into `sort`s. A value of such a type may be constructed,
+inspected, matched, and returned while a pure function is being evaluated at
+compile time. Compiler metadata values such as `type`, `String`, `effect`,
+`effects`, regions, constructors, and finite-sort members remain erased
+`StaticValue`s with their existing classification rules.
+
+The supported plain-data CTFE set is:
+
+- Unit, `Bool`, every signed and unsigned integer width, `isize`, and `usize`;
+- tuples and fixed arrays whose elements are supported;
+- concrete, fully instantiated structs and closed enums whose fields are
+  recursively supported and require no runtime address, allocation, or
+  destruction;
+- existing erased static metadata values where their source context already
+  admits them.
+
+Exit conditions:
+
+- one typed CTFE value representation and evaluator owns both static-expression
+  evaluation and global constant normalization instead of maintaining
+  diverging scalar and aggregate interpreters;
+- all integer widths use their exact signedness and width for checked
+  arithmetic, comparisons, bit operations, shifts, conversions, and literal
+  validation;
+- tuples and arrays support construction, projection or indexing, patterns,
+  immutable local binding, and deterministic structural normalization;
+- concrete generic and non-generic structs support construction, field
+  access, nested values, destructuring patterns, calls, and return values;
+- closed enums support unit, tuple, and named payload variants, exhaustive
+  `match`, guards, payload binding, nested values, and common `Option`/`Result`
+  computations;
+- eligible pure source functions support the accepted runtime group shapes,
+  labeled arguments, generic substitution, cross-module identity, immutable
+  blocks, `if`, `match`, and bounded recursion;
+- dependent array lengths and global constants consume the same normalized
+  results, and equivalent programs produce identical type identities and LLVM
+  constants independent of declaration or module traversal order;
+- type mismatch, unsupported value, invalid pattern, overflow, division by
+  zero, invalid shift/index, recursion cycle, fuel exhaustion, and aggregate
+  size limits produce source-backed compile-time diagnostics;
+- positive, rejection, generic, cross-module, determinism, complexity, and
+  native constant-emission tests cover every supported value family.
+
+The first composite milestone excludes mutation, mutable locals, loops,
+borrowing, raw pointers, slices, function or closure values, handlers, effects,
+foreign calls, allocation, runtime `String`/`Vec`/`Box`, custom `Drop`, and
+values containing any of those. It also does not admit runtime nominal types
+as compile-parameter classifiers, add macros or reflection, or promise
+unbounded evaluation. Later work may add pure loop normalization or a bounded
+compile-time allocation model only through a separate contract.
+
+## Next: Standard Library Usability
 
 The language core can already express ownership-sensitive containers and
 effectful programs, but the library surface is not yet sufficient for ordinary
@@ -107,7 +171,7 @@ case mapping or collation, grapheme segmentation, regex, hash collections,
 networking, asynchronous IO, formatting macros or interpolation syntax,
 property testing, mocking, or benchmarking.
 
-## Next: Persistent Incremental Builds
+## Later: Persistent Incremental Builds
 
 The existing schema-1 fingerprint already identifies the semantic and native
 inputs to one selected package-graph target. This milestone turns that
@@ -143,7 +207,7 @@ format.
 ## Later: LSP Diagnostics Baseline
 
 The transport-independent editor API already exposes UTF-8 byte ranges,
-UTF-16 positions, tokens, and phased diagnostics. The next milestone adds a
+UTF-16 positions, tokens, and phased diagnostics. This milestone adds a
 stateful workspace session and a minimal Language Server Protocol transport.
 
 The baseline covers workspace discovery, full-document synchronization,
@@ -220,6 +284,8 @@ These gaps need an accepted contract and sequencing decision before entering
 the executable queue:
 
 - per-package incremental reuse based on dependency interface digests;
+- compile-time mutation, loop normalization, allocation, and resource values;
+- runtime nominal types as compile-parameter classifiers;
 - networking, asynchronous IO, time, subprocess, and platform-service APIs;
 - Unicode normalization, grapheme segmentation, locale-sensitive text, and
   regular expressions;

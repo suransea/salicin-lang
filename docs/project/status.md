@@ -102,8 +102,11 @@ Ordinary pure `usize`/`Bool` functions can be evaluated in dependent array-lengt
 The static expression IR excludes runtime-only operations, substitutes generic `usize` values
 before evaluation, checks arithmetic, and diagnoses nontermination through a bounded evaluator.
 
-The current static-abstraction surface is complete for the standard-library requirements tracked by
-the project roadmap.
+The type-level evaluator does not yet admit Unit, other integer widths,
+tuples, arrays, structs, or enums as intermediate values. Global constant
+evaluation separately supports scalar and aggregate literals but cannot call
+ordinary source functions. Unifying and extending those evaluators is the
+active roadmap boundary.
 
 ## Ownership and Borrowing
 

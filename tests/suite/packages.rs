@@ -497,10 +497,7 @@ fn incremental_fingerprint_is_path_independent_and_input_sensitive() {
             "src/lib.sc",
             "pub let library_answer(): i32 = { shared.answer() }\n",
         );
-        project.write(
-            "src/shared.sc",
-            "pub(package) let answer(): i32 = { 42 }\n",
-        );
+        project.write("src/shared.sc", "pub(package) let answer(): i32 = { 42 }\n");
     }
 
     fn fingerprint(project: &TestDirectory, extra: &[&str]) -> Output {
@@ -536,10 +533,7 @@ fn incremental_fingerprint_is_path_independent_and_input_sensitive() {
     assert!(library.status.success(), "{}", output_text(&library));
     assert_ne!(first_binary.stdout, library.stdout);
 
-    relocated.write(
-        "src/shared.sc",
-        "pub(package) let answer(): i32 = { 43 }\n",
-    );
+    relocated.write("src/shared.sc", "pub(package) let answer(): i32 = { 43 }\n");
     let changed = fingerprint(&relocated, &["--locked"]);
     assert!(changed.status.success(), "{}", output_text(&changed));
     assert_ne!(first_binary.stdout, changed.stdout);
@@ -1547,10 +1541,7 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    unknown_nested_member.write(
-        "src/main.sc",
-        "let main(): i32 = { net.http.missing() }\n",
-    );
+    unknown_nested_member.write("src/main.sc", "let main(): i32 = { net.http.missing() }\n");
     unknown_nested_member.write(
         "src/net/http.sc",
         "pub(package) let answer(): i32 = { 42 }\n",
@@ -1706,10 +1697,7 @@ edition = "2026"
         "src/main.sc",
         "let main(): i32 = { facade.answer() + package_facade.extra() }\n",
     );
-    project.write(
-        "src/implementation.sc",
-        "pub let answer(): i32 = { 40 }\n",
-    );
+    project.write("src/implementation.sc", "pub let answer(): i32 = { 40 }\n");
     project.write(
         "src/package_implementation.sc",
         "pub(package) let extra(): i32 = { 2 }\n",
@@ -1784,10 +1772,7 @@ let main(): i32 = { selected() }
 "#,
             modules: &[
                 ("src/first.sc", "pub(package) let answer(): i32 = { 1 }\n"),
-                (
-                    "src/second.sc",
-                    "pub(package) let answer(): i32 = { 2 }\n",
-                ),
+                ("src/second.sc", "pub(package) let answer(): i32 = { 2 }\n"),
             ],
             expected: &["duplicate", "selected", "first.answer", "second.answer"],
         },

@@ -434,8 +434,7 @@ mod tests {
 
     #[test]
     fn preserves_expression_newlines_and_parenthesis_free_calls() {
-        let source =
-            "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\napply\n42\n}\n";
+        let source = "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\napply\n42\n}\n";
         let expected =
             "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\n  apply\n  42\n}\n";
         assert_eq!(format_source(source).expect("format calls"), expected);
@@ -455,8 +454,8 @@ mod tests {
 
     #[test]
     fn indents_parameter_groups_and_match_arms_as_continuations() {
-        let source = "let apply(E: effects)\n(action: (i32): i32 with(E))\n(value: i32): i32 with(E) = { action(value) }\n\nlet main(): i32 = {\nmatch true\n{ true -> match false\n{ false -> apply()(42) }\n{ true -> 0 } }\n{ false -> 0 }\n}\n";
-        let expected = "let apply(E: effects)\n  (action: (i32): i32 with(E))\n  (value: i32): i32 with(E) = { action(value) }\n\nlet main(): i32 = {\n  match true\n    { true -> match false\n      { false -> apply()(42) }\n      { true -> 0 } }\n    { false -> 0 }\n}\n";
+        let source = "let apply(comptime e: effects)\n(action: (i32): i32 with(e))\n(value: i32): i32 with(e) = { action(value) }\n\nlet main(): i32 = {\nmatch true\n{ true -> match false\n{ false -> apply()(42) }\n{ true -> 0 } }\n{ false -> 0 }\n}\n";
+        let expected = "let apply(comptime e: effects)\n  (action: (i32): i32 with(e))\n  (value: i32): i32 with(e) = { action(value) }\n\nlet main(): i32 = {\n  match true\n    { true -> match false\n      { false -> apply()(42) }\n      { true -> 0 } }\n    { false -> 0 }\n}\n";
         let formatted = format_source(source).expect("format continuations");
         assert_eq!(formatted, expected);
         assert_eq!(
@@ -467,8 +466,8 @@ mod tests {
 
     #[test]
     fn formats_delimiters_where_clauses_and_expression_continuations() {
-        let source = "let Marker = trait {}\nlet duplicate(T: type)(value: T): T\nwhere T: Copy,\nT: Marker, = {\nvalue\n}\n\nlet add(\nleft: i32,\nright: i32,\n): i32 = {\nleft +\nright\n}\n\nlet main(): i32 = {\nlet values = [\n40,\n2,\n]\nlet grouped =\n(values[0] + values[1])\nadd(\nvalues[0],\nvalues[1],\n) + grouped - 42\n}\n";
-        let expected = "let Marker = trait {}\nlet duplicate(T: type)(value: T): T\nwhere T: Copy,\n  T: Marker, = {\n  value\n}\n\nlet add(\n  left: i32,\n  right: i32,\n): i32 = {\n  left +\n    right\n}\n\nlet main(): i32 = {\n  let values = [\n    40,\n    2,\n  ]\n  let grouped =\n    (values[0] + values[1])\n  add(\n    values[0],\n    values[1],\n  ) + grouped - 42\n}\n";
+        let source = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere comptime t: copyable,\nT: marker, = {\nvalue\n}\n\nlet add(\nleft: i32,\nright: i32,\n): i32 = {\nleft +\nright\n}\n\nlet main(): i32 = {\nlet values = [\n40,\n2,\n]\nlet grouped =\n(values[0] + values[1])\nadd(\nvalues[0],\nvalues[1],\n) + grouped - 42\n}\n";
+        let expected = "let marker = trait {}\nlet duplicate(comptime t: type)(value: t): t\nwhere comptime t: copyable,\n  comptime t: marker, = {\n  value\n}\n\nlet add(\n  left: i32,\n  right: i32,\n): i32 = {\n  left +\n    right\n}\n\nlet main(): i32 = {\n  let values = [\n    40,\n    2,\n  ]\n  let grouped =\n    (values[0] + values[1])\n  add(\n    values[0],\n    values[1],\n  ) + grouped - 42\n}\n";
         let formatted = format_source(source).expect("format syntax continuations");
         assert_eq!(formatted, expected);
         assert_eq!(

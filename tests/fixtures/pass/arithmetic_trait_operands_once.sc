@@ -1,8 +1,8 @@
-let mul_operator = std.ops.mul_operator
+let mul = std.ops.mul
 
 let number = struct { value: i32 }
 
-extend number: mul_operator(number) {
+extend number: mul(number) {
   let output = number
   let mul(self)(rhs: number): number = { number { value: self.value * rhs.value } }
 }

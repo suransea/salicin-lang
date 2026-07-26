@@ -1,6 +1,6 @@
 let option = core.option
 let slice = core.slice
-let index_operator = core.ops.index_operator
+let index = core.ops.index
 let iterator = core.iter.iterator
 let into_iterator = core.iter.into_iterator
 let owned_item = core.iter.owned_item
@@ -416,7 +416,7 @@ pub let vec_into_iter(comptime t: type) = struct {
 }
 
 /// Routes bracket access through the source-defined indexing protocol.
-extend(comptime t: type) vec(t): index_operator(u64) {
+extend(comptime t: type) vec(t): index(u64) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
@@ -443,7 +443,7 @@ extend(comptime t: type) vec_into_iter(t): iterator {
 
 /// Consumes a vector into an owning iterator.
 extend(comptime t: type) vec(t): into_iterator {
-  let into_iter = vec_into_iter(t)
+  let iter = vec_into_iter(t)
   let into_iter(move self)(): vec_into_iter(t) = {
     let iterator = vec_into_iter(t) { pointer: self.pointer, next_index: 0, length: self.length, storage_capacity: self.storage_capacity }
     forget(self)

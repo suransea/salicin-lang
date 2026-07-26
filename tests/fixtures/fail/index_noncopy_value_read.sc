@@ -1,4 +1,4 @@
-let index_operator = std.ops.index_operator
+let index = std.ops.index
 
 let resource = struct { value: i32 }
 extend resource: droppable {
@@ -6,7 +6,7 @@ extend resource: droppable {
 }
 
 let bag = struct { value: resource }
-extend bag: index_operator(i32) {
+extend bag: index(i32) {
   let output = resource
   let index(comptime a: access)
     (self: borrow(a)(self))

@@ -1,13 +1,13 @@
 let result = std.result
 let throws = std.error.throws
-let raise_operator = std.flow.raise_operator
+let raise = std.flow.raise
 
 let stored = enum {
   value(i32),
   failure(bool),
 }
 
-extend stored: raise_operator {
+extend stored: raise {
   let output = i32
   let error = bool
 

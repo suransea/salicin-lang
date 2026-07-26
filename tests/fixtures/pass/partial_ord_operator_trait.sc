@@ -1,9 +1,9 @@
-let partial_order = std.ops.partial_order
+let partial_ord = std.ops.partial_ord
 let partial_ordering = std.ops.partial_ordering
 
 let number = struct { value: i32, unordered: bool }
 
-extend number: partial_order(number) {
+extend number: partial_ord(number) {
   let partial_cmp(self: borrow(self))(rhs: borrow(number)): partial_ordering = {
     if self.unordered || rhs.unordered { unordered }
     else if self.value < rhs.value { less }

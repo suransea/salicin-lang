@@ -7,7 +7,7 @@ pub let option(comptime t: type) = enum {
 }
 
 /// Provides `?.` chaining for `Option`.
-extend(comptime t: type) option(t): core.flow.chain_operator {
+extend(comptime t: type) option(t): core.flow.chain {
   /// The payload type produced by a successful option.
   let item = t
   /// Rebuilds `Option` around a transformed payload type.
@@ -24,7 +24,7 @@ extend(comptime t: type) option(t): core.flow.chain_operator {
 }
 
 /// Provides `??` fallback evaluation for `Option`.
-extend(comptime t: type) option(t): core.flow.coalesce_operator {
+extend(comptime t: type) option(t): core.flow.coalesce {
   /// The value type returned by coalescing.
   let item = t
 
@@ -39,7 +39,7 @@ extend(comptime t: type) option(t): core.flow.coalesce_operator {
 }
 
 /// Provides postfix `!` extraction for `Option`.
-extend(comptime t: type) option(t): core.flow.unwrap_operator {
+extend(comptime t: type) option(t): core.flow.unwrap {
   let output = t
 
   let unwrap(move self): t = {

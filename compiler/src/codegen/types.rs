@@ -1521,13 +1521,15 @@ impl Analyzer {
     fn expression_is_explicit_type_argument(&self, expression: &Expr, context: &LowerCtx) -> bool {
         match expression {
             Expr::Name(name) => {
+                if context.lookup(name).is_some() {
+                    return false;
+                }
                 context.type_substitutions.contains_key(name)
                     || context.has_type_parameter(name)
                     || self.abstract_type_parameters.contains_key(name)
                     || matches!(
                         name.as_str(),
-                        "i8"
-                            | "i16"
+                        "i8" | "i16"
                             | "i32"
                             | "i64"
                             | "i128"
@@ -1552,6 +1554,9 @@ impl Analyzer {
                 let Expr::Name(name) = root else {
                     return false;
                 };
+                if context.lookup(name).is_some() {
+                    return false;
+                }
                 if groups
                     .iter()
                     .flat_map(|group| group.iter())

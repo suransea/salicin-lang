@@ -1,5 +1,5 @@
-let add_assign_operator = std.ops.add_assign_operator
-let bit_xor_assign_operator = std.ops.bit_xor_assign_operator
+let add_assign = std.ops.add_assign
+let bit_xor_assign = std.ops.bit_xor_assign
 
 let counter = struct { value: i32 }
 
@@ -7,13 +7,13 @@ extend counter {
   let add_assign(self: borrow(self))(rhs: i32): bool = { false }
 }
 
-extend counter: add_assign_operator(i32) {
+extend counter: add_assign(i32) {
   let add_assign(self: borrow(mut)(self))(rhs: i32): () = {
     self.value += rhs
   }
 }
 
-extend counter: bit_xor_assign_operator(i32) {
+extend counter: bit_xor_assign(i32) {
   let bit_xor_assign(self: borrow(mut)(self))(rhs: i32): () = {
     self.value ^= rhs
   }

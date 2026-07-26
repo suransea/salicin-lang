@@ -1,7 +1,7 @@
-let add_operator = std.ops.add_operator
+let add = std.ops.add
 
 let twice(comptime t: type)(copy value: t): t
-where t: add_operator(t, output = t),
+where t: add(t, output = t),
   t: copyable = {
   let left = value
   let right = value

@@ -1,5 +1,5 @@
 /// Protocol used by indexed place syntax.
-pub let index_operator(comptime key: type) = trait {
+pub let index(comptime key: type) = trait {
   /// Element type selected by the key.
   let output: type
 

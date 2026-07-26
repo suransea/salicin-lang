@@ -1,22 +1,22 @@
-let neg_operator = std.ops.neg_operator
-let not_operator = std.ops.not_operator
+let neg = std.ops.neg
+let not = std.ops.not
 
 let number = struct { value: i32 }
 let flag = struct { value: bool }
 
-extend number: neg_operator {
+extend number: neg {
   let output = i32
   let neg(self)(): i32 = { -self.value }}
 
-extend flag: not_operator {
+extend flag: not {
   let output = i32
   let not(self)(): i32 = {
     if self.value { 0 } else { 42 }
   }
 }
 
-let negate(comptime t: type)(move value: t): t where t: neg_operator(output = t) = { -value }
-let invert(comptime t: type)(move value: t): t where t: not_operator(output = t) = { !value }
+let negate(comptime t: type)(move value: t): t where t: neg(output = t) = { -value }
+let invert(comptime t: type)(move value: t): t where t: not(output = t) = { !value }
 
 let main(): i32 = {
   if invert(false) {

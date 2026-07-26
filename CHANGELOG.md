@@ -29,14 +29,15 @@ subset.
   bounded CTFE in dependent `Array(T)(expression)` lengths after generic
   substitution; mutation, borrowing, runtime effects, invalid arithmetic, and
   repeated nonterminating calls are rejected.
-- Replanned the post-foundation work around daily compiler usability. The
-  current milestone now prioritizes practical standard-library text,
-  array/slice/vector, formatting, explicit synchronous IO, and test support.
-  Persistent whole-graph LLVM IR caching follows, then an LSP diagnostics
-  baseline, semantic navigation, and verified registry source dependencies.
-  The executable TODO assigns stable tasks and acceptance gates while
-  separating design candidates and deferred language features from committed
-  work.
+- Replanned the post-foundation work around daily compiler usability.
+  Composite CTFE is now current: it will unify scalar static evaluation and
+  aggregate global constants, then support every builtin scalar, tuples,
+  arrays, structs, and enums in bounded pure compile-time calls. Practical
+  standard-library text, collection, formatting, synchronous IO, and test
+  support follows, then persistent caching, LSP diagnostics, semantic
+  navigation, and verified registry dependencies. The executable TODO assigns
+  stable tasks and acceptance gates while separating design candidates and
+  deferred language features from committed work.
 - Reworked formatter indentation around parser-provided source spans instead
   of keyword or first-token heuristics. Nested blocks, delimiters, declaration
   parameter groups, `where` predicates, operator continuations, trailing

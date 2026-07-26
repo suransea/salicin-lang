@@ -1,26 +1,26 @@
-let sub_operator = std.ops.sub_operator
-let mul_operator = std.ops.mul_operator
-let div_operator = std.ops.div_operator
-let rem_operator = std.ops.rem_operator
+let sub = std.ops.sub
+let mul = std.ops.mul
+let div = std.ops.div
+let rem = std.ops.rem
 
 let number = struct { value: i32 }
 
-extend number: sub_operator(number) {
+extend number: sub(number) {
   let output = number
   let sub(self)(rhs: number): number = { number { value: self.value - rhs.value } }
 }
 
-extend number: mul_operator(number) {
+extend number: mul(number) {
   let output = number
   let mul(self)(rhs: number): number = { number { value: self.value * rhs.value } }
 }
 
-extend number: div_operator(number) {
+extend number: div(number) {
   let output = number
   let div(self)(rhs: number): number = { number { value: self.value / rhs.value } }
 }
 
-extend number: rem_operator(number) {
+extend number: rem(number) {
   let output = number
   let rem(self)(rhs: number): number = { number { value: self.value % rhs.value } }
 }

@@ -62,7 +62,7 @@ extend batch: iterator {
 }
 
 extend batch: into_iterator {
-  let into_iter = batch
+  let iter = batch
 
   let into_iter(move self)(): batch = {
     self

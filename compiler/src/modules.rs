@@ -415,104 +415,55 @@ const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
 ];
 const CORE_NEVER_EXPORTS: &[&str] = &["never"];
 const CORE_MARKER_EXPORTS: &[&str] = &["movable", "copyable", "droppable"];
-const CORE_ARITH_EXPORTS: &[&str] = &[
-    "add_operator",
-    "sub_operator",
-    "mul_operator",
-    "div_operator",
-    "rem_operator",
-    "neg_operator",
-];
-const CORE_BIT_EXPORTS: &[&str] = &[
-    "bit_and_operator",
-    "bit_or_operator",
-    "bit_xor_operator",
-    "shl_operator",
-    "shr_operator",
-    "not_operator",
-];
+const CORE_ARITH_EXPORTS: &[&str] = &["add", "sub", "mul", "div", "rem", "neg"];
+const CORE_BIT_EXPORTS: &[&str] = &["bit_and", "bit_or", "bit_xor", "shl", "shr", "not"];
 const CORE_ASSIGN_EXPORTS: &[&str] = &[
-    "add_assign_operator",
-    "sub_assign_operator",
-    "mul_assign_operator",
-    "div_assign_operator",
-    "rem_assign_operator",
-    "bit_and_assign_operator",
-    "bit_or_assign_operator",
-    "bit_xor_assign_operator",
-    "shl_assign_operator",
-    "shr_assign_operator",
+    "add_assign",
+    "sub_assign",
+    "mul_assign",
+    "div_assign",
+    "rem_assign",
+    "bit_and_assign",
+    "bit_or_assign",
+    "bit_xor_assign",
+    "shl_assign",
+    "shr_assign",
 ];
-const CORE_INDEX_EXPORTS: &[&str] = &["index_operator"];
-const CORE_CMP_EXPORTS: &[&str] = &["equality", "partial_ordering", "partial_order"];
+const CORE_INDEX_EXPORTS: &[&str] = &["index"];
+const CORE_CMP_EXPORTS: &[&str] = &["eq", "partial_ordering", "partial_ord"];
 const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
-    ("add_operator", "core::ops::arith::add_operator"),
-    ("sub_operator", "core::ops::arith::sub_operator"),
-    ("mul_operator", "core::ops::arith::mul_operator"),
-    ("div_operator", "core::ops::arith::div_operator"),
-    ("rem_operator", "core::ops::arith::rem_operator"),
-    ("neg_operator", "core::ops::arith::neg_operator"),
-    ("bit_and_operator", "core::ops::bit::bit_and_operator"),
-    ("bit_or_operator", "core::ops::bit::bit_or_operator"),
-    ("bit_xor_operator", "core::ops::bit::bit_xor_operator"),
-    ("shl_operator", "core::ops::bit::shl_operator"),
-    ("shr_operator", "core::ops::bit::shr_operator"),
-    ("not_operator", "core::ops::bit::not_operator"),
-    (
-        "add_assign_operator",
-        "core::ops::assign::add_assign_operator",
-    ),
-    (
-        "sub_assign_operator",
-        "core::ops::assign::sub_assign_operator",
-    ),
-    (
-        "mul_assign_operator",
-        "core::ops::assign::mul_assign_operator",
-    ),
-    (
-        "div_assign_operator",
-        "core::ops::assign::div_assign_operator",
-    ),
-    (
-        "rem_assign_operator",
-        "core::ops::assign::rem_assign_operator",
-    ),
-    (
-        "bit_and_assign_operator",
-        "core::ops::assign::bit_and_assign_operator",
-    ),
-    (
-        "bit_or_assign_operator",
-        "core::ops::assign::bit_or_assign_operator",
-    ),
-    (
-        "bit_xor_assign_operator",
-        "core::ops::assign::bit_xor_assign_operator",
-    ),
-    (
-        "shl_assign_operator",
-        "core::ops::assign::shl_assign_operator",
-    ),
-    (
-        "shr_assign_operator",
-        "core::ops::assign::shr_assign_operator",
-    ),
-    ("equality", "core::cmp::equality"),
+    ("add", "core::ops::arith::add"),
+    ("sub", "core::ops::arith::sub"),
+    ("mul", "core::ops::arith::mul"),
+    ("div", "core::ops::arith::div"),
+    ("rem", "core::ops::arith::rem"),
+    ("neg", "core::ops::arith::neg"),
+    ("bit_and", "core::ops::bit::bit_and"),
+    ("bit_or", "core::ops::bit::bit_or"),
+    ("bit_xor", "core::ops::bit::bit_xor"),
+    ("shl", "core::ops::bit::shl"),
+    ("shr", "core::ops::bit::shr"),
+    ("not", "core::ops::bit::not"),
+    ("add_assign", "core::ops::assign::add_assign"),
+    ("sub_assign", "core::ops::assign::sub_assign"),
+    ("mul_assign", "core::ops::assign::mul_assign"),
+    ("div_assign", "core::ops::assign::div_assign"),
+    ("rem_assign", "core::ops::assign::rem_assign"),
+    ("bit_and_assign", "core::ops::assign::bit_and_assign"),
+    ("bit_or_assign", "core::ops::assign::bit_or_assign"),
+    ("bit_xor_assign", "core::ops::assign::bit_xor_assign"),
+    ("shl_assign", "core::ops::assign::shl_assign"),
+    ("shr_assign", "core::ops::assign::shr_assign"),
+    ("eq", "core::cmp::eq"),
     ("partial_ordering", "core::cmp::partial_ordering"),
-    ("partial_order", "core::cmp::partial_order"),
-    ("index_operator", "core::ops::index::index_operator"),
-    ("chain_operator", "core::flow::chain_operator"),
-    ("coalesce_operator", "core::flow::coalesce_operator"),
-    ("unwrap_operator", "core::flow::unwrap_operator"),
-    ("raise_operator", "core::flow::raise_operator"),
+    ("partial_ord", "core::cmp::partial_ord"),
+    ("index", "core::ops::index::index"),
+    ("chain", "core::flow::chain"),
+    ("coalesce", "core::flow::coalesce"),
+    ("unwrap", "core::flow::unwrap"),
+    ("raise", "core::flow::raise"),
 ];
-const CORE_FLOW_EXPORTS: &[&str] = &[
-    "chain_operator",
-    "coalesce_operator",
-    "unwrap_operator",
-    "raise_operator",
-];
+const CORE_FLOW_EXPORTS: &[&str] = &["chain", "coalesce", "unwrap", "raise"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["continuation", "effect_callable", "handle"];
 const CORE_RESULT_EXPORTS: &[&str] = &["result"];
 const CORE_ERROR_EXPORTS: &[&str] = &["throws", "try", "throw"];
@@ -527,8 +478,7 @@ const CORE_ASYNC_EXPORTS: &[&str] = &[
     "await",
 ];
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
-    "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32",
-    "u64", "u128", "usize",
+    "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const CORE_SORT_EXPORTS: &[&str] = &[
     "type",
@@ -590,78 +540,78 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("error", "throws", "core::error::throws"),
     ("error", "try", "core::error::try"),
     ("error", "throw", "core::error::throw"),
-    ("ops", "add_operator", "core::ops::arith::add_operator"),
-    ("ops", "sub_operator", "core::ops::arith::sub_operator"),
-    ("ops", "mul_operator", "core::ops::arith::mul_operator"),
-    ("ops", "div_operator", "core::ops::arith::div_operator"),
-    ("ops", "rem_operator", "core::ops::arith::rem_operator"),
-    ("ops", "neg_operator", "core::ops::arith::neg_operator"),
-    ("ops", "bit_and_operator", "core::ops::bit::bit_and_operator"),
-    ("ops", "bit_or_operator", "core::ops::bit::bit_or_operator"),
-    ("ops", "bit_xor_operator", "core::ops::bit::bit_xor_operator"),
-    ("ops", "shl_operator", "core::ops::bit::shl_operator"),
-    ("ops", "shr_operator", "core::ops::bit::shr_operator"),
-    ("ops", "not_operator", "core::ops::bit::not_operator"),
-    ("ops", "add_assign_operator", "core::ops::assign::add_assign_operator"),
-    ("ops", "sub_assign_operator", "core::ops::assign::sub_assign_operator"),
-    ("ops", "mul_assign_operator", "core::ops::assign::mul_assign_operator"),
-    ("ops", "div_assign_operator", "core::ops::assign::div_assign_operator"),
-    ("ops", "rem_assign_operator", "core::ops::assign::rem_assign_operator"),
-    ("ops", "bit_and_assign_operator", "core::ops::assign::bit_and_assign_operator"),
-    ("ops", "bit_or_assign_operator", "core::ops::assign::bit_or_assign_operator"),
-    ("ops", "bit_xor_assign_operator", "core::ops::assign::bit_xor_assign_operator"),
-    ("ops", "shl_assign_operator", "core::ops::assign::shl_assign_operator"),
-    ("ops", "shr_assign_operator", "core::ops::assign::shr_assign_operator"),
-    ("ops", "equality", "core::cmp::equality"),
+    ("ops", "add", "core::ops::arith::add"),
+    ("ops", "sub", "core::ops::arith::sub"),
+    ("ops", "mul", "core::ops::arith::mul"),
+    ("ops", "div", "core::ops::arith::div"),
+    ("ops", "rem", "core::ops::arith::rem"),
+    ("ops", "neg", "core::ops::arith::neg"),
+    ("ops", "bit_and", "core::ops::bit::bit_and"),
+    ("ops", "bit_or", "core::ops::bit::bit_or"),
+    ("ops", "bit_xor", "core::ops::bit::bit_xor"),
+    ("ops", "shl", "core::ops::bit::shl"),
+    ("ops", "shr", "core::ops::bit::shr"),
+    ("ops", "not", "core::ops::bit::not"),
+    ("ops", "add_assign", "core::ops::assign::add_assign"),
+    ("ops", "sub_assign", "core::ops::assign::sub_assign"),
+    ("ops", "mul_assign", "core::ops::assign::mul_assign"),
+    ("ops", "div_assign", "core::ops::assign::div_assign"),
+    ("ops", "rem_assign", "core::ops::assign::rem_assign"),
+    ("ops", "bit_and_assign", "core::ops::assign::bit_and_assign"),
+    ("ops", "bit_or_assign", "core::ops::assign::bit_or_assign"),
+    ("ops", "bit_xor_assign", "core::ops::assign::bit_xor_assign"),
+    ("ops", "shl_assign", "core::ops::assign::shl_assign"),
+    ("ops", "shr_assign", "core::ops::assign::shr_assign"),
+    ("ops", "eq", "core::cmp::eq"),
     ("ops", "partial_ordering", "core::cmp::partial_ordering"),
-    ("ops", "partial_order", "core::cmp::partial_order"),
-    ("ops", "index_operator", "core::ops::index::index_operator"),
-    ("ops", "chain_operator", "core::flow::chain_operator"),
-    ("ops", "coalesce_operator", "core::flow::coalesce_operator"),
-    ("ops", "unwrap_operator", "core::flow::unwrap_operator"),
-    ("ops", "raise_operator", "core::flow::raise_operator"),
-    ("ops.arith", "add_operator", "core::ops::arith::add_operator"),
-    ("ops.arith", "sub_operator", "core::ops::arith::sub_operator"),
-    ("ops.arith", "mul_operator", "core::ops::arith::mul_operator"),
-    ("ops.arith", "div_operator", "core::ops::arith::div_operator"),
-    ("ops.arith", "rem_operator", "core::ops::arith::rem_operator"),
-    ("ops.arith", "neg_operator", "core::ops::arith::neg_operator"),
-    ("ops.bit", "bit_and_operator", "core::ops::bit::bit_and_operator"),
-    ("ops.bit", "bit_or_operator", "core::ops::bit::bit_or_operator"),
-    ("ops.bit", "bit_xor_operator", "core::ops::bit::bit_xor_operator"),
-    ("ops.bit", "shl_operator", "core::ops::bit::shl_operator"),
-    ("ops.bit", "shr_operator", "core::ops::bit::shr_operator"),
-    ("ops.bit", "not_operator", "core::ops::bit::not_operator"),
-    ("ops.assign", "add_assign_operator", "core::ops::assign::add_assign_operator"),
-    ("ops.assign", "sub_assign_operator", "core::ops::assign::sub_assign_operator"),
-    ("ops.assign", "mul_assign_operator", "core::ops::assign::mul_assign_operator"),
-    ("ops.assign", "div_assign_operator", "core::ops::assign::div_assign_operator"),
-    ("ops.assign", "rem_assign_operator", "core::ops::assign::rem_assign_operator"),
+    ("ops", "partial_ord", "core::cmp::partial_ord"),
+    ("ops", "index", "core::ops::index::index"),
+    ("ops", "chain", "core::flow::chain"),
+    ("ops", "coalesce", "core::flow::coalesce"),
+    ("ops", "unwrap", "core::flow::unwrap"),
+    ("ops", "raise", "core::flow::raise"),
+    ("ops.arith", "add", "core::ops::arith::add"),
+    ("ops.arith", "sub", "core::ops::arith::sub"),
+    ("ops.arith", "mul", "core::ops::arith::mul"),
+    ("ops.arith", "div", "core::ops::arith::div"),
+    ("ops.arith", "rem", "core::ops::arith::rem"),
+    ("ops.arith", "neg", "core::ops::arith::neg"),
+    ("ops.bit", "bit_and", "core::ops::bit::bit_and"),
+    ("ops.bit", "bit_or", "core::ops::bit::bit_or"),
+    ("ops.bit", "bit_xor", "core::ops::bit::bit_xor"),
+    ("ops.bit", "shl", "core::ops::bit::shl"),
+    ("ops.bit", "shr", "core::ops::bit::shr"),
+    ("ops.bit", "not", "core::ops::bit::not"),
+    ("ops.assign", "add_assign", "core::ops::assign::add_assign"),
+    ("ops.assign", "sub_assign", "core::ops::assign::sub_assign"),
+    ("ops.assign", "mul_assign", "core::ops::assign::mul_assign"),
+    ("ops.assign", "div_assign", "core::ops::assign::div_assign"),
+    ("ops.assign", "rem_assign", "core::ops::assign::rem_assign"),
     (
         "ops.assign",
-        "bit_and_assign_operator",
-        "core::ops::assign::bit_and_assign_operator",
+        "bit_and_assign",
+        "core::ops::assign::bit_and_assign",
     ),
     (
         "ops.assign",
-        "bit_or_assign_operator",
-        "core::ops::assign::bit_or_assign_operator",
+        "bit_or_assign",
+        "core::ops::assign::bit_or_assign",
     ),
     (
         "ops.assign",
-        "bit_xor_assign_operator",
-        "core::ops::assign::bit_xor_assign_operator",
+        "bit_xor_assign",
+        "core::ops::assign::bit_xor_assign",
     ),
-    ("ops.assign", "shl_assign_operator", "core::ops::assign::shl_assign_operator"),
-    ("ops.assign", "shr_assign_operator", "core::ops::assign::shr_assign_operator"),
-    ("ops.index", "index_operator", "core::ops::index::index_operator"),
-    ("cmp", "equality", "core::cmp::equality"),
+    ("ops.assign", "shl_assign", "core::ops::assign::shl_assign"),
+    ("ops.assign", "shr_assign", "core::ops::assign::shr_assign"),
+    ("ops.index", "index", "core::ops::index::index"),
+    ("cmp", "eq", "core::cmp::eq"),
     ("cmp", "partial_ordering", "core::cmp::partial_ordering"),
-    ("cmp", "partial_order", "core::cmp::partial_order"),
-    ("flow", "chain_operator", "core::flow::chain_operator"),
-    ("flow", "coalesce_operator", "core::flow::coalesce_operator"),
-    ("flow", "unwrap_operator", "core::flow::unwrap_operator"),
-    ("flow", "raise_operator", "core::flow::raise_operator"),
+    ("cmp", "partial_ord", "core::cmp::partial_ord"),
+    ("flow", "chain", "core::flow::chain"),
+    ("flow", "coalesce", "core::flow::coalesce"),
+    ("flow", "unwrap", "core::flow::unwrap"),
+    ("flow", "raise", "core::flow::raise"),
     ("unsafe", "unsafe_effect", "core::unsafe::unsafe_effect"),
     ("unsafe", "unsafe", "core::unsafe::unsafe"),
     ("async", "async_effect", "core::async::async_effect"),
@@ -707,7 +657,11 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("vec", "vec", "alloc::vec::vec"),
     ("vec", "vec_into_iter", "alloc::vec::vec_into_iter"),
     ("string", "string", "alloc::string::string"),
-    ("string", "from_utf8_error", "alloc::string::from_utf8_error"),
+    (
+        "string",
+        "from_utf8_error",
+        "alloc::string::from_utf8_error",
+    ),
 ];
 
 fn validate_package_layout(
@@ -1297,7 +1251,7 @@ fn install_standard_namespaces(
             ) {
                 continue;
             }
-            if *module == "ops" && matches!(*name, "chain_operator" | "coalesce_operator" | "unwrap_operator" | "raise_operator") {
+            if *module == "ops" && matches!(*name, "chain" | "coalesce" | "unwrap" | "raise") {
                 continue;
             }
             std_required_imports
@@ -4090,8 +4044,7 @@ fn compile_parameter_names(
 fn compile_argument_name_is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i8"
-            | "i16"
+        "i8" | "i16"
             | "i32"
             | "i64"
             | "i128"
@@ -4149,7 +4102,7 @@ mod tests {
                 "root.sc",
                 &[],
                 "use root.config.optimization as optimization\n\
-                 let select(O: optimization)(value: i32): i32 = { value }\n\
+                 let select(comptime o: optimization)(value: i32): i32 = { value }\n\
                  let main(): i32 = { 0 }\n",
                 true,
             ),
@@ -4313,26 +4266,26 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "let main(): geometry.Point = { geometry.make() }\n",
+                "let main(): geometry.point = { geometry.make() }\n",
                 true,
             ),
             unit(
                 "src/geometry.sc",
                 &["geometry"],
-                "pub(package) let Point = struct { x: i32, y: i32 }\n\
-                 pub(package) let make(): Point = { Point { x: 1, y: 2 } }\n",
+                "pub(package) let point = struct { x: i32, y: i32 }\n\
+                 pub(package) let make(): point = { point { x: 1, y: 2 } }\n",
                 false,
             ),
         ])
         .unwrap();
 
         assert!(program.items.iter().any(
-            |item| matches!(item, Item::Struct(definition) if definition.name == "geometry::Point")
+            |item| matches!(item, Item::Struct(definition) if definition.name == "geometry::point")
         ));
         let main = function(&program, "main");
         assert_eq!(
             main.return_type,
-            Some(Type::Named("geometry::Point".into(), Vec::new()))
+            Some(Type::Named("geometry::point".into(), Vec::new()))
         );
         assert!(matches!(
             function_tail(main),
@@ -4344,12 +4297,12 @@ mod tests {
         let make = function(&program, "geometry::make");
         assert_eq!(
             make.return_type,
-            Some(Type::Named("geometry::Point".into(), Vec::new()))
+            Some(Type::Named("geometry::point".into(), Vec::new()))
         );
         assert!(matches!(
             function_tail(make),
             Expr::StructLiteral { constructor, .. }
-                if constructor.as_ref() == &Expr::Name("geometry::Point".into())
+                if constructor.as_ref() == &Expr::Name("geometry::point".into())
         ));
     }
 
@@ -4365,8 +4318,8 @@ mod tests {
             unit(
                 "src/data.sc",
                 &["data"],
-                "pub(package) let Point = struct { pub(package) x: i32 }\n\
-                 pub(package) let origin = Point { x: 1 }\n",
+                "pub(package) let point = struct { pub(package) x: i32 }\n\
+                 pub(package) let origin = point { x: 1 }\n",
                 false,
             ),
         ])
@@ -4385,10 +4338,10 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "use std.Option\n\
+                "use std.option\n\
                  let keep(math: i32): i32 = {\n\
                    let local = { (math: i32) -> math }\n\
-                   Option.Some(math) match { Option.Some(math) => local(math), _ => math }\n\
+                   option.some(math) match { option.some(math) => local(math), _ => math }\n\
                  }\n",
                 true,
             ),
@@ -4428,12 +4381,7 @@ mod tests {
     #[test]
     fn reports_private_sibling_access_but_allows_descendants() {
         let error = resolve_sources(&[
-            unit(
-                "src/main.sc",
-                &[],
-                "let main(): i32 = { b.read() }\n",
-                true,
-            ),
+            unit("src/main.sc", &[], "let main(): i32 = { b.read() }\n", true),
             unit("src/a.sc", &["a"], "let secret(): i32 = { 1 }\n", false),
             unit(
                 "src/a/child.sc",
@@ -4461,21 +4409,21 @@ mod tests {
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub(package) let Self = struct { value: i32 }\n\
-                 pub(package) let Output = struct { value: i32 }\n\
-                 pub(package) let A = struct { value: i32 }\n\
-                 pub(package) let Convert = trait {\n\
-                   let Output: type\n\
-                   let A: type\n\
-                   let B: type\n\
-                   let convert(self: borrow(Self))(value: Self): Output\n\
+                "pub(package) let self = struct { value: i32 }\n\
+                 pub(package) let output = struct { value: i32 }\n\
+                 pub(package) let a = struct { value: i32 }\n\
+                 pub(package) let convert = trait {\n\
+                   let output: type\n\
+                   let a: type\n\
+                   let b: type\n\
+                   let convert(self: borrow(self))(value: self): output\n\
                  }\n\
-                 pub(package) let Number = struct { value: i32 }\n\
-                 extend Number: Convert {\n\
-                   let Output = i32\n\
-                   let A = Self\n\
-                   let B = A\n\
-                   let convert(self: borrow(Self))(value: Self): Output = { value.value }\n}\n",
+                 pub(package) let number = struct { value: i32 }\n\
+                 extend number: convert {\n\
+                   let output = i32\n\
+                   let a = self\n\
+                   let b = a\n\
+                   let convert(self: borrow(self))(value: self): output = { value.value }\n}\n",
                 false,
             ),
         ])
@@ -4485,7 +4433,7 @@ mod tests {
             .items
             .iter()
             .find_map(|item| match item {
-                Item::Trait(definition) if definition.name == "api::Convert" => Some(definition),
+                Item::Trait(definition) if definition.name == "api::convert" => Some(definition),
                 _ => None,
             })
             .expect("missing resolved trait");
@@ -4559,7 +4507,7 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
         assert_eq!(associated_values["a"], Expr::Name("self".into()));
-        assert_eq!(associated_values["B"], Expr::Name("a".into()));
+        assert_eq!(associated_values["b"], Expr::Name("a".into()));
     }
 
     #[test]
@@ -4568,16 +4516,16 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "let main(): i32 = { api.Cell.new(42).take() }\n",
+                "let main(): i32 = { api.cell.new(42).take() }\n",
                 true,
             ),
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub(package) let Cell(T: type) = struct { value: T }\n\
-                 extend(T: type) Cell(T) {\n\
-                   let new(move value: T): Cell(T) = { Cell { value: value } }\n\
-                   let take(move self)(): T = { self.value }\n\
+                "pub(package) let cell(comptime t: type) = struct { value: t }\n\
+                 extend(comptime t: type) cell(t) {\n\
+                   let new(move value: t): cell(t) = { cell { value: value } }\n\
+                   let take(move self)(): t = { self.value }\n\
                  }\n",
                 false,
             ),
@@ -4596,7 +4544,7 @@ mod tests {
         assert_eq!(
             extension.target,
             Type::Named(
-                "api::Cell".into(),
+                "api::cell".into(),
                 vec![Type::Named("t".into(), Vec::new())]
             )
         );
@@ -4606,7 +4554,7 @@ mod tests {
         assert_eq!(
             new.return_type,
             Some(Type::Named(
-                "api::Cell".into(),
+                "api::cell".into(),
                 vec![Type::Named("t".into(), Vec::new())]
             ))
         );
@@ -4677,7 +4625,7 @@ mod tests {
 
     #[test]
     fn rejects_module_segments_that_are_unspellable_or_canonicalize_ambiguously() {
-        for segment in ["", "_", "let", "Upper", "has-dash", "a.b", "a::b"] {
+        for segment in ["", "_", "let", "upper", "has-dash", "a.b", "a::b"] {
             let error = resolve_sources(&[
                 unit("root.sc", &[], "let main(): i32 = { 0 }\n", true),
                 unit("bad.sc", &[segment], "let value = 1\n", false),
@@ -4730,18 +4678,18 @@ mod tests {
             unit(
                 "root.sc",
                 &[],
-                r#"use root.fake as Option
-let Add = root.fake
-let Never = root.fake
+                r#"use root.fake as option
+let add = root.fake
+let never = root.fake
 
-let Number = struct { value: i32 }
-extend Number: Add(Number) {
-  let Output = i32
-  let add(self)(rhs: Number): i32 = { self.value + rhs.value }
+let number = struct { value: i32 }
+extend number: add(number) {
+  let output = i32
+  let add(self)(rhs: number): i32 = { self.value + rhs.value }
 }
 
-let stop(): Never = { loop {} }
-let main(): i32 = { Option {} }
+let stop(): never = { loop {} }
+let main(): i32 = { option {} }
 "#,
                 true,
             ),
@@ -4750,9 +4698,9 @@ let main(): i32 = { Option {} }
         .unwrap_err();
 
         for expected in [
-            "module `Option` cannot be used as a type or compile-time argument",
-            "module `Add` cannot be used as a type",
-            "module `Never` cannot be used as a type",
+            "module `option` cannot be used as a type or compile-time argument",
+            "module `add` cannot be used as a type",
+            "module `never` cannot be used as a type",
         ] {
             assert!(
                 errors
@@ -5185,7 +5133,7 @@ let main(): i32 = { Option {} }
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "let same(value: left.Token): right.Token = { value }\nlet main(): i32 = { 0 }\n",
+                    "let same(value: left.token): right.token = { value }\nlet main(): i32 = { 0 }\n",
                     true,
                 )],
             ),
@@ -5193,7 +5141,7 @@ let main(): i32 = { Option {} }
                 1,
                 false,
                 &[("shared", 3)],
-                vec![unit("left/src/lib.sc", &[], "pub use shared.Token\n", true)],
+                vec![unit("left/src/lib.sc", &[], "pub use shared.token\n", true)],
             ),
             package(
                 2,
@@ -5202,7 +5150,7 @@ let main(): i32 = { Option {} }
                 vec![unit(
                     "right/src/lib.sc",
                     &[],
-                    "pub use shared.Token\n",
+                    "pub use shared.token\n",
                     true,
                 )],
             ),
@@ -5213,7 +5161,7 @@ let main(): i32 = { Option {} }
                 vec![unit(
                     "shared/src/lib.sc",
                     &[],
-                    "pub let Token = struct { value: i32 }\n",
+                    "pub let token = struct { value: i32 }\n",
                     true,
                 )],
             ),
@@ -5221,7 +5169,7 @@ let main(): i32 = { Option {} }
         .unwrap();
 
         let same = function(&program, "same");
-        let token = format!("{}::Token", stable_package_root("package-3@0.0.0"));
+        let token = format!("{}::token", stable_package_root("package-3@0.0.0"));
         assert_eq!(same.groups[0][0].ty, Type::Named(token.clone(), vec![]));
         assert_eq!(same.return_type, Some(Type::Named(token.clone(), vec![])));
         assert_eq!(
@@ -5304,7 +5252,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(invalid
             .iter()
-            .any(|diagnostic| diagnostic.contains("unknown package ID 99")));
+            .any(|diagnostic| diagnostic.contains("unknown package id 99")));
         assert!(invalid
             .iter()
             .any(|diagnostic| diagnostic.contains("not reachable")));
@@ -5319,7 +5267,7 @@ let main(): i32 = { Option {} }
         assert!(reserved
             .iter()
             .any(|diagnostic| diagnostic.contains(&format!(
-                "package ID {} is reserved for compiler core",
+                "package id {} is reserved for compiler core",
                 PackageId::CORE.0
             ))));
 
@@ -5333,7 +5281,7 @@ let main(): i32 = { Option {} }
         assert!(reserved_alloc
             .iter()
             .any(|diagnostic| diagnostic.contains(&format!(
-                "package ID {} is reserved for compiler alloc",
+                "package id {} is reserved for compiler alloc",
                 PackageId::ALLOC.0
             ))));
     }
@@ -5343,10 +5291,10 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = struct {}\n\
-             pub let Wrapper(T: type) = struct {}\n\
-             pub let expose(value: Wrapper(Hidden)): Hidden = { value }\n\
-             pub let shared: Hidden = Hidden {}\n",
+            "let hidden = struct {}\n\
+             pub let wrapper(comptime t: type) = struct {}\n\
+             pub let expose(value: wrapper(hidden)): hidden = { value }\n\
+             pub let shared: hidden = hidden {}\n",
             true,
         )])
         .unwrap_err();
@@ -5354,15 +5302,15 @@ let main(): i32 = { Option {} }
         assert_eq!(errors.len(), 3, "{errors:?}");
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `expose` parameter `value`")
-                && diagnostic.contains("exposes private type `Hidden`")
+                && diagnostic.contains("exposes private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `expose` return type")
-                && diagnostic.contains("exposes private type `Hidden`")
+                && diagnostic.contains("exposes private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("global `shared` type")
-                && diagnostic.contains("exposes private type `Hidden`")
+                && diagnostic.contains("exposes private type `hidden`")
         }));
     }
 
@@ -5372,16 +5320,16 @@ let main(): i32 = { Option {} }
             unit(
                 "src/main.sc",
                 &[],
-                "pub let screen(): i32 with(ui.UI) = { 0 }\n",
+                "pub let screen(): i32 with(ui.ui) = { 0 }\n",
                 true,
             ),
-            unit("src/ui.sc", &["ui"], "pub let UI = effect\n", false),
+            unit("src/ui.sc", &["ui"], "pub let ui = effect\n", false),
         ])
         .unwrap();
 
         assert_eq!(
             function(&program, "screen").effects.custom,
-            [Type::Named("ui::UI".into(), Vec::new())]
+            [Type::Named("ui::ui".into(), Vec::new())]
         );
     }
 
@@ -5390,8 +5338,8 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let UI = effect\n\
-             pub let expose(action: (): i32 with(UI)): i32 with(UI) = { 0 }\n",
+            "let ui = effect\n\
+             pub let expose(action: (): i32 with(ui)): i32 with(ui) = { 0 }\n",
             true,
         )])
         .unwrap_err();
@@ -5399,11 +5347,11 @@ let main(): i32 = { Option {} }
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `expose` parameter `action`")
-                && diagnostic.contains("exposes private effect `UI`")
+                && diagnostic.contains("exposes private effect `ui`")
         }));
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `expose` with public visibility")
-                && diagnostic.contains("exposes private effect `UI`")
+                && diagnostic.contains("exposes private effect `ui`")
         }));
     }
 
@@ -5412,8 +5360,8 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = trait {}\n\
-             pub let expose(T: type)(value: T): T where T: Hidden = { value }\n",
+            "let hidden = trait {}\n\
+             pub let expose(comptime t: type)(value: t): t where t: hidden = { value }\n",
             true,
         )])
         .unwrap_err();
@@ -5421,7 +5369,7 @@ let main(): i32 = { Option {} }
         assert!(
             errors.iter().any(|diagnostic| {
                 diagnostic.contains("where predicate 1 trait")
-                    && diagnostic.contains("exposes private type `Hidden`")
+                    && diagnostic.contains("exposes private type `hidden`")
             }),
             "{errors:?}"
         );
@@ -5432,10 +5380,10 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = trait {}\n\
-             pub let Cell(T: type) = struct { pub value: T }\n\
-             extend(T: type) Cell(T) where T: Hidden {\n\
-               let take(move self)(): T = { self.value }\n\
+            "let hidden = trait {}\n\
+             pub let cell(comptime t: type) = struct { pub value: t }\n\
+             extend(comptime t: type) cell(t) where t: hidden {\n\
+               let take(move self)(): t = { self.value }\n\
              }\n",
             true,
         )])
@@ -5444,7 +5392,7 @@ let main(): i32 = { Option {} }
         assert!(
             errors.iter().any(|diagnostic| {
                 diagnostic.contains("extension where predicate 1 trait")
-                    && diagnostic.contains("exposes private type `Hidden`")
+                    && diagnostic.contains("exposes private type `hidden`")
             }),
             "{errors:?}"
         );
@@ -5456,19 +5404,19 @@ let main(): i32 = { Option {} }
             unit(
                 "src/main.sc",
                 &[],
-                "let RootSecret = struct {}\n\
-                 pub(package) let PackageSecret = struct {}\n\
+                "let root_secret = struct {}\n\
+                 pub(package) let package_secret = struct {}\n\
                  let main(): i32 = { 0 }\n",
                 true,
             ),
             unit(
                 "src/child.sc",
                 &["child"],
-                "let ChildSecret = struct {}\n\
-                 pub(package) let package_ok(value: RootSecret): RootSecret = { value }\n\
-                 let private_ok(value: RootSecret): RootSecret = { value }\n\
-                 pub(package) let package_bad(value: ChildSecret): i32 = { 0 }\n\
-                 pub let public_bad(value: PackageSecret): i32 = { 0 }\n",
+                "let child_secret = struct {}\n\
+                 pub(package) let package_ok(value: root_secret): root_secret = { value }\n\
+                 let private_ok(value: root_secret): root_secret = { value }\n\
+                 pub(package) let package_bad(value: child_secret): i32 = { 0 }\n\
+                 pub let public_bad(value: package_secret): i32 = { 0 }\n",
                 false,
             ),
         ])
@@ -5477,11 +5425,11 @@ let main(): i32 = { Option {} }
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `child::package_bad` parameter `value`")
-                && diagnostic.contains("private type `child::ChildSecret`")
+                && diagnostic.contains("private type `child::child_secret`")
         }));
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("function `child::public_bad` parameter `value`")
-                && diagnostic.contains("pub(package) type `PackageSecret`")
+                && diagnostic.contains("pub(package) type `package_secret`")
         }));
     }
 
@@ -5490,11 +5438,11 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = struct {}\n\
-             pub let Record = struct { pub visible: Hidden, private: Hidden }\n\
-             pub let Choice = enum {\n\
-               Positional(Hidden),\n\
-               Named(pub visible: Hidden, private: Hidden),\n\
+            "let hidden = struct {}\n\
+             pub let record = struct { pub visible: hidden, private: hidden }\n\
+             pub let choice = enum {\n\
+               positional(hidden),\n\
+               named(pub visible: hidden, private: hidden),\n\
              }\n",
             true,
         )])
@@ -5502,21 +5450,21 @@ let main(): i32 = { Option {} }
 
         assert_eq!(errors.len(), 3, "{errors:?}");
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("field `Record.visible`")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("field `record.visible`")
+                && diagnostic.contains("private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("enum variant `Choice.Positional` payload 0")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("enum variant `choice.positional` payload 0")
+                && diagnostic.contains("private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("enum variant field `Choice.Named.visible`")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("enum variant field `choice.named.visible`")
+                && diagnostic.contains("private type `hidden`")
         }));
         assert!(errors
             .iter()
-            .all(|diagnostic| !diagnostic.contains("Record.private")
-                && !diagnostic.contains("Choice.Named.private")));
+            .all(|diagnostic| !diagnostic.contains("record.private")
+                && !diagnostic.contains("choice.named.private")));
     }
 
     #[test]
@@ -5524,9 +5472,9 @@ let main(): i32 = { Option {} }
         let valid = resolve_sources(&[unit(
             "src/valid.sc",
             &[],
-            "pub let Convert(T: type) = trait {\n\
-               let Output: type = T\n\
-               let convert(U: type)(self: borrow(Self))(value: T): Output\n\
+            "pub let convert(comptime t: type) = trait {\n\
+               let output: type = t\n\
+               let convert(comptime u: type)(self: borrow(self))(value: t): output\n\
              }\n",
             true,
         )]);
@@ -5535,10 +5483,10 @@ let main(): i32 = { Option {} }
         let errors = resolve_sources(&[unit(
             "src/invalid.sc",
             &[],
-            "let Hidden = struct {}\n\
-             pub let Expose = trait {\n\
-               let Output: type = Hidden\n\
-               let convert(self: borrow(Self))(value: Hidden): Hidden\n\
+            "let hidden = struct {}\n\
+             pub let expose = trait {\n\
+               let output: type = hidden\n\
+               let convert(self: borrow(self))(value: hidden): hidden\n\
              }\n",
             true,
         )])
@@ -5546,16 +5494,16 @@ let main(): i32 = { Option {} }
 
         assert_eq!(errors.len(), 3, "{errors:?}");
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("associated type `Expose.Output` default")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("associated type `expose.output` default")
+                && diagnostic.contains("private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("trait method `Expose.convert` parameter `value`")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("trait method `expose.convert` parameter `value`")
+                && diagnostic.contains("private type `hidden`")
         }));
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("trait method `Expose.convert` return type")
-                && diagnostic.contains("private type `Hidden`")
+            diagnostic.contains("trait method `expose.convert` return type")
+                && diagnostic.contains("private type `hidden`")
         }));
     }
 
@@ -5564,29 +5512,29 @@ let main(): i32 = { Option {} }
         let program = resolve_sources(&[unit(
             "main.sc",
             &[],
-            "use std.boxed.Box as HeapBox\nuse std.vec.Vec\n\
-             let keep(move boxed: HeapBox(i32)): HeapBox(i32) = { boxed }\n\
-             let empty(): Vec(i32) = { Vec(i32).new() }\n",
+            "use std.boxed.box as heap_box\nuse std.vec.vec\n\
+             let keep(move boxed: heap_box(i32)): heap_box(i32) = { boxed }\n\
+             let empty(): vec(i32) = { vec(i32).new() }\n",
             true,
         )])
         .unwrap();
         assert_eq!(
             function(&program, "keep").groups[0][0].ty,
-            Type::Named("alloc::boxed::Box".into(), vec![Type::I32])
+            Type::Named("alloc::boxed::box".into(), vec![Type::I32])
         );
         assert_eq!(
             function(&program, "empty").return_type,
-            Some(Type::Named("alloc::vec::Vec".into(), vec![Type::I32]))
+            Some(Type::Named("alloc::vec::vec".into(), vec![Type::I32]))
         );
 
         let operator = resolve_sources(&[unit(
             "operator.sc",
             &[],
-            "use std.ops.Add as Plus\n\
-             let Number = struct { value: i32 }\n\
-             extend Number: Plus(Number) {\n\
-               let Output = Number\n\
-               let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
+            "use std.ops.add as plus\n\
+             let number = struct { value: i32 }\n\
+             extend number: plus(number) {\n\
+               let output = number\n\
+               let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }\n\
              }\n",
             true,
         )])
@@ -5594,53 +5542,53 @@ let main(): i32 = { Option {} }
         assert!(operator.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::ops::arith::Add"))
+                    Some(Type::Named(name, _)) if name == "core::ops::arith::add"))
         }));
 
         let flow = resolve_sources(&[unit(
             "flow.sc",
             &[],
-            "let Chain = std.flow.Chain\n\
-             let OpsCoalesce = std.ops.Coalesce\n\
-             let LegacyCoalesce = core.ops.Coalesce\n\
-             let Maybe(T: type) = enum { Some(T), None }\n\
-             let LegacyMaybe(T: type) = enum { Some(T), None }\n\
-             extend(T: type) Maybe(T): Chain {}\n\
-             extend(T: type) Maybe(T): OpsCoalesce {}\n\
-             extend(T: type) LegacyMaybe(T): LegacyCoalesce {}\n",
+            "let chain = std.flow.chain\n\
+             let ops_coalesce = std.ops.coalesce\n\
+             let legacy_coalesce = core.ops.coalesce\n\
+             let maybe(comptime t: type) = enum { some(t), none }\n\
+             let legacy_maybe(comptime t: type) = enum { some(t), none }\n\
+             extend(comptime t: type) maybe(t): chain {}\n\
+             extend(comptime t: type) maybe(t): ops_coalesce {}\n\
+             extend(comptime t: type) legacy_maybe(t): legacy_coalesce {}\n",
             true,
         )])
         .unwrap();
         assert!(flow.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::flow::Chain"))
+                    Some(Type::Named(name, _)) if name == "core::flow::chain"))
         }));
         assert!(flow.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::flow::Coalesce"))
+                    Some(Type::Named(name, _)) if name == "core::flow::coalesce"))
         }));
 
         let standard_modules = resolve_sources(&[unit(
             "standard.sc",
             &[],
-            "use std.async.Async\n\
-             let Semigroup = std.algebra.Semigroup
-             let Monoid = std.algebra.Monoid
-             let Number = struct { value: i32 }\n\
-             let suspended(): i32 with(Async) = { 0 }\n\
-             let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
-             extend Number: Semigroup {\n\
-               let combine(move left: Number, move right: Number): Number = { Number { value: left.value + right.value } }\n}\n\
-             extend Number: Monoid {\n\
-               let empty(): Number = { Number { value: 0 } }\n}\n",
+            "use std.async.async\n\
+             let semigroup = std.algebra.semigroup
+             let monoid = std.algebra.monoid
+             let number = struct { value: i32 }\n\
+             let suspended(): i32 with(async) = { 0 }\n\
+             let invoke(move action: (): i32 with(async)): i32 with(async) = { action() }\n\
+             extend number: semigroup {\n\
+               let combine(move left: number, move right: number): number = { number { value: left.value + right.value } }\n}\n\
+             extend number: monoid {\n\
+               let empty(): number = { number { value: 0 } }\n}\n",
             true,
         )])
         .unwrap();
         assert_eq!(
             function(&standard_modules, "suspended").effects.custom,
-            vec![Type::Named("core::async::Async".into(), Vec::new())]
+            vec![Type::Named("core::async::async".into(), Vec::new())]
         );
         let invoke = function(&standard_modules, "invoke");
         let Type::Function { effects, .. } = &invoke.groups[0][0].ty else {
@@ -5648,121 +5596,121 @@ let main(): i32 = { Option {} }
         };
         assert_eq!(
             effects.custom,
-            vec![Type::Named("core::async::Async".into(), Vec::new())]
+            vec![Type::Named("core::async::async".into(), Vec::new())]
         );
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::algebra::Semigroup"))
+                    Some(Type::Named(name, _)) if name == "core::algebra::semigroup"))
         }));
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::algebra::Monoid"))
+                    Some(Type::Named(name, _)) if name == "core::algebra::monoid"))
         }));
 
         let bare = resolve_sources(&[unit(
             "main.sc",
             &[],
-            "let make(): Box(i32) = { Box.new(1) }\n",
+            "let make(): box(i32) = { box.new(1) }\n",
             true,
         )])
         .unwrap_err();
         assert!(bare.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Box` is not in the prelude")
-                && diagnostic.contains("let Box = std.boxed.Box")
+            diagnostic.contains("standard-library item `box` is not in the prelude")
+                && diagnostic.contains("let box = std.boxed.box")
         }));
 
         let bare_option = resolve_sources(&[unit(
             "option.sc",
             &[],
-            "let maybe(): Option(i32) = { Option.None }\n",
+            "let maybe(): option(i32) = { option.none }\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_option.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Option` is not in the prelude")
-                && diagnostic.contains("let Option = std.Option")
+            diagnostic.contains("standard-library item `option` is not in the prelude")
+                && diagnostic.contains("let option = std.option")
         }));
 
         let bare_result = resolve_sources(&[unit(
             "result.sc",
             &[],
-            "let outcome(): Result(Bool)(i32) = { Result.Ok(1) }\n",
+            "let outcome(): result(bool)(i32) = { result.ok(1) }\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_result.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Result` is not in the prelude")
-                && diagnostic.contains("let Result = std.Result")
+            diagnostic.contains("standard-library item `result` is not in the prelude")
+                && diagnostic.contains("let result = std.result")
         }));
 
         let bare_operator = resolve_sources(&[unit(
             "operator.sc",
             &[],
-            "let Number = struct { value: i32 }\n\
-             extend Number: Add(Number) {\n\
-               let Output = Number\n\
-               let add(self)(rhs: Number): Number = { self }\n\
+            "let number = struct { value: i32 }\n\
+             extend number: add(number) {\n\
+               let output = number\n\
+               let add(self)(rhs: number): number = { self }\n\
              }\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_operator.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Add` is not in the prelude")
-                && diagnostic.contains("let Add = std.ops.Add")
+            diagnostic.contains("standard-library item `add` is not in the prelude")
+                && diagnostic.contains("let add = std.ops.add")
         }));
 
         let bare_flow = resolve_sources(&[unit(
             "flow.sc",
             &[],
-            "let Maybe(T: type) = enum { Some(T), None }\n\
-             extend(T: type) Maybe(T): Chain {}\n",
+            "let maybe(comptime t: type) = enum { some(t), none }\n\
+             extend(comptime t: type) maybe(t): chain {}\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_flow.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Chain` is not in the prelude")
-                && diagnostic.contains("let Chain = std.flow.Chain")
+            diagnostic.contains("standard-library item `chain` is not in the prelude")
+                && diagnostic.contains("let chain = std.flow.chain")
         }));
 
         let bare_effect = resolve_sources(&[unit(
             "effect.sc",
             &[],
-            "let suspended(): i32 with(Async) = { 0 }\n",
+            "let suspended(): i32 with(async) = { 0 }\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_effect.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Async` is not in the prelude")
-                && diagnostic.contains("let Async = std.async.Async")
+            diagnostic.contains("standard-library item `async` is not in the prelude")
+                && diagnostic.contains("let async = std.async.async")
         }));
 
         let bare_algebra = resolve_sources(&[unit(
             "algebra.sc",
             &[],
-            "let Number = struct { value: i32 }\n\
-             extend Number: Semigroup {\n\
-               let combine(move left: Number, move right: Number): Number = { left }\n}\n",
+            "let number = struct { value: i32 }\n\
+             extend number: semigroup {\n\
+               let combine(move left: number, move right: number): number = { left }\n}\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_algebra.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Semigroup` is not in the prelude")
-                && diagnostic.contains("let Semigroup = std.algebra.Semigroup")
+            diagnostic.contains("standard-library item `semigroup` is not in the prelude")
+                && diagnostic.contains("let semigroup = std.algebra.semigroup")
         }));
 
         let bare_functional = resolve_sources(&[unit(
             "functional.sc",
             &[],
-            "let Number = struct { value: i32 }\n\
-             extend Number: Functor {}\n",
+            "let number = struct { value: i32 }\n\
+             extend number: functor {}\n",
             true,
         )])
         .unwrap_err();
         assert!(bare_functional.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Functor` is not in the prelude")
-                && diagnostic.contains("let Functor = std.functional.Functor")
+            diagnostic.contains("standard-library item `functor` is not in the prelude")
+                && diagnostic.contains("let functor = std.functional.functor")
         }));
 
         for namespace in ["core", "alloc", "std"] {
@@ -5824,6 +5772,7 @@ let main(): i32 = { Option {} }
         let expected_core = CORE_NEVER_EXPORTS
             .iter()
             .map(|name| ("never", *name))
+            .chain([("@core", "test")])
             .chain(CORE_MARKER_EXPORTS.iter().map(|name| ("marker", *name)))
             .chain(
                 CORE_PRIMITIVE_EXPORTS

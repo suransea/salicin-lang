@@ -20,7 +20,7 @@ extend values: iterator {
 }
 
 extend values: into_iterator {
-  let into_iter = values
+  let iter = values
   let into_iter(move self)(): values = { self }
 }
 

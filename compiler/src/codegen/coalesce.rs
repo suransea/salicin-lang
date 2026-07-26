@@ -146,12 +146,12 @@ impl Analyzer {
         };
         let arms = match info.kind {
             StandardFallibleKind::Option => vec![
-                payload_arm("Some"),
-                fallback_arm("None", PatternFields::Unit),
+                payload_arm("some"),
+                fallback_arm("none", PatternFields::Unit),
             ],
             StandardFallibleKind::Result => vec![
-                payload_arm("Ok"),
-                fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
+                payload_arm("ok"),
+                fallback_arm("err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
         };
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
@@ -231,12 +231,12 @@ impl Analyzer {
         };
         let arms = match info.kind {
             StandardFallibleKind::Option => vec![
-                payload_arm("Some"),
-                fallback_arm("None", PatternFields::Unit),
+                payload_arm("some"),
+                fallback_arm("none", PatternFields::Unit),
             ],
             StandardFallibleKind::Result => vec![
-                payload_arm("Ok"),
-                fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
+                payload_arm("ok"),
+                fallback_arm("err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
         };
         self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)

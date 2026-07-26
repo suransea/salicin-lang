@@ -22,7 +22,7 @@ extend counter: iterator {
 }
 
 extend counter: into_iterator {
-  let into_iter = counter
+  let iter = counter
 
   let into_iter(move self)(): counter = {
     self

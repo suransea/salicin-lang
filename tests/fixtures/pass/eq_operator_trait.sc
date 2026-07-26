@@ -1,8 +1,8 @@
-let equality = std.ops.equality
+let eq = std.ops.eq
 
 let token = struct { value: i32 }
 
-extend token: equality(token) {
+extend token: eq(token) {
   let eq(self: borrow(self))(rhs: borrow(token)): bool = { self.value == rhs.value }
 }
 

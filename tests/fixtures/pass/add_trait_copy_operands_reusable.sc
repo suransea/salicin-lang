@@ -1,11 +1,11 @@
 let copyable = std.marker.copyable
-let add_operator = std.ops.add_operator
+let add = std.ops.add
 
 let number = struct { value: i32 }
 
 extend number: copyable {}
 
-extend number: add_operator(number) {
+extend number: add(number) {
   let output = number
   let add(self)(rhs: number): number = {
     number { value: self.value + rhs.value }

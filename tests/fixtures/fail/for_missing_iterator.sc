@@ -4,7 +4,7 @@ let iterable = struct {}
 let iter = struct {}
 
 extend iterable: into_iterator {
-  let into_iter = iter
+  let iter = iter
   let into_iter(move self)(): iter = { iter {} }}
 
 let main(): i32 = {

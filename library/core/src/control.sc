@@ -114,7 +114,7 @@ pub let match(
 pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
   (move iterable: iterable)
   (move body: (item): () with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)
-where iterable: core.iter.into_iterator(into_iter = iter),
+where iterable: core.iter.into_iterator(iter = iter),
   iter: core.iter.iterator(item = item) = {
   let mut iterator = iterable.into_iter()
   loop {

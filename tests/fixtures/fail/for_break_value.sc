@@ -19,7 +19,7 @@ extend once: iterator {
 }
 
 extend once: into_iterator {
-  let into_iter = once
+  let iter = once
   let into_iter(move self)(): once = { self }}
 
 let main(): i32 = {

@@ -446,8 +446,8 @@ impl Analyzer {
             return error_expr();
         };
         let success_variant = match info.kind {
-            StandardFallibleKind::Option => "Some",
-            StandardFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "some",
+            StandardFallibleKind::Result => "ok",
         };
         let mut success = source_success.clone();
         rewrite_handler_chain_wrappers(
@@ -455,8 +455,8 @@ impl Analyzer {
             &canonical,
             success_variant,
             match info.kind {
-                StandardFallibleKind::Option => "None",
-                StandardFallibleKind::Result => "Err",
+                StandardFallibleKind::Option => "none",
+                StandardFallibleKind::Result => "err",
             },
         );
         let mut residual = source_residual.clone();
@@ -465,8 +465,8 @@ impl Analyzer {
             &canonical,
             success_variant,
             match info.kind {
-                StandardFallibleKind::Option => "None",
-                StandardFallibleKind::Result => "Err",
+                StandardFallibleKind::Option => "none",
+                StandardFallibleKind::Result => "err",
             },
         );
         let mut arms = vec![MatchArm {
@@ -480,7 +480,7 @@ impl Analyzer {
         arms.push(match info.kind {
             StandardFallibleKind::Option => MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["None".to_owned()],
+                    path: vec!["none".to_owned()],
                     fields: PatternFields::Unit,
                 },
                 guard: None,
@@ -488,7 +488,7 @@ impl Analyzer {
             },
             StandardFallibleKind::Result => MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Err".to_owned()],
+                    path: vec!["err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(error.to_owned())]),
                 },
                 guard: None,
@@ -618,8 +618,8 @@ impl Analyzer {
             })
         };
         let success_variant = match info.kind {
-            StandardFallibleKind::Option => "Some",
-            StandardFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "some",
+            StandardFallibleKind::Result => "ok",
         };
         let mut arms = vec![MatchArm {
             pattern: Pattern::Constructor {
@@ -634,21 +634,21 @@ impl Analyzer {
         arms.push(match info.kind {
             StandardFallibleKind::Option => MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["None".to_owned()],
+                    path: vec!["none".to_owned()],
                     fields: PatternFields::Unit,
                 },
                 guard: None,
-                body: wrap("None", None),
+                body: wrap("none", None),
             },
             StandardFallibleKind::Result => MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Err".to_owned()],
+                    path: vec!["err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
                         ERROR_BINDING.to_owned(),
                     )]),
                 },
                 guard: None,
-                body: wrap("Err", Some(Expr::Name(ERROR_BINDING.to_owned()))),
+                body: wrap("err", Some(Expr::Name(ERROR_BINDING.to_owned()))),
             },
         });
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
