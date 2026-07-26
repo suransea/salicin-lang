@@ -2788,6 +2788,134 @@ let main(): i32 = { 0 }
 }
 
 #[test]
+fn ctfe_evaluates_concrete_struct_values_and_patterns() {
+    let llvm = compile_text(
+        r#"
+let point = struct {
+  x: usize,
+  y: usize,
+}
+
+let tagged(comptime value: type) = struct {
+  value: value,
+  tag: usize,
+}
+
+let make(seed: usize): tagged(point) = {
+  let result = tagged(point) { tag: 9,
+    value: point { y: seed + 1, x: seed },
+  }
+  result
+}
+
+let select(value: tagged(point)): usize = {
+  let projected: usize = value.value.x
+  match value
+    { tagged(value: point(x: left, y: right), tag: 9) ->
+        left + right - projected
+    }
+    { _ -> 0 }
+}
+
+let read(values: array(i32)(select(make(3)))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("concrete generic and non-generic structs should evaluate during ctfe");
+    assert!(llvm.contains("[4 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_rejects_structs_that_require_runtime_storage_or_destruction() {
+    let address_dependent = compile_unresolved_text(
+        r#"
+let address = struct { value: ptr(i32) }
+let invalid_length(): usize = {
+  let value: address = address { value: unsafe {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  } }
+  1
+}
+let read(values: array(i32)(invalid_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        address_dependent.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("depends on runtime storage or an address")),
+        "{address_dependent:?}"
+    );
+
+    let custom_drop = compile_text(
+        r#"
+let resource = struct { value: usize }
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {}
+}
+let invalid_length(): usize = {
+  let value: resource = resource { value: 1 }
+  value.value
+}
+let read(values: array(i32)(invalid_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        custom_drop.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("implements `droppable` and requires runtime destruction")
+        }),
+        "{custom_drop:?}"
+    );
+
+    let unsized_errors = compile_text(
+        r#"
+let slice = std.slice
+let view = struct { values: slice(i32) }
+let invalid_length(): usize = {
+  let value: view = view { values: loop {} }
+  1
+}
+let read(values: array(i32)(invalid_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        unsized_errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("depends on runtime storage or an address")),
+        "{unsized_errors:?}"
+    );
+
+    let allocating = compile_text(
+        r#"
+let box = std.boxed.box
+let owner = struct { value: box(usize) }
+let invalid_length(): usize = {
+  let value: owner = owner { value: box.new(1) }
+  1
+}
+let read(values: array(i32)(invalid_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        allocating.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("implements `droppable` and requires runtime destruction")
+        }),
+        "{allocating:?}"
+    );
+}
+
+#[test]
 fn ctfe_rejects_dynamic_array_indexes_out_of_bounds() {
     let errors = compile_unresolved_text(
         r#"

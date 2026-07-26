@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinaryOp, Expr, Function, PassMode, Pattern, StaticExpr, Stmt, Type, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expr, Function, PassMode, Pattern, PatternFields, StaticExpr, Stmt, Type, UnaryOp,
+};
 
 use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
 use super::hir::Ty;
+use super::lower::flatten_call;
 use super::Analyzer;
 
 const STATIC_EVALUATION_FUEL: usize = 1_024;
@@ -170,15 +173,15 @@ impl Analyzer {
                     function.name, parameter.name
                 ));
             }
-            let parameter_ty = Self::static_value_type(&parameter.ty).ok_or_else(|| {
+            let parameter_ty = self.static_value_type(&parameter.ty).ok_or_else(|| {
                 format!(
                     "ctfe parameter `{}.{}` has unsupported type `{}`",
                     function.name,
                     parameter.name,
-                    Self::source_type_name(&parameter.ty)
+                    self.source_type_name(&parameter.ty)
                 )
             })?;
-            Self::validate_static_value_type(&parameter_ty)?;
+            self.validate_static_value_type(&parameter_ty)?;
             if argument.ty != parameter_ty {
                 return Err(format!(
                     "ctfe argument for `{}.{}` has type `{}`, expected `{parameter_ty}`",
@@ -188,18 +191,18 @@ impl Analyzer {
         }
         let return_type = function.return_type.as_ref().ok_or_else(|| {
             format!(
-                "ctfe function `{}` must have an explicit scalar return type",
+                "ctfe function `{}` must have an explicit return type",
                 function.name
             )
         })?;
-        let result = Self::static_value_type(return_type).ok_or_else(|| {
+        let result = self.static_value_type(return_type).ok_or_else(|| {
             format!(
                 "ctfe function `{}` has unsupported result type `{}`",
                 function.name,
-                Self::source_type_name(return_type)
+                self.source_type_name(return_type)
             )
         })?;
-        Self::validate_static_value_type(&result)?;
+        self.validate_static_value_type(&result)?;
         Ok(result)
     }
 
@@ -260,7 +263,7 @@ impl Analyzer {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let ty = Ty::Tuple(values.iter().map(|value| value.ty.clone()).collect());
-                Self::validate_static_value_type(&ty)?;
+                self.validate_static_value_type(&ty)?;
                 CtfeValue {
                     ty,
                     kind: CtfeValueKind::Tuple(values),
@@ -298,7 +301,7 @@ impl Analyzer {
                         );
                     };
                     let ty = Ty::Array(Box::new(element_ty), 0);
-                    Self::validate_static_value_type(&ty)?;
+                    self.validate_static_value_type(&ty)?;
                     return Ok(CtfeValue {
                         ty,
                         kind: CtfeValueKind::Array(Vec::new()),
@@ -328,10 +331,86 @@ impl Analyzer {
                     values.push(value);
                 }
                 let ty = Ty::Array(Box::new(element_ty), values.len() as u64);
-                Self::validate_static_value_type(&ty)?;
+                self.validate_static_value_type(&ty)?;
                 CtfeValue {
                     ty,
                     kind: CtfeValueKind::Array(values),
+                }
+            }
+            Expr::StructLiteral {
+                constructor,
+                fields,
+            } => {
+                let name = self.static_struct_constructor_name(constructor, expected)?;
+                let ty = Ty::Struct(name.clone());
+                self.validate_static_value_type(&ty)?;
+                let layout = self
+                    .struct_layouts
+                    .get(&name)
+                    .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
+                if fields.len() != layout.fields.len() {
+                    return Err(format!(
+                        "ctfe struct `{}` field count mismatch: expected {}, found {}",
+                        layout.source_name,
+                        layout.fields.len(),
+                        fields.len()
+                    ));
+                }
+                let mut values = vec![None; layout.fields.len()];
+                for argument in fields {
+                    let label = argument.label.as_deref().ok_or_else(|| {
+                        format!(
+                            "ctfe struct `{}` fields must be labeled",
+                            layout.source_name
+                        )
+                    })?;
+                    let index = layout
+                        .fields
+                        .iter()
+                        .position(|field| field.name == label)
+                        .ok_or_else(|| {
+                            format!(
+                                "unknown field `{label}` in ctfe struct `{}`",
+                                layout.source_name
+                            )
+                        })?;
+                    if values[index].is_some() {
+                        return Err(format!(
+                            "duplicate field `{label}` in ctfe struct `{}`",
+                            layout.source_name
+                        ));
+                    }
+                    let value = self.evaluate_static_body(
+                        &argument.value,
+                        Some(&layout.fields[index].ty),
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?;
+                    values[index] = Some(Self::expect_static_type(
+                        value,
+                        &layout.fields[index].ty,
+                        &format!("ctfe struct field `{label}`"),
+                    )?);
+                }
+                let values = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        value.ok_or_else(|| {
+                            format!(
+                                "missing field `{}` in ctfe struct `{}`",
+                                layout.fields[index].name, layout.source_name
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                CtfeValue {
+                    ty,
+                    kind: CtfeValueKind::Struct {
+                        name,
+                        fields: values,
+                    },
                 }
             }
             Expr::Name(name) => locals
@@ -415,11 +494,11 @@ impl Analyzer {
                     .zip(&function.groups[0])
                     .map(|(argument, parameter)| {
                         let parameter_ty =
-                            Self::static_value_type(&parameter.ty).ok_or_else(|| {
+                            self.static_value_type(&parameter.ty).ok_or_else(|| {
                                 format!(
                                     "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
                                     parameter.name,
-                                    Self::source_type_name(&parameter.ty)
+                                    self.source_type_name(&parameter.ty)
                                 )
                             })?;
                         self.evaluate_static_body(
@@ -435,26 +514,50 @@ impl Analyzer {
             }
             Expr::Member(base, member) => {
                 let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
-                let Ty::Tuple(fields) = &base.ty else {
-                    return Err(format!(
-                        "ctfe projection `{member}` requires a tuple, found `{}`",
-                        base.ty
-                    ));
+                let (index, field_ty) = match &base.ty {
+                    Ty::Tuple(fields) => {
+                        let index = member.parse::<usize>().map_err(|_| {
+                            format!(
+                                "ctfe tuple projection requires a decimal index, found `{member}`"
+                            )
+                        })?;
+                        let field_ty = fields.get(index).ok_or_else(|| {
+                            format!(
+                                "ctfe tuple index {index} is out of bounds for tuple of length {}",
+                                fields.len()
+                            )
+                        })?;
+                        (index, field_ty)
+                    }
+                    Ty::Struct(name) => {
+                        let layout = self
+                            .struct_layouts
+                            .get(name)
+                            .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
+                        let index = layout
+                            .fields
+                            .iter()
+                            .position(|field| field.name == *member)
+                            .ok_or_else(|| {
+                                format!(
+                                    "unknown field `{member}` in ctfe struct `{}`",
+                                    layout.source_name
+                                )
+                            })?;
+                        (index, &layout.fields[index].ty)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "ctfe projection `{member}` requires a tuple or struct, found `{}`",
+                            base.ty
+                        ));
+                    }
                 };
-                let index = member.parse::<usize>().map_err(|_| {
-                    format!("ctfe tuple projection requires a decimal index, found `{member}`")
-                })?;
-                let field_ty = fields.get(index).ok_or_else(|| {
-                    format!(
-                        "ctfe tuple index {index} is out of bounds for tuple of length {}",
-                        fields.len()
-                    )
-                })?;
                 let value = base
                     .projection(index)
                     .cloned()
-                    .ok_or_else(|| "invalid ctfe tuple projection".to_owned())?;
-                Self::expect_static_type(value, field_ty, "ctfe tuple projection")?
+                    .ok_or_else(|| "invalid ctfe aggregate projection".to_owned())?;
+                Self::expect_static_type(value, field_ty, "ctfe aggregate projection")?
             }
             Expr::Index { base, index } => {
                 let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
@@ -486,17 +589,17 @@ impl Analyzer {
                                 .annotation
                                 .as_ref()
                                 .map(|annotation| {
-                                    Self::static_value_type(annotation).ok_or_else(|| {
+                                    self.static_value_type(annotation).ok_or_else(|| {
                                         format!(
                                             "ctfe local `{}` has unsupported type `{}`",
                                             binding.name,
-                                            Self::source_type_name(annotation)
+                                            self.source_type_name(annotation)
                                         )
                                     })
                                 })
                                 .transpose()?;
                             if let Some(annotation) = &annotation {
-                                Self::validate_static_value_type(annotation)?;
+                                self.validate_static_value_type(annotation)?;
                             }
                             let value = self.evaluate_static_body(
                                 &binding.value,
@@ -562,7 +665,7 @@ impl Analyzer {
                 let mut selected = None;
                 for arm in arms {
                     let mut arm_locals = locals.clone();
-                    if !Self::static_pattern_matches(&arm.pattern, &value, &mut arm_locals)? {
+                    if !self.static_pattern_matches(&arm.pattern, &value, &mut arm_locals)? {
                         continue;
                     }
                     if let Some(guard) = &arm.guard {
@@ -655,12 +758,17 @@ impl Analyzer {
                     .and_then(|element| self.static_expression_type_hint(element, locals))?;
                 Some(Ty::Array(Box::new(element), elements.len() as u64))
             }
-            Expr::Member(base, member) => {
-                let Ty::Tuple(fields) = self.static_expression_type_hint(base, locals)? else {
-                    return None;
-                };
-                fields.get(member.parse::<usize>().ok()?).cloned()
-            }
+            Expr::Member(base, member) => match self.static_expression_type_hint(base, locals)? {
+                Ty::Tuple(fields) => fields.get(member.parse::<usize>().ok()?).cloned(),
+                Ty::Struct(name) => self
+                    .struct_layouts
+                    .get(&name)?
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *member)
+                    .map(|field| field.ty.clone()),
+                _ => None,
+            },
             Expr::Index { base, .. } => {
                 let Ty::Array(element, _) = self.static_expression_type_hint(base, locals)? else {
                     return None;
@@ -693,8 +801,12 @@ impl Analyzer {
                 function
                     .return_type
                     .as_ref()
-                    .and_then(Self::static_value_type)
+                    .and_then(|source| self.static_value_type(source))
             }
+            Expr::StructLiteral { constructor, .. } => self
+                .static_struct_constructor_name(constructor, None)
+                .ok()
+                .map(Ty::Struct),
             Expr::Block(_, Some(tail)) => self.static_expression_type_hint(tail, locals),
             Expr::If {
                 then_branch,
@@ -712,6 +824,7 @@ impl Analyzer {
     }
 
     fn static_pattern_matches(
+        &self,
         pattern: &Pattern,
         value: &CtfeValue,
         locals: &mut HashMap<String, CtfeValue>,
@@ -735,7 +848,7 @@ impl Analyzer {
                     if fields.len() == values.len() && values.len() == types.len() =>
                 {
                     for (field, value) in fields.iter().zip(values) {
-                        if !Self::static_pattern_matches(field, value, locals)? {
+                        if !self.static_pattern_matches(field, value, locals)? {
                             return Ok(false);
                         }
                     }
@@ -751,8 +864,110 @@ impl Analyzer {
                 locals.insert(name.clone(), value.clone());
                 Ok(true)
             }
-            Pattern::Integer(_) | Pattern::Bool(_) | Pattern::Constructor { .. } => {
-                Err("pattern is outside the tuple-and-scalar ctfe subset".to_owned())
+            Pattern::Constructor { path, fields } => {
+                let (
+                    Ty::Struct(name),
+                    CtfeValueKind::Struct {
+                        name: value_name,
+                        fields: values,
+                    },
+                ) = (&value.ty, &value.kind)
+                else {
+                    return Err(format!(
+                        "struct pattern cannot match ctfe value of type `{}`",
+                        value.ty
+                    ));
+                };
+                if name != value_name {
+                    return Err("malformed ctfe struct value has inconsistent identity".to_owned());
+                }
+                let layout = self
+                    .struct_layouts
+                    .get(name)
+                    .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
+                let template_name = self
+                    .nominal_instances
+                    .get(name)
+                    .map(|instance| instance.key.template.as_str())
+                    .unwrap_or(name);
+                if path.last().is_none_or(|candidate| {
+                    candidate != name
+                        && candidate != &layout.source_name
+                        && candidate != template_name
+                }) {
+                    return Err(format!(
+                        "pattern type mismatch: expected struct `{}`, found `{}`",
+                        layout.source_name,
+                        path.join(".")
+                    ));
+                }
+                let patterns = match fields {
+                    PatternFields::Unit => {
+                        if !layout.fields.is_empty() {
+                            return Err(format!(
+                                "ctfe struct pattern `{}` requires {} fields",
+                                layout.source_name,
+                                layout.fields.len()
+                            ));
+                        }
+                        Vec::new()
+                    }
+                    PatternFields::Positional(patterns) => {
+                        if patterns.len() != layout.fields.len() {
+                            return Err(format!(
+                                "ctfe struct pattern `{}` requires {} fields, found {}",
+                                layout.source_name,
+                                layout.fields.len(),
+                                patterns.len()
+                            ));
+                        }
+                        patterns.iter().enumerate().collect::<Vec<_>>()
+                    }
+                    PatternFields::Named(patterns) => {
+                        if patterns.len() != layout.fields.len() {
+                            return Err(format!(
+                                "ctfe struct pattern `{}` requires {} fields, found {}",
+                                layout.source_name,
+                                layout.fields.len(),
+                                patterns.len()
+                            ));
+                        }
+                        let mut seen = HashSet::new();
+                        let mut ordered = Vec::with_capacity(patterns.len());
+                        for field in patterns {
+                            let index = layout
+                                .fields
+                                .iter()
+                                .position(|candidate| candidate.name == field.name)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "unknown field `{}` in ctfe struct pattern `{}`",
+                                        field.name, layout.source_name
+                                    )
+                                })?;
+                            if !seen.insert(index) {
+                                return Err(format!(
+                                    "duplicate field `{}` in ctfe struct pattern `{}`",
+                                    field.name, layout.source_name
+                                ));
+                            }
+                            ordered.push((index, &field.pattern));
+                        }
+                        ordered
+                    }
+                };
+                if values.len() != layout.fields.len() {
+                    return Err("malformed ctfe struct value has invalid field count".to_owned());
+                }
+                for (index, pattern) in patterns {
+                    if !self.static_pattern_matches(pattern, &values[index], locals)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Pattern::Integer(_) | Pattern::Bool(_) => {
+                Err("pattern type does not match the ctfe scrutinee".to_owned())
             }
         }
     }
@@ -798,8 +1013,20 @@ impl Analyzer {
                 _ => Err("invalid operand types in ctfe expression".to_owned()),
             };
         }
+        if left.ty == right.ty
+            && matches!(
+                &left.kind,
+                CtfeValueKind::Tuple(_) | CtfeValueKind::Array(_) | CtfeValueKind::Struct { .. }
+            )
+        {
+            return match operator {
+                BinaryOp::Eq => Ok(CtfeValue::bool(left == right)),
+                BinaryOp::Ne => Ok(CtfeValue::bool(left != right)),
+                _ => Err("invalid composite operator during ctfe".to_owned()),
+            };
+        }
         Err(format!(
-            "ctfe operator requires equal scalar types, found `{}` and `{}`",
+            "ctfe operator requires compatible value types, found `{}` and `{}`",
             left.ty, right.ty
         ))
     }
@@ -841,48 +1068,99 @@ impl Analyzer {
         }
     }
 
-    fn static_value_type(source: &Type) -> Option<Ty> {
-        Some(match source {
-            Type::I8 => Ty::I8,
-            Type::I16 => Ty::I16,
-            Type::I32 => Ty::I32,
-            Type::I64 => Ty::I64,
-            Type::I128 => Ty::I128,
-            Type::ISize => Ty::ISize,
-            Type::U8 => Ty::U8,
-            Type::U16 => Ty::U16,
-            Type::U32 => Ty::U32,
-            Type::U64 => Ty::U64,
-            Type::U128 => Ty::U128,
-            Type::USize => Ty::USize,
-            Type::Bool => Ty::Bool,
-            Type::Unit => Ty::Unit,
-            Type::Tuple(fields) => Ty::Tuple(
-                fields
-                    .iter()
-                    .map(Self::static_value_type)
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            Type::Array(element, length) => {
-                Ty::Array(Box::new(Self::static_value_type(element)?), *length)
+    fn static_struct_constructor_name(
+        &self,
+        constructor: &Expr,
+        expected: Option<&Ty>,
+    ) -> Result<String, String> {
+        let mut groups = Vec::new();
+        let root = flatten_call(constructor, &mut groups);
+        let Expr::Name(source_name) = root.unlocated() else {
+            return Err("ctfe struct literal requires a named constructor".to_owned());
+        };
+        if let Some(Ty::Struct(expected_name)) = expected {
+            let layout = self
+                .struct_layouts
+                .get(expected_name)
+                .ok_or_else(|| format!("unknown struct `{expected_name}` during ctfe"))?;
+            let template_name = self
+                .nominal_instances
+                .get(expected_name)
+                .map(|instance| instance.key.template.as_str())
+                .unwrap_or(expected_name);
+            if source_name != expected_name
+                && source_name != &layout.source_name
+                && source_name != template_name
+            {
+                return Err(format!(
+                    "ctfe struct constructor `{source_name}` does not construct `{}`",
+                    layout.source_name
+                ));
             }
-            Type::ArrayApplication {
-                element,
-                length: crate::ast::USizeConst::Literal(length),
-                ..
-            } => Ty::Array(Box::new(Self::static_value_type(element)?), *length),
-            _ => return None,
-        })
+            return Ok(expected_name.clone());
+        }
+        if let Some(expected) = expected {
+            return Err(format!(
+                "ctfe struct literal cannot be used where `{}` is expected",
+                expected
+            ));
+        }
+        if groups.is_empty() && self.struct_layouts.contains_key(source_name) {
+            return Ok(source_name.clone());
+        }
+        let template = self
+            .struct_templates
+            .get(source_name)
+            .ok_or_else(|| format!("unknown struct `{source_name}` during ctfe"))?;
+        if groups.len() != template.compile_groups.len()
+            || groups
+                .iter()
+                .zip(&template.compile_groups)
+                .any(|(arguments, parameters)| arguments.len() != parameters.len())
+        {
+            return Err(format!(
+                "ctfe struct constructor `{source_name}` has invalid compile-time arguments"
+            ));
+        }
+        let mut source_arguments = Vec::new();
+        for (arguments, parameters) in groups.iter().zip(&template.compile_groups) {
+            for (argument, parameter) in arguments.iter().zip(parameters) {
+                let source = self
+                    .probe_compile_argument_source(parameter, &argument.value, &HashMap::new())
+                    .ok_or_else(|| {
+                        format!(
+                            "ctfe struct constructor `{source_name}` has an unsupported compile-time argument"
+                        )
+                    })?;
+                source_arguments.push(source);
+            }
+        }
+        match self.probe_source_ty(&Type::Named(source_name.clone(), source_arguments)) {
+            Some(Ty::Struct(name)) if self.struct_layouts.contains_key(&name) => Ok(name),
+            _ => Err(format!(
+                "concrete struct `{source_name}` was not materialized before ctfe"
+            )),
+        }
     }
 
-    fn source_type_name(source: &Type) -> String {
-        Self::static_value_type(source)
+    fn static_value_type(&self, source: &Type) -> Option<Ty> {
+        self.probe_source_ty(source)
+    }
+
+    fn source_type_name(&self, source: &Type) -> String {
+        self.static_value_type(source)
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| format!("{source:?}"))
     }
 
-    fn validate_static_value_type(ty: &Ty) -> Result<(), String> {
-        fn visit(ty: &Ty, depth: usize, nodes: &mut usize) -> Result<(), String> {
+    fn validate_static_value_type(&self, ty: &Ty) -> Result<(), String> {
+        fn visit(
+            analyzer: &Analyzer,
+            ty: &Ty,
+            depth: usize,
+            nodes: &mut usize,
+            visiting: &mut HashSet<String>,
+        ) -> Result<(), String> {
             *nodes = nodes
                 .checked_add(1)
                 .ok_or_else(|| "ctfe value node count overflowed".to_owned())?;
@@ -904,7 +1182,7 @@ impl Analyzer {
                         ));
                     }
                     for field in fields {
-                        visit(field, depth + 1, nodes)?;
+                        visit(analyzer, field, depth + 1, nodes, visiting)?;
                     }
                 }
                 Ty::Array(element, length) => {
@@ -924,16 +1202,79 @@ impl Analyzer {
                         ));
                     }
                     for _ in 0..length {
-                        visit(element, depth + 1, nodes)?;
+                        visit(analyzer, element, depth + 1, nodes, visiting)?;
                     }
                 }
-                _ => {}
+                Ty::Struct(name) => {
+                    if depth >= MAX_CTFE_VALUE_NESTING {
+                        return Err(format!(
+                            "ctfe value exceeds the {MAX_CTFE_VALUE_NESTING}-level nesting limit"
+                        ));
+                    }
+                    if analyzer.type_has_custom_drop(ty) {
+                        return Err(format!(
+                            "ctfe value type `{ty}` implements `droppable` and requires runtime destruction"
+                        ));
+                    }
+                    if !visiting.insert(name.clone()) {
+                        return Err(format!(
+                            "ctfe value type `{ty}` has a recursive nominal layout"
+                        ));
+                    }
+                    let layout = analyzer
+                        .struct_layouts
+                        .get(name)
+                        .ok_or_else(|| format!("ctfe value references unknown struct `{name}`"))?;
+                    if layout.fields.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                        return Err(format!(
+                            "ctfe struct exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-field limit"
+                        ));
+                    }
+                    for field in &layout.fields {
+                        visit(analyzer, &field.ty, depth + 1, nodes, visiting)?;
+                    }
+                    visiting.remove(name);
+                }
+                Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::I128
+                | Ty::ISize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::U128
+                | Ty::USize
+                | Ty::Bool
+                | Ty::Unit => {}
+                Ty::Enum(_) => {
+                    return Err(format!(
+                        "ctfe enum value type `{ty}` is not supported until CTFE-6"
+                    ));
+                }
+                Ty::Pointer { .. }
+                | Ty::Reference { .. }
+                | Ty::Slice(_)
+                | Ty::Function(_)
+                | Ty::Callable(_)
+                | Ty::EffectRow { .. }
+                | Ty::Continuation { .. }
+                | Ty::EffectCallable { .. } => {
+                    return Err(format!(
+                        "ctfe value type `{ty}` depends on runtime storage or an address"
+                    ));
+                }
+                Ty::Never | Ty::Error => {
+                    return Err(format!("`{ty}` is not a materializable ctfe value type"));
+                }
             }
             Ok(())
         }
 
         let mut nodes = 0;
-        visit(ty, 0, &mut nodes)
+        visit(self, ty, 0, &mut nodes, &mut HashSet::new())
     }
 
     fn consume_static_fuel(fuel: &mut usize) -> Result<(), String> {
@@ -946,12 +1287,16 @@ impl Analyzer {
 
 #[cfg(test)]
 mod tests {
+    use crate::ast::Program;
+
     use super::{Analyzer, Ty, MAX_CTFE_AGGREGATE_ELEMENTS, MAX_CTFE_VALUE_NESTING};
 
     #[test]
     fn aggregate_type_limits_are_checked_before_ctfe_construction() {
+        let analyzer = Analyzer::new(&Program::new(Vec::new()));
         let oversized = Ty::Array(Box::new(Ty::U8), (MAX_CTFE_AGGREGATE_ELEMENTS as u64) + 1);
-        assert!(Analyzer::validate_static_value_type(&oversized)
+        assert!(analyzer
+            .validate_static_value_type(&oversized)
             .unwrap_err()
             .contains("element limit"));
 
@@ -959,7 +1304,8 @@ mod tests {
         for _ in 0..=MAX_CTFE_VALUE_NESTING {
             nested = Ty::Tuple(vec![nested]);
         }
-        assert!(Analyzer::validate_static_value_type(&nested)
+        assert!(analyzer
+            .validate_static_value_type(&nested)
             .unwrap_err()
             .contains("nesting limit"));
     }

@@ -210,8 +210,8 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        if matches!(scrutinee.ty, Ty::Tuple(_)) {
-            return self.lower_tuple_match_with_scrutinee(scrutinee, arms, expected, context);
+        if matches!(scrutinee.ty, Ty::Tuple(_) | Ty::Struct(_)) {
+            return self.lower_irrefutable_match_with_scrutinee(scrutinee, arms, expected, context);
         }
         let Ty::Enum(enum_name) = &scrutinee.ty else {
             self.error(format!(
@@ -430,17 +430,23 @@ impl Analyzer {
         }
     }
 
-    fn lower_tuple_match_with_scrutinee(
+    fn lower_irrefutable_match_with_scrutinee(
         &mut self,
         scrutinee: HirExpr,
         arms: &[MatchArm],
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Ty::Tuple(field_types) = &scrutinee.ty else {
-            unreachable!("tuple match requires tuple scrutinee")
+        let tuple_fields = match &scrutinee.ty {
+            Ty::Tuple(fields) => Some(fields.clone()),
+            Ty::Struct(_) => None,
+            _ => unreachable!("irrefutable aggregate match requires tuple or struct scrutinee"),
         };
-        let field_types = field_types.clone();
+        let aggregate_name = match &scrutinee.ty {
+            Ty::Tuple(_) => "tuple".to_owned(),
+            Ty::Struct(name) => format!("struct `{name}`"),
+            _ => unreachable!("checked aggregate match type"),
+        };
         let mut lowered_arms = Vec::new();
         let mut covered = false;
         let mut result_ty = None;
@@ -462,32 +468,46 @@ impl Analyzer {
                     &mut bindings,
                 ),
                 Pattern::Tuple(patterns) => {
-                    if patterns.len() != field_types.len() {
-                        self.error(format!(
-                            "tuple pattern length mismatch: expected {}, found {}",
-                            field_types.len(),
-                            patterns.len()
-                        ));
-                    }
-                    for (index, pattern) in patterns.iter().enumerate() {
-                        let Some(field_ty) = field_types.get(index) else {
-                            break;
-                        };
-                        self.lower_irrefutable_pattern(
-                            pattern,
-                            field_ty,
-                            vec![index],
-                            context,
-                            &mut bindings,
-                            &mut literal_conditions,
-                        );
+                    if let Some(field_types) = &tuple_fields {
+                        if patterns.len() != field_types.len() {
+                            self.error(format!(
+                                "tuple pattern length mismatch: expected {}, found {}",
+                                field_types.len(),
+                                patterns.len()
+                            ));
+                        }
+                        for (index, pattern) in patterns.iter().enumerate() {
+                            let Some(field_ty) = field_types.get(index) else {
+                                break;
+                            };
+                            self.lower_irrefutable_pattern(
+                                pattern,
+                                field_ty,
+                                vec![index],
+                                context,
+                                &mut bindings,
+                                &mut literal_conditions,
+                            );
+                        }
+                    } else {
+                        self.error(format!("tuple pattern cannot match {}", scrutinee.ty));
                     }
                 }
-                Pattern::Constructor { path, .. } => self.error(format!(
-                    "constructor pattern `{}` cannot match tuple type `{}`",
-                    path.join("."),
-                    scrutinee.ty
-                )),
+                Pattern::Constructor { path, .. } if tuple_fields.is_some() => {
+                    self.error(format!(
+                        "constructor pattern `{}` cannot match tuple type `{}`",
+                        path.join("."),
+                        scrutinee.ty
+                    ));
+                }
+                Pattern::Constructor { .. } => self.lower_irrefutable_pattern(
+                    &arm.pattern,
+                    &scrutinee.ty,
+                    Vec::new(),
+                    context,
+                    &mut bindings,
+                    &mut literal_conditions,
+                ),
                 Pattern::Integer(_) | Pattern::Bool(_) => self.error(format!(
                     "pattern type mismatch: literal pattern cannot match `{}`",
                     scrutinee.ty
@@ -545,7 +565,9 @@ impl Analyzer {
         }
         context.flow = FlowState::join(&exit_flows);
         if !covered {
-            self.error("match on tuple is not exhaustive; add an unguarded tuple, wildcard, or binding arm");
+            self.error(format!(
+                "match on {aggregate_name} is not exhaustive; add an unguarded aggregate, wildcard, or binding arm"
+            ));
         }
         HirExpr {
             ty: result_ty.unwrap_or(Ty::Error),

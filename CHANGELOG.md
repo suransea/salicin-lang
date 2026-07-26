@@ -29,6 +29,14 @@ subset.
   construction enforces deterministic 64-level nesting and 65,536-element or
   node limits. Fixed-array runtime brackets now also use `usize`, removing the
   former phase-specific `i32` index.
+- Added concrete generic and non-generic struct CTFE across labeled
+  construction, inferred and annotated locals, nested values, function
+  parameters and results, field projection, structural equality, and nested
+  destructuring. Fields evaluate in source order and normalize in declaration
+  order under canonical nominal identity. Recursive validation rejects
+  unsized, address-dependent, allocation-backed, recursive, and
+  custom-`droppable` storage before construction. Struct patterns now also
+  complete ordinary runtime `match` lowering and LLVM emission.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.

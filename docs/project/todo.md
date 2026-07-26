@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Nominal values
 
-- [ ] **CTFE-5 — Struct values.** Evaluate concrete generic and non-generic
-  struct construction, labeled fields, field access, nested structs,
-  destructuring, function arguments, and return values. Reject unsized,
-  address-dependent, allocating, or custom-`Drop` fields before evaluation.
-
 - [ ] **CTFE-6 — Enum values and matching.** Evaluate unit, tuple, and named
   enum variants; payload construction and binding; exhaustive `match`; guards;
   nested values; and standard `Option`/`Result` computations without exposing

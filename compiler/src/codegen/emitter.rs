@@ -3453,8 +3453,8 @@ impl<'a> FunctionEmitter<'a> {
         scrutinee: &HirExpr,
         arms: &[HirMatchArm],
     ) -> Result<Operand, Diagnostic> {
-        if matches!(scrutinee.ty, Ty::Tuple(_)) {
-            return self.emit_tuple_match(expression, scrutinee, arms);
+        if matches!(scrutinee.ty, Ty::Tuple(_) | Ty::Struct(_)) {
+            return self.emit_irrefutable_match(expression, scrutinee, arms);
         }
         let inspects_borrowed_storage = matches!(
             scrutinee.kind,
@@ -3608,7 +3608,7 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
-    fn emit_tuple_match(
+    fn emit_irrefutable_match(
         &mut self,
         expression: &HirExpr,
         scrutinee: &HirExpr,
@@ -3629,7 +3629,7 @@ impl<'a> FunctionEmitter<'a> {
         let mut match_drop_slot = None;
         if self.program.needs_drop(&scrutinee.ty) && !inspects_borrowed_storage {
             let ty = llvm_value_type(&scrutinee.ty)?;
-            let pointer = self.entry_alloca(&ty, "tuple match scrutinee");
+            let pointer = self.entry_alloca(&ty, "aggregate match scrutinee");
             self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
             self.register_drop_slot(None, scrutinee.ty.clone(), pointer)?;
             match_drop_slot = self.drop_slots.last().cloned();
@@ -3651,7 +3651,7 @@ impl<'a> FunctionEmitter<'a> {
             let candidate_cleanup_depth = self.drop_slots.len();
             if arm.guard.is_none() {
                 if let Some(root) = &match_drop_slot {
-                    self.prepare_tuple_pattern_ownership(root, &arm.bindings)?;
+                    self.prepare_irrefutable_pattern_ownership(root, &arm.bindings)?;
                 }
             }
             self.emit_pattern_bindings(&scrutinee, &arm.bindings, arm.guard.is_none())?;
@@ -3669,7 +3669,7 @@ impl<'a> FunctionEmitter<'a> {
                     ));
                     self.start_block(&body_label);
                     if let Some(root) = &match_drop_slot {
-                        self.prepare_tuple_pattern_ownership(root, &arm.bindings)?;
+                        self.prepare_irrefutable_pattern_ownership(root, &arm.bindings)?;
                     }
                     self.activate_pattern_binding_ownership(&arm.bindings)?;
                 }
@@ -3696,7 +3696,7 @@ impl<'a> FunctionEmitter<'a> {
             return Ok(Operand::unit());
         }
         if incoming.len() == 1 {
-            return Ok(incoming.pop().expect("one tuple match result").0);
+            return Ok(incoming.pop().expect("one aggregate match result").0);
         }
         let register = self.fresh_register();
         let incoming = incoming
@@ -3714,16 +3714,16 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
-    fn prepare_tuple_pattern_ownership(
+    fn prepare_irrefutable_pattern_ownership(
         &mut self,
         root: &RuntimeDropSlot,
         bindings: &[HirPatternBinding],
     ) -> Result<(), Diagnostic> {
-        let Ty::Tuple(_) = &root.ty else {
+        if !matches!(root.ty, Ty::Tuple(_) | Ty::Struct(_)) {
             return Err(Diagnostic::new(
-                "internal error: tuple ownership preparation has non-tuple root",
+                "internal error: aggregate ownership preparation has non-aggregate root",
             ));
-        };
+        }
         let mut updates = Vec::new();
         for binding in bindings {
             if !binding.moves {

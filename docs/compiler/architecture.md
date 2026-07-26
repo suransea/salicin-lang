@@ -95,9 +95,10 @@ The implementation lives under `compiler/src`:
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
-  - `static_eval.rs` evaluates scalar, tuple, and fixed-array values through ordinary pure source
-    functions before dependent types are lowered to runtime layouts, including aggregate limits,
-    projection, indexing, and nested tuple patterns.
+  - `static_eval.rs` evaluates scalar, tuple, fixed-array, and concrete struct values through
+    ordinary pure source functions before dependent types are lowered to runtime layouts,
+    including recursive resource exclusion, aggregate limits, projection, indexing, and nested
+    tuple or struct patterns.
   - `target.rs` defines the explicit native target width used by CTFE, literal validation,
     runtime guards, and LLVM scalar lowering instead of inheriting Rust host integer widths.
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,

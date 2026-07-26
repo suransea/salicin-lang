@@ -810,6 +810,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
 fn m1_struct_programs_run_with_expected_result() {
     let fixtures = [
         "struct_fields.sc",
+        "struct_match.sc",
         "struct_mutation.sc",
         "positional_constructor.sc",
     ];

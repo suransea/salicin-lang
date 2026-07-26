@@ -128,10 +128,21 @@ rejected before construction beyond 64 nesting levels, 65,536 elements in one
 aggregate, or 65,536 normalized nodes. Fixed-array bracket syntax now uses
 `usize` at runtime as well as during CTFE.
 
-Structs and enums are not yet admitted as intermediate values. Global
-constant evaluation supports scalar and aggregate literals but cannot yet
-call ordinary source functions. Extending the shared value through those
-evaluators is the active roadmap boundary.
+Concrete generic and non-generic structs are also CTFE values. Construction
+evaluates labeled fields once in source order and normalizes them in
+declaration order. Nested structs, immutable inferred or annotated locals,
+function parameters and results, field projection, structural equality, and
+nested labeled destructuring patterns retain canonical nominal identity.
+Struct patterns now travel through ordinary runtime `match` lowering and LLVM
+emission as well as through CTFE. Before construction, recursive type
+validation rejects slices and other unsized storage, pointers and borrows,
+allocation-backed or custom-`droppable` fields, callable/address-dependent
+values, recursive nominal layouts, and the existing aggregate budgets.
+
+Enums are not yet admitted as intermediate dependent-expression values.
+Global constant evaluation supports scalar and aggregate literals but cannot
+yet call ordinary source functions. Extending the shared evaluator to enums
+is the active roadmap boundary.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,
