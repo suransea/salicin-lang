@@ -1,5 +1,5 @@
-let Option = std.Option
+let option = std.option
 
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-let main(): i32 = { Option(Boxed).Some(Boxed { value: 42 })?.missing ?? 0 }
+let main(): i32 = { option(boxed).some(boxed { value: 42 })?.missing ?? 0 }

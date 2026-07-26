@@ -1,6 +1,6 @@
-let State(S: type) = effect {
-  let get(): S
+let state(comptime s: type) = effect {
+  let get(): s
 }
 
-let read(): i32 = { State(i32).get() }
+let read(): i32 = { state(i32).get() }
 let main(): i32 = { read() }

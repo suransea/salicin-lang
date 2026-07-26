@@ -34,7 +34,7 @@ The following foreign parameter and result mappings are accepted:
 Clang ABI, not portable ISO C source. Parameters of type `()` are rejected;
 an empty Salicin parameter group represents a C `(void)` parameter list.
 
-`bool` is not accepted. Correct C `_Bool` calls require target ABI extension
+`Bool` is not accepted. Correct C `_Bool` calls require target ABI extension
 attributes that the current foreign lowering does not yet model.
 
 ## Foreign Signatures
@@ -77,7 +77,7 @@ size, and alignment exactly as for the corresponding C declaration. Generic
 `struct(c)` instances are checked after compile-time substitution, so an
 invalid concrete field type is rejected at its instantiation.
 
-`bool`, Unit, Never, borrows, slices, tuples, enums, ordinary Salicin structs,
+`Bool`, Unit, Never, borrows, slices, tuples, enums, ordinary Salicin structs,
 callables, and zero-length arrays are not valid fields. Salicin does not
 provide packed C structs, unions, bit-fields, flexible arrays, explicit
 alignment overrides, or C enums.

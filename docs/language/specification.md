@@ -89,6 +89,11 @@ shadow an outer binding.
 Top-level `let` declarations introduce values, functions, types, type aliases, sorts, effects,
 traits, or modules according to their annotation and initializer.
 
+Built-in and nominal type names use `PascalCase`; trait names follow the same convention.
+Functions, values, modules, and ordinary sort names use `snake_case`. `usize` and `String`
+retain their type spelling in compile-parameter positions because the same names also classify
+compile-time size and metadata values; the parameter context selects their sort semantics.
+
 ```sc fragment
 let Scalar = i32
 let Point = struct { x: i32, y: i32 }
@@ -129,12 +134,12 @@ test("arithmetic") {
 `test` is contextual in this position. The form registers the body with the
 test target during compilation; it is not an ordinary runtime call and does
 not introduce a user binding. The form is authorized by the private edition
-contract `let test(name: string)(move body: (): bool): () = builtin()`; the string remains
+contract `let test(Name: String)(move body: (): Bool): () = builtin()`; the string remains
 compile-time runner metadata rather than a runtime argument. The name must be a non-empty
 string literal and is used in diagnostics. Registrations are private to their
 source package and cannot have visibility or attributes.
 
-The body is evaluated as a parameterless function returning `bool`. `true`
+The body is evaluated as a parameterless function returning `Bool`. `true`
 passes and `false` fails. Its effects must be discharged within the body under
 the ordinary effect rules. Test bodies are excluded from ordinary program and
 library builds. `salic test` collects registrations from the selected package,
@@ -170,9 +175,9 @@ compiler-owned abstract sorts use `: sort`, while user-defined finite sorts use
 `= sort { ... }`. User packages cannot introduce a new abstract sort.
 Finite members are named through their Sort, as in `optimization.release`.
 
-`type`, `region`, `effect`, `effects`, `parameters`, and metadata-only `string` are
+`type`, `region`, `effect`, `effects`, `parameters`, and metadata-only `String` are
 compiler-owned abstract compile-time sorts. `access` is the finite sort
-`sort { shared mut }`. `bool` remains an ordinary
+`sort { shared mut }`. `Bool` remains an ordinary
 closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
 or defined finite sort can be used the same way.
 
@@ -212,12 +217,12 @@ The same private root module declares the other syntax-owned contracts:
 
 ```sc fragment
 let foreign(ABI: abi): Never = builtin()
-let test(name: string)(move body: (): bool): () = builtin()
+let test(Name: String)(move body: (): Bool): () = builtin()
 ```
 
 `foreign(c, ...)` passes the finite `abi.c` value (using the contextual short spelling `c`) as
 statically validated metadata to its containing function declaration; `test("name") { ... }`
-passes a compile-time `string` and supplies a pure boolean runner body. Neither metadata payload
+passes a compile-time `String` and supplies a pure boolean runner body. Neither metadata payload
 is a runtime value.
 
 ## 4. Types and Compile-Time Parameters
@@ -232,7 +237,7 @@ u8 u16 u32 u64 u128 usize
 `isize` and `usize` have the target pointer width. Integer arithmetic is checked; overflow,
 division by zero, and invalid shifts trap rather than producing an unspecified value.
 
-`bool` is an ordinary closed enum with `false` and `true`. `()` is unit. `Never` is uninhabited.
+`Bool` is an ordinary closed enum with `false` and `true`. `()` is unit. `Never` is uninhabited.
 Arrays, borrows, raw pointers, tuples, function types, structs, and enums are type constructors.
 
 Compile-time parameters occur in their own parameter groups:
@@ -246,6 +251,7 @@ Supported compile-time parameter sorts include:
 
 - `T: type`;
 - `L: usize`;
+- `S: String` for compiler-owned UTF-8 metadata;
 - `R: region`;
 - `X: effect` for one nominal effect identity;
 - `E: effects`;
@@ -288,7 +294,7 @@ Alias expansion must terminate. Cyclic aliases and arity or sort mismatches are 
 Salicin does not require a second spelling such as `const fn` for compile-time functions. An
 ordinary function may be evaluated in a static context when its body is available, its effects are
 empty, and its inputs and result belong to the supported static subset. The initial subset contains
-`usize` and `bool` literals, immutable local bindings, checked operators, `if`, and calls to other
+`usize` and `Bool` literals, immutable local bindings, checked operators, `if`, and calls to other
 eligible top-level functions.
 
 ```sc fragment
@@ -492,7 +498,7 @@ let Timespec = struct(c) {
 It is not a general representation modifier. A C-representation struct must
 be non-empty, and each concrete field must be an integer, a raw pointer, a
 non-zero fixed array of another valid C field type, or another `struct(c)`.
-In particular, `bool`, borrows, tuples, enums, and ordinary Salicin structs
+In particular, `Bool`, borrows, tuples, enums, and ordinary Salicin structs
 are rejected because their layout is not part of this C data contract.
 Generic `struct(c)` constructors are validated after their compile-time
 arguments are instantiated. The target's ordinary non-packed C alignment and
@@ -600,7 +606,7 @@ A block evaluates statements in order. Its final expression is the block value. 
 semicolon turns the preceding expression into `()`.
 
 `if`, `match`, loops, and exits are expression forms supplied through validated control contracts.
-Conditions have type `bool`.
+Conditions have type `Bool`.
 
 ```sc fragment
 let absolute = if value < 0 {
@@ -614,12 +620,12 @@ The principal source contracts in `core.control` are:
 
 ```sc fragment
 pub let if(E: effects, T: type)
-  (condition: bool)
+  (condition: Bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E)
 
 pub let while(E: effects)
-  (move condition: (): bool with(E))
+  (move condition: (): Bool with(E))
   (move do: (): () with(E)): () with(E)
 ```
 
@@ -861,7 +867,7 @@ not spell an explicit effect row. The optional second argument is a validated
 ASCII linker symbol. When omitted, it defaults to the Salicin declaration
 name. The foreign subset accepts every signed, unsigned, pointer-sized, and
 128-bit integer plus raw pointers as parameters and results; `()` is accepted
-only as a result. It rejects `bool`, Unit parameters, arrays, aggregates,
+only as a result. It rejects `Bool`, Unit parameters, arrays, aggregates,
 borrows, slices, and callable values. A C array or `struct(c)` therefore
 crosses this function boundary behind `Ptr` rather than by value. The complete
 target mapping and cross-language evidence are specified by the

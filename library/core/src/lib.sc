@@ -2,16 +2,17 @@
 // the compiler. Semantic validation gives each use its declaration annotation.
 let builtin() = builtin()
 
-// Private syntax contracts. Their leading groups are erased metadata:
-// `c` is a member of the `abi` sort and test names inhabit the compiler-owned
-// `string` sort. The boolean action is the only runtime-shaped test argument.
-let foreign(ABI: abi): Never = builtin()
-let test(name: string)(move body: (): bool): () = builtin()
+// Public syntax contracts. Their leading groups are erased metadata.
+pub let abi = core.foreign.abi
+pub let foreign = core.foreign.foreign
+// Test names inhabit the compiler-owned `string` sort. The boolean action is
+// the only runtime-shaped test argument.
+pub let test(comptime name: string)(move body: (): bool): () = builtin()
 
-pub let Never = core.never.Never
-pub let Move = core.marker.Move
-pub let Copy = core.marker.Copy
-pub let Drop = core.marker.Drop
+pub let never = core.never.never
+pub let movable = core.marker.movable
+pub let copyable = core.marker.copyable
+pub let droppable = core.marker.droppable
 pub let bool = core.primitives.bool
 pub let i8 = core.primitives.i8
 pub let i16 = core.primitives.i16
@@ -25,10 +26,10 @@ pub let u32 = core.primitives.u32
 pub let u64 = core.primitives.u64
 pub let u128 = core.primitives.u128
 pub let usize = core.primitives.usize
-pub let Option = core.option.Option
-pub let Result = core.result.Result
-pub let Array = core.memory.Array
-pub let Slice = core.memory.Slice
-pub let Ptr = core.memory.Ptr
+pub let option = core.option.option
+pub let result = core.result.result
+pub let array = core.memory.array
+pub let slice = core.memory.slice
+pub let ptr = core.memory.ptr
 pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of

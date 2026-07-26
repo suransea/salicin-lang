@@ -38,9 +38,10 @@ uninterpreted classifier without elimination, equality, normalization, and ABI r
 an unsound extension point rather than useful abstraction.
 
 Syntax metadata uses the same static-language boundary. `abi = sort { c }` is finite, with
-decidable member equality; `string` is compiler-owned and currently introduced only by syntax
+decidable member equality; `String` is compiler-owned and currently introduced only by syntax
 positions such as test registration names. Both are erased before runtime lowering. A metadata
-string is the decoded UTF-8 literal payload and is never implicitly converted to the future
+The compile-time `String` value is the decoded UTF-8 literal payload and is never implicitly
+converted to the future
 runtime text representation.
 
 ### Dependent Information Is Staged and Controlled

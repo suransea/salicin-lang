@@ -1,20 +1,20 @@
-let Option = std.Option
+let option = std.option
 
-let Payload = struct {
+let payload = struct {
   value: i32,
 }
 
 let main(): i32 = {
   let offset = 1
-  let choose: (Option(Payload)): core.control.Attempt(Option(Payload))(i32) = {
-    Some(payload) if payload.value > 100 -> payload.value + offset
+  let choose: (option(payload)): core.control.attempt(option(payload))(i32) = {
+    some(payload) if payload.value > 100 -> payload.value + offset
   }
-  let attempted = choose(Option.Some(Payload { value: 42 }))
+  let attempted = choose(option.some(payload { value: 42 }))
   match attempted
-    { Hit(_) -> 0 }
-    { Miss(remaining) -> match remaining
-      { Some(payload) -> payload.value }
-      { None -> 0 }
+    { hit(_) -> 0 }
+    { miss(remaining) -> match remaining
+      { some(payload) -> payload.value }
+      { none -> 0 }
     }
 }
 

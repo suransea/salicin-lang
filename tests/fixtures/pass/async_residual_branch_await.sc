@@ -1,71 +1,71 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Step = struct {
-  drops: Ptr(mut)(i32),
+let step = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
   drop_amount: i32,
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + self.drop_amount
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let run(drops: Ptr(mut)(i32), first: bool): i32 = {
+let run(drops: ptr(mut)(i32), first: bool): i32 = {
   let mut future = async {
     if first {
-      await Step { drops: drops, polls: 0, value: Ask.ask(), drop_amount: 10 }
+      await step { drops: drops, polls: 0, value: ask.ask(), drop_amount: 10 }
     } else {
-      await Step { drops: drops, polls: 0, value: Ask.ask(), drop_amount: 1 }
+      await step { drops: drops, polls: 0, value: ask.ask(), drop_amount: 1 }
     }
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let cancel_second(drops: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (resume) -> resume(40) } action {
+let cancel_second(drops: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (resume) -> resume(40) } action {
       let mut future = async {
         if false {
-          await Step { drops: drops, polls: 0, value: Ask.ask(), drop_amount: 10 }
+          await step { drops: drops, polls: 0, value: ask.ask(), drop_amount: 10 }
         } else {
-          await Step { drops: drops, polls: 0, value: Ask.ask(), drop_amount: 1 }
+          await step { drops: drops, polls: 0, value: ask.ask(), drop_amount: 1 }
         }
       }
       match future.poll()
-        { Pending -> 42 }
-        { Ready(_) -> 0 }
+        { pending -> 42 }
+        { ready(_) -> 0 }
     }
 }
 

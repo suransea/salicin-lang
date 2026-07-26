@@ -1,14 +1,14 @@
-let Add = std.ops.Add
+let add_operator = std.ops.add_operator
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: Add(Number) {
-  let Output = Number
-  let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }
+extend number: add_operator(number) {
+  let output = number
+  let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }
 }
 
 let main(): i32 = {
-  let answer = Number { value: 19 } + Number { value: 23 }
+  let answer = number { value: 19 } + number { value: 23 }
   answer.value
 }
 

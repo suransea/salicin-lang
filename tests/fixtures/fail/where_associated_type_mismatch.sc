@@ -1,19 +1,19 @@
-let Produce = trait {
-  let Item: type
-  let produce(self: borrow(Self))(): Item
+let produce = trait {
+  let item: type
+  let produce(self: borrow(self))(): item
 }
 
-let Value = struct { value: i32 }
+let value = struct { value: i32 }
 
-extend Value: Produce {
-  let Item = i32
-  let produce(self: borrow(Self))(): i32 = { self.value }
+extend value: produce {
+  let item = i32
+  let produce(self: borrow(self))(): i32 = { self.value }
 }
 
-let require_bool(T: type)(value: borrow(T)): bool
-where T: Produce(Item = bool) = { value.produce() }
+let require_bool(comptime t: type)(value: borrow(t)): bool
+where t: produce(item = bool) = { value.produce() }
 
 let main(): i32 = {
-  let value = Value { value: 42 }
+  let value = value { value: 42 }
   if require_bool(value) { 42 } else { 0 }
 }

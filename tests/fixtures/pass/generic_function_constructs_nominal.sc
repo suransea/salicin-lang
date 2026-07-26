@@ -1,6 +1,6 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-let wrap(T: type)(move value: T): Cell(T) = { Cell(T) { value: value } }
+let wrap(comptime t: type)(move value: t): cell(t) = { cell(t) { value: value } }
 
 let main(): i32 = {
   let wrapped = wrap(i32)(42)

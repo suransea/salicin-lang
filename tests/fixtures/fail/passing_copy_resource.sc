@@ -1,8 +1,8 @@
-let Token = struct { value: i32 }
+let token = struct { value: i32 }
 
-let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }
+let identity(comptime m: (comptime p: parameters): parameters, comptime t: type)(m value: t): t = { value }
 
 let main(): i32 = {
-  let token = Token { value: 42 }
-  identity(copy, Token)(token).value
+  let token = token { value: 42 }
+  identity(copy, token)(token).value
 }

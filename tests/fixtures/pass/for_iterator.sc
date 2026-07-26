@@ -1,32 +1,32 @@
-let Option = std.Option
+let option = std.option
 
-let Iterator = std.iter.Iterator
-let IntoIterator = std.iter.IntoIterator
-let OwnedItem = std.iter.OwnedItem
+let iterator = std.iter.iterator
+let into_iterator = std.iter.into_iterator
+let owned_item = std.iter.owned_item
 
-let Counter = struct { current: i32, end: i32 }
+let counter = struct { current: i32, end: i32 }
 
-extend Counter: Iterator {
-  let Item = OwnedItem(i32)
+extend counter: iterator {
+  let item = owned_item(i32)
 
-  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
     if self.current < self.end {
       let value = self.current
       self.current = self.current + 1
-      Some(value)
+      some(value)
     } else {
-      None
+      none
     }
   }
 }
 
-extend Counter: IntoIterator {
-  let IntoIter = Counter
-  let into_iter(move self)(): Counter = { self }}
+extend counter: into_iterator {
+  let into_iter = counter
+  let into_iter(move self)(): counter = { self }}
 
 let main(): i32 = {
   let mut total = 21
-  for Counter { current: 0, end: 7 } { value ->
+  for counter { current: 0, end: 7 } { value ->
     total = total + value
   }
   total

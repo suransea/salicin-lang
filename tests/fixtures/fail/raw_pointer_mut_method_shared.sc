@@ -1,6 +1,6 @@
 let main(): i32 = {
   let value = 41
-  let pointer = Ptr(borrow(value))
+  let pointer = ptr(borrow(value))
   unsafe {
     pointer.take()
   }

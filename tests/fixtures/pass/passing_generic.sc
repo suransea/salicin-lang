@@ -1,24 +1,24 @@
-let Token = struct { value: i32 }
-let Holder(T: type) = struct { value: T }
+let token = struct { value: i32 }
+let holder(comptime t: type) = struct { value: t }
 
-extend(T: type) Holder(T) {
-  let into(M: (P: parameters): parameters)(M self)(): T = { self.value }
+extend(comptime t: type) holder(t) {
+  let into(comptime m: (comptime p: parameters): parameters)(m self)(): t = { self.value }
 }
 
-let apply(M: (P: parameters): parameters, T: type)(M value: T): T = { value }
-let modifier_identity(M: (P: parameters): parameters) = M
-let forward(M: (P: parameters): parameters, T: type)(M value: T): T = {
-  apply(modifier_identity(M), T)(value)
+let apply(comptime m: (comptime p: parameters): parameters, comptime t: type)(m value: t): t = { value }
+let modifier_identity(comptime m: (comptime p: parameters): parameters) = m
+let forward(comptime m: (comptime p: parameters): parameters, comptime t: type)(m value: t): t = {
+  apply(modifier_identity(m), t)(value)
 }
 
 let main(): i32 = {
   let number = 20
   let copied = forward(copy, i32)(number)
-  let moved_number = apply(M: move, T: i32)(2)
-  let token = Token { value: 20 }
-  let moved = forward(move, Token)(token)
-  let explicit = apply(move, Token)(Token { value: 0 })
-  let from_method = Holder { value: 0 }.into(move)()
+  let moved_number = apply(comptime m: move, comptime t: i32)(2)
+  let token = token { value: 20 }
+  let moved = forward(move, token)(token)
+  let explicit = apply(move, token)(token { value: 0 })
+  let from_method = holder { value: 0 }.into(move)()
   copied + moved_number + moved.value + explicit.value + from_method
 }
 

@@ -1188,7 +1188,7 @@ impl Analyzer {
     fn standard_throw_effect_source(&self, error_source: Type) -> Option<Type> {
         let throw_name = self.lang_item_name(LangItemKind::Throw);
         let mut function = self.function_templates.get(throw_name)?.clone();
-        let substitutions = HashMap::from([("Error".to_owned(), error_source)]);
+        let substitutions = HashMap::from([("error".to_owned(), error_source)]);
         substitute_function_types(&mut function, &substitutions);
         if !function.effects.parameters.is_empty()
             || function.effects.unsafe_effect

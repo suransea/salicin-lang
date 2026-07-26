@@ -1,53 +1,53 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Resource = struct {
-  drops: Ptr(mut)(i32),
+let resource = struct {
+  drops: ptr(mut)(i32),
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let Step = struct {
+let step = struct {
   polls: i32,
   value: i32,
-  resource: Resource,
+  resource: resource,
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let request(): i32 with(Ask) = {
-  Ask.ask()
+let request(): i32 with(ask) = {
+  ask.ask()
 }
 
-let make_step(drops: Ptr(mut)(i32)): Step with(Ask) = {
-  Step { polls: 0, value: request(), resource: Resource { drops: drops } }
+let make_step(drops: ptr(mut)(i32)): step with(ask) = {
+  step { polls: 0, value: request(), resource: resource { drops: drops } }
 }
 
-let run(drops: Ptr(mut)(i32)): i32 = {
-  Ask.handle
+let run(drops: ptr(mut)(i32)): i32 = {
+  ask.handle
     ask { (resume) -> resume(40) }
     action {
       let mut future = async {
@@ -56,15 +56,15 @@ let run(drops: Ptr(mut)(i32)): i32 = {
       let first = future.poll()
       let second = future.poll()
       match first
-        { Pending -> match second
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let cancel(drops: Ptr(mut)(i32)): () = {
-  Ask.handle
+let cancel(drops: ptr(mut)(i32)): () = {
+  ask.handle
     ask { (resume) -> resume(2) }
     action {
       let mut cancelled = async {
@@ -72,8 +72,8 @@ let cancel(drops: Ptr(mut)(i32)): () = {
       }
       let pending = cancelled.poll()
       match pending
-        { Pending -> () }
-        { Ready(_) -> () }
+        { pending -> () }
+        { ready(_) -> () }
     }
 }
 

@@ -1,14 +1,14 @@
-let Step = effect {
+let step = effect {
   let next(value: i32): i32
 }
 
-let combine(left: i32, right: i32): i32 with(Step) = {
+let combine(left: i32, right: i32): i32 with(step) = {
   left - right + 46
 }
 
 let main(): i32 = {
-  Step.handle next { (value, resume) -> resume(value) } action {
-      combine(Step.next(19), Step.next(23))
+  step.handle next { (value, resume) -> resume(value) } action {
+      combine(step.next(19), step.next(23))
     }
 }
 

@@ -1,12 +1,12 @@
-let Option = std.Option
+let option = std.option
 
-let next(): Option(i32) = { None }
+let next(): option(i32) = { none }
 
 let main(): i32 = {
   loop {
     match next()
-      { Some(value) -> value }
-      { None -> break() }
+      { some(value) -> value }
+      { none -> break() }
   }
   value
 }

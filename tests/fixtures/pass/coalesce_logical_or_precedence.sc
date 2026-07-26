@@ -1,7 +1,7 @@
-let Option = std.Option
+let option = std.option
 
 let main(): i32 = {
-  let present = Option(bool).Some(false)
+  let present = option(bool).some(false)
   if present ?? false || true { 0 } else { 42 }
 }
 

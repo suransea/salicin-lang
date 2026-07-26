@@ -1,13 +1,13 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
 let main(): i32 = {
-  Ask.handle value { (resume) -> resume(10) } action {
+  ask.handle value { (resume) -> resume(10) } action {
       let mut total = 0
-      let mut action: (i32): i32 with(Ask) = { (value: i32) ->
+      let mut action: (i32): i32 with(ask) = { (value: i32) ->
         total = total + value
-        Ask.value() + total
+        ask.value() + total
       }
       let first = action(1)
       let second = action(2)

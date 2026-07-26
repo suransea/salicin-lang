@@ -1,9 +1,9 @@
-let Option = std.Option
-let Result = std.Result
+let option = std.option
+let result = std.result
 
 let main(): i32 = {
-  let option = Option.Some(20)
-  let result = Result(E: bool).Ok(22)
+  let option = option.some(20)
+  let result = result(comptime e: bool).ok(22)
   option!! + result!!
 }
 

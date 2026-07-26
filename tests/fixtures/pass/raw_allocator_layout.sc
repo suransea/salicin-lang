@@ -1,19 +1,19 @@
-let Payload = struct { left: i32, right: i32 }
+let payload = struct { left: i32, right: i32 }
 
-extend Payload: Copy {}
+extend payload: copyable {}
 
 let main(): i32 = {
   let pointer = unsafe {
-    raw_alloc(Payload)(size_of(Payload), align_of(Payload))
+    raw_alloc(payload)(size_of(payload), align_of(payload))
   }
   unsafe {
-    *pointer = Payload { left: 40, right: 2 }
+    *pointer = payload { left: 40, right: 2 }
   }
   let payload = unsafe {
     *pointer
   }
   unsafe {
-    raw_dealloc(pointer, size_of(Payload), align_of(Payload))
+    raw_dealloc(pointer, size_of(payload), align_of(payload))
   }
   payload.left + payload.right
 }

@@ -1,11 +1,11 @@
-let Check = trait {
-  let check(self: borrow(Self))(): i32
+let check = trait {
+  let check(self: borrow(self))(): i32
 }
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: Check {
-  let check(self: borrow(Self))(): bool = { true }
+extend number: check {
+  let check(self: borrow(self))(): bool = { true }
 }
 
 let main(): i32 = { 0 }

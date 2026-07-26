@@ -1,12 +1,12 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let take(move self)(): T = { self.value }
+extend(comptime t: type) cell(t) {
+  let take(move self)(): t = { self.value }
 }
 
-let consume(T: type)(move cell: Cell(T)): T = { cell.take() }
+let consume(comptime t: type)(move cell: cell(t)): t = { cell.take() }
 
-let main(): i32 = { consume(cell: Cell { value: 42 }) }
+let main(): i32 = { consume(cell: cell { value: 42 }) }
 
 test("generic_inherent_from_generic_function.sc") {
   main() == 42

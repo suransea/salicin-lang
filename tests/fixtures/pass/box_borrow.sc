@@ -1,13 +1,13 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend resource {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
 let main(): i32 = {
-  let mut boxed = Box.new(Resource { value: 10 })
+  let mut boxed = box.new(resource { value: 10 })
   let first = do {
     let reference = boxed.as_ref()
     reference.read()

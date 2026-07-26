@@ -397,7 +397,7 @@ fn inference_conflicts_do_not_materialize_instances() {
     let program = crate::parser::parse(
         "let identity(T: type)(move value: T): T = { value }\n\
          let Cell(T: type) = struct { value: T }\n\
-         let main(): bool = { identity(Cell(i32) { value: 42 }) }\n",
+         let main(): Bool = { identity(Cell(i32) { value: 42 }) }\n",
     )
     .expect("conflicting inference source must parse");
     let mut analyzer = Analyzer::new(&program);
@@ -697,7 +697,7 @@ fn lowers_generic_enum_type_heads_unit_variants_and_short_patterns() {
            Some(T),\n\
            None,\n\
          }\n\
-         let choose(flag: bool): Maybe(i32) = { if flag {\n\
+         let choose(flag: Bool): Maybe(i32) = { if flag {\n\
            Maybe(i32).Some(42)\n\
          } else {\n\
            Maybe(i32).None\n\
@@ -772,12 +772,12 @@ fn registers_source_backed_core_lang_items() {
     let option = &analyzer.enum_templates["core::option::Option"];
     assert_eq!(option.compile_groups.len(), 1);
     assert_eq!(option.compile_groups[0].len(), 1);
-    assert_eq!(option.compile_groups[0][0].name, "T");
+    assert_eq!(option.compile_groups[0][0].name, "t");
     assert_eq!(option.variants.len(), 2);
     assert_eq!(option.variants[0].name, "Some");
     assert_eq!(
         option.variants[0].fields,
-        VariantFields::Positional(vec![Type::Named("T".into(), Vec::new())])
+        VariantFields::Positional(vec![Type::Named("t".into(), Vec::new())])
     );
     assert_eq!(option.variants[1].name, "None");
     assert_eq!(option.variants[1].fields, VariantFields::Unit);
@@ -785,9 +785,9 @@ fn registers_source_backed_core_lang_items() {
     let result = &analyzer.enum_templates["core::result::Result"];
     assert_eq!(result.compile_groups.len(), 2);
     assert_eq!(result.compile_groups[0].len(), 1);
-    assert_eq!(result.compile_groups[0][0].name, "E");
+    assert_eq!(result.compile_groups[0][0].name, "e");
     assert_eq!(result.compile_groups[1].len(), 1);
-    assert_eq!(result.compile_groups[1][0].name, "T");
+    assert_eq!(result.compile_groups[1][0].name, "t");
     assert_eq!(
         result
             .compile_groups
@@ -795,7 +795,7 @@ fn registers_source_backed_core_lang_items() {
             .flatten()
             .map(|parameter| parameter.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["E", "T"]
+        vec!["e", "t"]
     );
     assert_eq!(result.variants.len(), 2);
     assert_eq!(result.variants[0].name, "Ok");
@@ -833,7 +833,7 @@ fn registers_source_backed_core_lang_items() {
     assert_eq!(
         throw.compile_groups,
         vec![vec![CompileParam {
-            name: "Error".to_owned(),
+            name: "error".to_owned(),
             kind: Sort::Type,
             default: None,
         }]]
@@ -848,7 +848,7 @@ fn registers_source_backed_core_lang_items() {
             analyzer
                 .lang_item_name(LangItemKind::ThrowsEffect)
                 .to_owned(),
-            vec![Type::Named("Error".to_owned(), Vec::new())],
+            vec![Type::Named("error".to_owned(), Vec::new())],
         )]
     );
     let unsafe_name = analyzer.lang_item_name(LangItemKind::Unsafe);
@@ -893,8 +893,8 @@ fn registers_source_backed_core_lang_items() {
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
-            if access.name == "A" && access.kind.is_access()
-                && ty.name == "T" && ty.kind == Sort::Type)
+            if access.name == "a" && access.kind.is_access()
+                && ty.name == "t" && ty.kind == Sort::Type)
     ));
     assert!(analyzer.function_templates.contains_key(&vec("vec_new")));
     assert!(analyzer
@@ -907,8 +907,8 @@ fn registers_source_backed_core_lang_items() {
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
-            if access.name == "A" && access.kind.is_access()
-                && ty.name == "T" && ty.kind == Sort::Type)
+            if access.name == "a" && access.kind.is_access()
+                && ty.name == "t" && ty.kind == Sort::Type)
     ));
     for name in [
         "vec_reserve",
@@ -961,15 +961,15 @@ let unwrap_option(move value: Option(i32)): i32 = { value match {
   Some(item) => item,
   None => 0,
 } }
-let unwrap_result(move value: Result(bool)(i32)): i32 = { value match {
+let unwrap_result(move value: Result(Bool)(i32)): i32 = { value match {
   Ok(item) => item,
   Err(_) => 0,
 } }
 let main(): i32 = {
   let some = Option.Some(19)
   let none: Option(i32) = Option.None
-  let ok: Result(bool)(i32) = Result.Ok(23)
-  let err: Result(bool)(i32) = Result.Err(false)
+  let ok: Result(Bool)(i32) = Result.Ok(23)
+  let err: Result(Bool)(i32) = Result.Err(false)
   unwrap_option(some) + unwrap_option(none) + unwrap_result(ok) + unwrap_result(err)
 }
 "#,
@@ -995,9 +995,9 @@ fn empty_enums_are_uninhabited_and_never_supports_empty_match() {
         r#"
 let Empty = enum {}
 let from_never(move value: Never): i32 = { value match {} }
-let from_empty(move value: Empty): bool = { value match {} }
+let from_empty(move value: Empty): Bool = { value match {} }
 let stop(): Never = { loop {} }
-let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
+let choose(flag: Bool): i32 = { if flag { 42 } else { stop() } }
 "#,
     )
     .expect("empty enums and empty matches must compile");
@@ -1026,7 +1026,7 @@ let fallback(count: borrow(mut)(i32)): i32 = {
 let main(): i32 = {
   let mut count = 0
   let option = make(count) ?? fallback(count)
-  let result = Result(bool)(i32).Err(false) ?? option
+  let result = Result(Bool)(i32).Err(false) ?? option
   if count == 11 { result } else { 0 }
 }
 "#,
@@ -1052,12 +1052,12 @@ fn throw_returns_the_enclosing_throws_error_variant() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let answer(fail: bool): i32 with(Throws(bool)) = {
+let answer(fail: Bool): i32 with(Throws(Bool)) = {
   if fail { throw(true) }
   42
 }
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { answer(true) }
+  let result: Result(Bool)(i32) = try { answer(true) }
   result ?? 42
 }
 "#,
@@ -1074,15 +1074,15 @@ fn throws_calls_propagate_automatically_and_try_handles_them() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let read(fail: bool): i32 with(Throws(bool)) = {
+let read(fail: Bool): i32 with(Throws(Bool)) = {
   if fail { throw(true) }
   40
 }
-let forward(fail: bool): i32 with(Throws(bool)) = { read(fail) + 2 }
-let invoke(action: (bool): i32 with(Throws(bool)))(fail: bool): i32 with(Throws(bool)) = {
+let forward(fail: Bool): i32 with(Throws(Bool)) = { read(fail) + 2 }
+let invoke(action: (Bool): i32 with(Throws(Bool)))(fail: Bool): i32 with(Throws(Bool)) = {
   action(fail) }
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { invoke(forward)(false) }
+  let result: Result(Bool)(i32) = try { invoke(forward)(false) }
   result match {
 Ok(value) => value,
 Err(_) => 0
@@ -1098,7 +1098,7 @@ Err(_) => 0
 let Result = std.Result
 let Throws = std.error.Throws
 
-let read(): i32 with(Throws(bool)) = { throw(true) }
+let read(): i32 with(Throws(Bool)) = { throw(true) }
 let main(): i32 = { read() }
 "#,
     )
@@ -1115,7 +1115,7 @@ fn try_infers_a_unique_escaping_throws_source_without_context() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
+let fail(flag: Bool): i32 with(Throws(Bool)) = { if flag { throw(true) } else { 41 } }
 let main(): i32 = {
   let action = fail
   let direct = try { fail(false) }
@@ -1135,11 +1135,11 @@ let Throws = std.error.Throws
 let Failure = struct { code: i32 }
 extend Failure: Copy {}
 extend Failure {
-  let raise(self: borrow(Self))(): i32 with(Throws(bool)) = { throw(true) }
+  let raise(self: borrow(Self))(): i32 with(Throws(Bool)) = { throw(true) }
 }
 let main(): i32 = {
   let failure = Failure { code: 1 }
-  let result: Result(bool)(i32) = try { failure.raise() }
+  let result: Result(Bool)(i32) = try { failure.raise() }
   result ?? 42
 }
 "#,
@@ -1151,7 +1151,7 @@ let main(): i32 = {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let left(): i32 with(Throws(bool)) = { throw(true) }
+let left(): i32 with(Throws(Bool)) = { throw(true) }
 let right(): i32 with(Throws(i64)) = { throw(1) }
 let main(): i32 = {
   let result = try { if true { left() } else { right() } }
@@ -1164,7 +1164,7 @@ let main(): i32 = {
         ambiguous.iter().any(|error| {
             error
                 .message
-                .contains("multiple escaping error types: `bool`, `i64`")
+                .contains("multiple escaping error types: `Bool`, `i64`")
         }),
         "{ambiguous:?}"
     );
@@ -1174,7 +1174,7 @@ let main(): i32 = {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let fail(): i32 with(Throws(bool)) = { throw(true) }
+let fail(): i32 with(Throws(Bool)) = { throw(true) }
 let main(): i32 = {
   let inner = try { fail() }
   let outer = try { inner }
@@ -1218,7 +1218,7 @@ let main(): i32 = { choose(42) }
     let duplicate = compile_unresolved_text(
         r#"
 let choose(value: i32): i32 = { value }
-let choose(value: bool): i32 = { 0 }
+let choose(value: Bool): i32 = { 0 }
 let main(): i32 = { choose(value: 42) }
 "#,
     )
@@ -1254,7 +1254,7 @@ let main(): i32 = {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let choose(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
+let choose(fail: Bool): i32 with(Throws(Bool)) = { if fail { throw(true) } else { 42 } }
 let choose(value: i32): i32 = { value }
 let main(): i32 = {
   let result = try { choose(fail: false) }
@@ -1330,14 +1330,14 @@ let Throws = std.error.Throws
 let Counter = struct { value: i32 }
 extend Counter: Copy {}
 extend Counter {
-  let read(self: borrow(Self))(fail: bool): i32 with(Throws(bool)) = {
+  let read(self: borrow(Self))(fail: Bool): i32 with(Throws(Bool)) = {
 if fail { throw(true) } else { self.value }
   }
   let read(self: borrow(Self))(fallback: i32): i32 = { fallback }
 }
 let main(): i32 = {
   let counter = Counter { value: 42 }
-  let result: Result(bool)(i32) = try { counter.read(fail: false) }
+  let result: Result(Bool)(i32) = try { counter.read(fail: false) }
   result ?? 0
 }
 "#,
@@ -1473,7 +1473,7 @@ let main(): i32 = { Counter { value: 20 }.pick(right: 21) }
         r#"
 let Select = trait {
   let pick(self: borrow(Self))(value: i32): i32
-  let pick(self: borrow(Self))(value: bool): i32
+  let pick(self: borrow(Self))(value: Bool): i32
 }
 let main(): i32 = { 0 }
 "#,
@@ -1492,12 +1492,12 @@ let Result = std.Result
 let Throws = std.error.Throws
 
 let invoke(E: effects)(action: (): i32 with(E))(): i32 with(E) = { action() }
-let fail(): i32 with(Throws(bool)) = { throw(true) }
-let forward(): i32 with(Throws(bool)) = { invoke(fail)() }
-let explicit(): i32 with(Throws(bool)) = { invoke(Throws(bool))(fail)() }
+let fail(): i32 with(Throws(Bool)) = { throw(true) }
+let forward(): i32 with(Throws(Bool)) = { invoke(fail)() }
+let explicit(): i32 with(Throws(Bool)) = { invoke(Throws(Bool))(fail)() }
 let main(): i32 = {
-  let inferred: Result(bool)(i32) = try { forward() }
-  let selected: Result(bool)(i32) = try { explicit() }
+  let inferred: Result(Bool)(i32) = try { forward() }
+  let selected: Result(Bool)(i32) = try { explicit() }
   (inferred ?? 21) + (selected ?? 21)
 }
 "#,
@@ -1510,7 +1510,7 @@ let main(): i32 = {
 fn throw_requires_an_exact_active_throws_boundary() {
     for (source, expected) in [
         (
-            "let fail(): i32 with(Throws(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
+            "let fail(): i32 with(Throws(Bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
             "requires `Throws(i32)`",
         ),
         (
@@ -1814,7 +1814,7 @@ let main(): i32 = { 0 }
     assert!(errors.iter().any(|error| {
         error.message.contains("Choose.choose")
             && error.message.contains("redeclares")
-            && error.message.contains("Item")
+            && error.message.contains("item")
     }));
 }
 
@@ -2055,7 +2055,7 @@ let main(): i32 = {
         .get(&key)
         .expect("Maybe(Boxed) must implement Chain");
     assert_eq!(
-        implementation.associated_type_sources["Rebind"],
+        implementation.associated_type_sources["rebind"],
         Type::Named("Maybe".into(), Vec::new())
     );
     let lowered = analyzer.analyze();
@@ -2088,7 +2088,7 @@ let main(): i32 = { 0 }
 "#,
     );
     let analyzer = Analyzer::new(&program);
-    let parameters = &analyzer.traits["Lend"].associated_type_parameters["Item"];
+    let parameters = &analyzer.traits["Lend"].associated_type_parameters["item"];
     assert_eq!(parameters.len(), 2);
     assert_eq!(parameters[0].kind, Sort::Named("access".into()));
     assert_eq!(parameters[1].kind, Sort::Region);
@@ -2213,7 +2213,7 @@ let main(): i32 = {
         .get(&key)
         .expect("generic Maybe(Boxed) instance must implement Chain");
     assert_eq!(
-        implementation.associated_type_sources["Rebind"],
+        implementation.associated_type_sources["rebind"],
         Type::Named("Maybe".into(), Vec::new())
     );
     let instance = analyzer
@@ -2259,9 +2259,9 @@ let Result = std.Result
 
 let main(): i32 = {
   let inferred_option = Option.None ?? 40
-  let inferred_result = Result(E: bool).Err(false) ?? 2
+  let inferred_result = Result(E: Bool).Err(false) ?? 2
   let option = Option.None ?? 40
-  let result = Result(E: bool).Err(false) ?? 1
+  let result = Result(E: Bool).Err(false) ?? 1
   let fully_inferred_result = Result.Err(false) ?? 1
   let wide = Result(T: i64).Err(false) ?? 42
   let nested = Option(i32).None ?? Option.None ?? 1
@@ -2293,9 +2293,10 @@ fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
     assert!(non_container.iter().any(|diagnostic| diagnostic.message
         == "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `i32`"));
 
-    let mismatch =
-        compile_resolved_text("use std.Option\nlet main(): i32 = { Option(i32).None ?? true }\n")
-            .unwrap_err();
+    let mismatch = compile_resolved_text(
+        "use std.Option\nlet main(): i32 = { Option(i32).None ?? true }\n",
+    )
+    .unwrap_err();
     assert!(mismatch
         .iter()
         .any(|diagnostic| diagnostic.message.contains("type mismatch")));
@@ -2305,7 +2306,7 @@ fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
 let Result = std.Result
 
 let main(): i32 = {
-  let value = Result(bool)(i32).Ok(42)
+  let value = Result(Bool)(i32).Ok(42)
   let answer = value ?? 0
   value match { Ok(item) => item, Err(_) => answer }
 }
@@ -2349,8 +2350,8 @@ let Result = std.Result
 let main(): i32 = {
   let number = Option.Some(42)
   let flag = Option.Some(true)
-  let first: Result(bool)(i32) = Result.Ok(42)
-  let second: Result(i32)(bool) = Result.Err(0)
+  let first: Result(Bool)(i32) = Result.Ok(42)
+  let second: Result(i32)(Bool) = Result.Err(0)
   let value = number match { Some(item) => item, None => 0 }
   let enabled = flag match { Some(item) => item, None => false }
   let left = first match { Ok(item) => item, Err(_) => 0 }
@@ -2404,11 +2405,11 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
     for (source, name) in [
         (
             "let Option = struct { value: i32 }\nlet main(): i32 = { 42 }\n",
-            "Option",
+            "option",
         ),
         (
             "let Result(T: type) = enum { Value(value: T) }\nlet main(): i32 = { 42 }\n",
-            "Result",
+            "result",
         ),
     ] {
         let program = crate::parser::parse(source).expect("reserved-name source must parse");
@@ -2442,11 +2443,12 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
         .diagnostics
         .iter()
         .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Add`" }));
-    assert!(analyzer.struct_defs.contains_key("Add"));
+    assert!(analyzer.struct_defs.contains_key("add_operator"));
     assert!(analyzer.traits["core::ops::arith::Add"].valid);
 
-    let errors = compile_text("let invalid(value: void): () = { () }\nlet main(): i32 = { 42 }\n")
-        .expect_err("`void` must not resolve as a unit alias");
+    let errors =
+        compile_text("let invalid(value: void): () = { () }\nlet main(): i32 = { 42 }\n")
+            .expect_err("`void` must not resolve as a unit alias");
     assert!(errors
         .iter()
         .any(|diagnostic| diagnostic.message.contains("unknown type `void`")));
@@ -2669,12 +2671,12 @@ let main(): i32 = { 0 }
 fn type_parameters_shadow_core_lang_item_names_in_type_heads() {
     for (name, source) in [
         (
-            "Option",
+            "option",
             "let choose(Option: type)(): i32 = { Option.None ?? 42 }\n\
              let main(): i32 = { choose(i32)() }\n",
         ),
         (
-            "Result",
+            "result",
             "let choose(Result: type)(): i32 = { Result.Ok(1) ?? 42 }\n\
              let main(): i32 = { choose(i32)() }\n",
         ),
@@ -3040,9 +3042,9 @@ fn evaluates_constant_bitwise_operations_and_rejects_invalid_shifts() {
         ))
         .unwrap_err();
         assert!(errors.iter().any(|error| {
-            error
-                .message
-                .contains(&format!("shift count `{count}` is out of range for `i32`"))
+            error.message.contains(&format!(
+                "shift count `{count}` is out of range for `i32`"
+            ))
         }));
     }
 }
@@ -3673,7 +3675,7 @@ let main(): i32 = { 42 }
     .expect_err("an unused blanket Drop implementation must still be complete");
     assert!(missing_drop.iter().any(|error| error
         .message
-        .contains("missing trait method `core::marker::Drop.drop`")));
+        .contains("missing trait method `core::marker::droppable.drop`")));
 }
 
 #[test]
@@ -4221,7 +4223,7 @@ fn joins_reinitialization_across_branches_exactly() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): () = { () }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let mut boxed = Boxed { value: 0 }
   consume(boxed)
   if flag { boxed = Boxed { value: 19 } } else { boxed = Boxed { value: 23 } }
@@ -4236,7 +4238,7 @@ let main(): i32 = { choose(true) + choose(false) }
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): () = { () }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let mut boxed = Boxed { value: 0 }
   consume(boxed)
   if flag { boxed = Boxed { value: 42 } }
@@ -4256,7 +4258,7 @@ let Payload = struct { value: i32 }
 let Pair = struct { left: Payload, right: Payload }
 let consume_payload(move payload: Payload): () = { () }
 let consume_pair(move pair: Pair): () = { () }
-let choose(flag: bool): () = {
+let choose(flag: Bool): () = {
   let pair = Pair { left: Payload { value: 19 }, right: Payload { value: 23 } }
   if flag { consume_payload(pair.left) } else { consume_payload(pair.right) }
   consume_pair(pair)
@@ -4336,7 +4338,7 @@ fn records_assignment_initialization_kinds_in_hir() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): () = { () }
-let classify(flag: bool): i32 = {
+let classify(flag: Bool): i32 = {
   let mut boxed = Boxed { value: 0 }
   boxed = Boxed { value: 1 }
   consume(boxed)
@@ -4409,7 +4411,7 @@ fn match_guards_only_move_copy_pattern_bindings() {
         r#"
 let Payload = struct { value: i32 }
 let Event = enum { Value(value: Payload), Empty }
-let accept(move payload: Payload): bool = { payload.value == 42 }
+let accept(move payload: Payload): Bool = { payload.value == 42 }
 let classify(event: Event): i32 = { event match {
   Event.Value(value: payload) if accept(payload) => 42,
   Event.Value(value: _) => 0,
@@ -4426,7 +4428,7 @@ let main(): i32 = { classify(Event.Value(value: Payload { value: 42 })) }
     compile_text(
         r#"
 let Event = enum { Value(value: i32), Empty }
-let accept(move value: i32): bool = { value == 42 }
+let accept(move value: i32): Bool = { value == 42 }
 let classify(event: Event): i32 = { event match {
   Event.Value(value: value) if accept(value) => 42,
   Event.Value(value: value) => value,
@@ -4488,15 +4490,15 @@ let main(): i32 = { 0 }
         r#"
 let Cell(T: type) = struct { value: T }
 extend Cell(i32): Copy {}
-let consume(value: Cell(bool)): bool = { value.value }
+let consume(value: Cell(Bool)): Bool = { value.value }
 let main(): i32 = {
-  let cell = Cell(bool) { value: true }
+  let cell = Cell(Bool) { value: true }
   let answer = consume(cell)
   if answer && cell.value { 42 } else { 0 }
 }
 "#,
     )
-    .expect_err("Cell(i32): Copy must not make Cell(bool) Copy");
+    .expect_err("Cell(i32): Copy must not make Cell(Bool) Copy");
     assert!(concrete.iter().any(|error| error.message.contains("moved")));
 }
 
@@ -4546,7 +4548,7 @@ fn reports_a_value_moved_on_only_one_if_path_as_possibly_moved() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): i32 = { boxed.value }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let boxed = Boxed { value: 42 }
   if flag {
 consume(boxed)
@@ -4568,7 +4570,7 @@ fn discards_moves_on_an_if_path_that_returns() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): i32 = { boxed.value }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let boxed = Boxed { value: 42 }
   if flag {
 consume(boxed)
@@ -4589,7 +4591,7 @@ fn reports_a_value_moved_on_both_if_paths_as_moved() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): i32 = { boxed.value }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let boxed = Boxed { value: 42 }
   if flag {
 consume(boxed)
@@ -4615,8 +4617,8 @@ fn reports_a_move_on_a_short_circuit_rhs_as_possible() {
     let errors = compile_text(
         r#"
 let Boxed = struct { value: i32 }
-let consume(move boxed: Boxed): bool = { boxed.value == 42 }
-let choose(flag: bool): i32 = {
+let consume(move boxed: Boxed): Bool = { boxed.value == 42 }
+let choose(flag: Bool): i32 = {
   let boxed = Boxed { value: 42 }
   flag && consume(boxed)
   boxed.value
@@ -4636,7 +4638,7 @@ fn analyzes_mutually_exclusive_if_arms_from_the_same_entry_flow() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): i32 = { boxed.value }
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let boxed = Boxed { value: 42 }
   if flag {
 consume(boxed)
@@ -4682,7 +4684,7 @@ let Choice = enum {
   Only,
 }
 let Boxed = struct { value: i32 }
-let consume(move boxed: Boxed): bool = { boxed.value == 0 }
+let consume(move boxed: Boxed): Bool = { boxed.value == 0 }
 let choose(choice: Choice): i32 = {
   let boxed = Boxed { value: 42 }
   choice match {
@@ -4754,12 +4756,12 @@ let Throws = std.error.Throws
 let Unsafe = std.unsafe.Unsafe
 
 let UI = effect
-let fail(flag: bool): i32 with(Throws(bool)) = {
+let fail(flag: Bool): i32 with(Throws(Bool)) = {
   if flag { throw(true) }
   40
 }
 let render(value: i32): i32 with(UI) = { value }
-let combined(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe, UI) = { do {
+let combined(pointer: Ptr(i32)): i32 with(Throws(Bool), Unsafe, UI) = { do {
   let attempted = fail(false)
   let value = render(attempted)
   if value == 40 { return(*pointer) }
@@ -4776,7 +4778,7 @@ let Result = std.Result
 let Throws = std.error.Throws
 
 let fail(): i32 with(Throws(i64)) = { throw(1) }
-let outer(): i32 with(Throws(bool)) = { do { return(fail()) } }
+let outer(): i32 with(Throws(Bool)) = { do { return(fail()) } }
 let main(): i32 = { 0 }
 "#,
     )
@@ -4874,13 +4876,13 @@ let Result = std.Result
 let Throws = std.error.Throws
 
 let Supply = effect { let seed(): i32 }
-let Ask = effect { let value(): i32 with(Supply, Throws(bool)) }
-let request(): i32 with(Ask, Supply, Throws(bool)) = { Ask.value() }
-let inner(): i32 with(Supply, Throws(bool)) = {
+let Ask = effect { let value(): i32 with(Supply, Throws(Bool)) }
+let request(): i32 with(Ask, Supply, Throws(Bool)) = { Ask.value() }
+let inner(): i32 with(Supply, Throws(Bool)) = {
   Ask.handle value { (resume) -> resume(42) } action { request() }
 }
 let main(): i32 = {
-  let result: Result(bool)(i32) = try {
+  let result: Result(Bool)(i32) = try {
 Supply.handle seed { (resume) -> resume(0) } action { inner() }
   }
   result ?? 0
@@ -4929,13 +4931,13 @@ let AskUnsafe = effect { let value(): i32 with(Unsafe) }
 let unsafe_run(): i32 = { unsafe { AskUnsafe.handle value { (resume) -> resume(42) } action {
   AskUnsafe.value()
 } } }
-let AskThrows = effect { let value(): i32 with(Throws(bool)) }
-let throwing_run(): i32 with(Throws(bool)) = {
+let AskThrows = effect { let value(): i32 with(Throws(Bool)) }
+let throwing_run(): i32 with(Throws(Bool)) = {
   AskThrows.handle value { (resume) -> resume(42) } action { AskThrows.value() }
 }
 let AskFrame = effect { let value(): i32 }
-let throwing_request(): i32 with(AskFrame, Throws(bool)) = { AskFrame.value() }
-let throwing_frame(): i32 with(Throws(bool)) = {
+let throwing_request(): i32 with(AskFrame, Throws(Bool)) = { AskFrame.value() }
+let throwing_frame(): i32 with(Throws(Bool)) = {
   AskFrame.handle value { (resume) -> resume(42) } action { throwing_request() }
 }
 let main(): i32 = { 0 }
@@ -4963,14 +4965,14 @@ let main(): i32 = { run() }
 let Result = std.Result
 let Throws = std.error.Throws
 
-let Ask = effect { let value(): i32 with(Throws(bool)) }
+let Ask = effect { let value(): i32 with(Throws(Bool)) }
 let run(): i32 = { Ask.handle value { (resume) -> resume(42) } action { Ask.value() } }
 let main(): i32 = { run() }
 "#,
     )
     .expect_err("handling an operation must not erase its throws requirement");
     assert!(missing_throws.iter().any(|error| {
-        error.message.contains("requires `Throws(bool)`") && error.message.contains("Throws(bool)")
+        error.message.contains("requires `Throws(Bool)`") && error.message.contains("Throws(Bool)")
     }));
 }
 
@@ -5100,7 +5102,7 @@ let main(): i32 = { Ask.handle value { (resume) -> resume(42) } action {
     compile_text(
         r#"
 let Ask = effect {
-  let choose(): bool
+  let choose(): Bool
   let value(): i32
 }
 let main(): i32 = { Ask.handle choose { (resume) -> resume(false) } value { (resume) -> resume(40) } action {
@@ -5147,7 +5149,7 @@ let main(): i32 = { Ask.handle value { (resume) -> resume(1) } action {
 fn effectful_guards_inspect_noncopy_inputs_without_committing_payload_moves() {
     compile_text(
         r#"
-let Ask = effect { let accept(): bool }
+let Ask = effect { let accept(): Bool }
 let Payload = struct { value: i32 }
 let Event = enum { Value(value: Payload), Empty }
 let main(): i32 = { Ask.handle accept { (resume) -> resume(false) } action {
@@ -5164,7 +5166,7 @@ Event.Empty => 0,
 
     compile_text(
         r#"
-let Ask = effect { let accept(): bool }
+let Ask = effect { let accept(): Bool }
 let Payload = struct { value: i32 }
 let Event = enum { Value(value: Payload), Empty }
 let consume(move payload: Payload): i32 = { payload.value }
@@ -5182,7 +5184,7 @@ Event.Empty => 0,
 
     compile_text(
         r#"
-let Ask = effect { let accept(): bool }
+let Ask = effect { let accept(): Bool }
 let Payload = struct { value: i32 }
 let Event = enum { Value(value: Payload), Empty }
 let main(): i32 = { Ask.handle accept { (resume) -> resume(false) } action {
@@ -5199,10 +5201,10 @@ Event.Empty => 0,
 
     let moving_guard_binding = compile_text(
         r#"
-let Ask = effect { let accept(): bool }
+let Ask = effect { let accept(): Bool }
 let Payload = struct { value: i32 }
 let Event = enum { Value(value: Payload), Empty }
-let consume(move payload: Payload): bool = { payload.value > 0 }
+let consume(move payload: Payload): Bool = { payload.value > 0 }
 let main(): i32 = { Ask.handle accept { (resume) -> resume(false) } action {
   let event = Event.Value(value: Payload { value: 42 })
   event match {
@@ -5703,10 +5705,10 @@ fn throws_effects_lower_to_result_boundaries_and_propagate() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
-let forward(flag: bool): i32 with(Throws(bool)) = { fail(flag) }
+let fail(flag: Bool): i32 with(Throws(Bool)) = { if flag { throw(true) } else { 41 } }
+let forward(flag: Bool): i32 with(Throws(Bool)) = { fail(flag) }
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { forward(false) }
+  let result: Result(Bool)(i32) = try { forward(false) }
   result ?? 0
 }
 "#,
@@ -5722,11 +5724,11 @@ fn throws_and_unsafe_share_one_effect_row() {
 let Throws = std.error.Throws
 let Unsafe = std.unsafe.Unsafe
 
-let read(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
+let read(pointer: Ptr(i32), fail: Bool): i32 with(Throws(Bool), Unsafe) = {
   if fail { throw(true) }
   *pointer
 }
-let forward(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
+let forward(pointer: Ptr(i32), fail: Bool): i32 with(Throws(Bool), Unsafe) = {
   read(pointer, fail) }
 "#,
     )
@@ -5737,7 +5739,7 @@ let forward(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
 let Throws = std.error.Throws
 let Unsafe = std.unsafe.Unsafe
 
-let read(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe) = { *pointer }
+let read(pointer: Ptr(i32)): i32 with(Throws(Bool), Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow(value)))
@@ -5760,7 +5762,7 @@ let Unsafe = std.unsafe.Unsafe
 let UI = effect
 let render(value: i32): i32 with(UI) = { value }
 let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
-let handle(pointer: Ptr(i32)): Result(bool)(i32) with(Unsafe, UI) = { try {
+let handle(pointer: Ptr(i32)): Result(Bool)(i32) with(Unsafe, UI) = { try {
   let value = read(pointer)
   return(render(value))
 } }
@@ -6086,7 +6088,7 @@ fn multiple_and_named_trailing_closures_lower_as_successive_calls() {
         let program = crate::parser::parse(&format!(
             r#"
 let choose(seed: i32)
-  (move condition: (): bool)
+  (move condition: (): Bool)
   (move body: (): i32): i32 = {{
   if condition() {{ body() }} else {{ seed }}
 }}
@@ -6162,7 +6164,7 @@ let main(): i32 = {
     assert_eq!(key.self_ty, Ty::Struct("Number".into()));
     assert_eq!(key.trait_ref.name, "Convert");
     assert_eq!(key.trait_ref.arguments, vec![Ty::I32]);
-    assert_eq!(implementation.associated_types["Output"], Ty::I32);
+    assert_eq!(implementation.associated_types["output"], Ty::I32);
     let canonical = trait_method_name(key, "convert");
     assert_eq!(implementation.methods["convert"], canonical);
 
@@ -6532,8 +6534,8 @@ let option_next(value: i32): Option(i32) = {
   Option(i32).Some(value + 1)
 }
 
-let result_next(value: i32): Result(bool)(i32) = {
-  Result(bool)(i32).Ok(value + 2)
+let result_next(value: i32): Result(Bool)(i32) = {
+  Result(Bool)(i32).Ok(value + 2)
 }
 
 let read_option(value: Option(i32)): i32 = {
@@ -6543,7 +6545,7 @@ None => 0,
   }
 }
 
-let read_result(value: Result(bool)(i32)): i32 = {
+let read_result(value: Result(Bool)(i32)): i32 = {
   value match {
 Ok(number) => number,
 Err(_) => 0,
@@ -6552,15 +6554,15 @@ Err(_) => 0,
 
 let main(): i32 = {
   let option = Option(i32).Some(39).flat_map(option_next)
-  let result = Result(bool)(i32).Ok(1).flat_map(result_next)
+  let result = Result(Bool)(i32).Ok(1).flat_map(result_next)
   let mapped_option = Option(i32).Some(1).map(add_one)
-  let mapped_result = Result(bool)(i32).Ok(2).map(add_one)
+  let mapped_result = Result(Bool)(i32).Ok(2).map(add_one)
   let pure_option: Option(i32) = Option.pure(3)
-  let pure_result: Result(bool)(i32) = Result.pure(4)
+  let pure_result: Result(Bool)(i32) = Result.pure(4)
   let option_transform: Option((i32): i32) = Option.Some(add_one)
-  let result_transform: Result(bool)((i32): i32) = Result.Ok(add_one)
+  let result_transform: Result(Bool)((i32): i32) = Result.Ok(add_one)
   let applied_option = option_transform.apply(Option(i32).Some(5))
-  let applied_result = result_transform.apply(Result(bool)(i32).Ok(6))
+  let applied_result = result_transform.apply(Result(Bool)(i32).Ok(6))
   read_option(option) + read_result(result) + read_option(mapped_option) + read_result(mapped_result) + read_option(pure_option) + read_result(pure_result) + read_option(applied_option) + read_result(applied_result) - 70
 }
 "#,
@@ -6722,7 +6724,7 @@ fn lowers_core_eq_and_ne_to_one_borrowing_static_call() {
 let Eq = std.ops.Eq
 let Number = struct { value: i32 }
 extend Number: Eq(Number) {
-  let eq(self: borrow(Self))(rhs: borrow(Number)): bool = { self.value == rhs.value }
+  let eq(self: borrow(Self))(rhs: borrow(Number)): Bool = { self.value == rhs.value }
 }
 let main(): i32 = {
   let left = Number { value: 21 }
@@ -6750,7 +6752,7 @@ fn lowers_partial_ord_operators_through_four_state_results() {
         r#"
 let PartialOrd = std.ops.PartialOrd
 let PartialOrdering = std.ops.PartialOrdering
-let Number = struct { value: i32, unordered: bool }
+let Number = struct { value: i32, unordered: Bool }
 extend Number: PartialOrd(Number) {
   let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = {
 if self.unordered || rhs.unordered { Unordered }
@@ -6794,7 +6796,7 @@ fn lowers_unary_operator_traits_to_auto_static_calls() {
 let Neg = std.ops.Neg
 let Not = std.ops.Not
 let Number = struct { value: i32 }
-let Flag = struct { value: bool }
+let Flag = struct { value: Bool }
 extend Number: Neg {
   let Output = i32
   let neg(self)(): i32 = { -self.value }}
@@ -6869,11 +6871,11 @@ let main(): i32 = {
     );
     let ir = compile(&program).expect("bitwise operator source must compile");
     for (trait_name, method) in [
-        ("BitAnd", "bit_and"),
-        ("BitOr", "bit_or"),
-        ("BitXor", "bit_xor"),
-        ("Shl", "shl"),
-        ("Shr", "shr"),
+        ("bit_and_operator", "bit_and"),
+        ("bit_or_operator", "bit_or"),
+        ("bit_xor_operator", "bit_xor"),
+        ("shl_operator", "shl"),
+        ("shr_operator", "shr"),
     ] {
         let key = TraitImplKey {
             self_ty: Ty::Struct("Bits".into()),
@@ -6912,7 +6914,7 @@ let Number = struct { value: i32 }
 extend Number: Neg {
   let Output = i32
   let neg(self)(): i32 = { -self.value }}
-let main(): bool = { -Number { value: 1 } }
+let main(): Bool = { -Number { value: 1 } }
 "#,
     )
     .unwrap_err();
@@ -7007,8 +7009,8 @@ fn a_unique_operator_candidate_must_match_the_expected_output() {
 let Add = std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
-  let Output = bool
-  let add(self)(rhs: i32): bool = { self.value == rhs }
+  let Output = Bool
+  let add(self)(rhs: i32): Bool = { self.value == rhs }
 }
 let main(): i32 = { Number { value: 42 } + 42 }
 "#,
@@ -7089,9 +7091,9 @@ extend Number: Sub(i32) {
   let Output = i32
   let sub(self)(rhs: i32): i32 = { self.value - rhs }
 }
-extend Number: Sub(bool) {
+extend Number: Sub(Bool) {
   let Output = i32
-  let sub(self)(rhs: bool): i32 = { if rhs { 42 } else { 0 } }
+  let sub(self)(rhs: Bool): i32 = { if rhs { 42 } else { 0 } }
 }
 let main(): i32 = { Number { value: 1 } - do {
   let flag = true
@@ -7260,12 +7262,12 @@ fn add_reports_when_no_ambiguous_candidate_has_the_expected_output() {
 let Add = std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
-  let Output = bool
-  let add(self)(rhs: i32): bool = { false }
+  let Output = Bool
+  let add(self)(rhs: i32): Bool = { false }
 }
 extend Number: Add(i64) {
-  let Output = bool
-  let add(self)(rhs: i64): bool = { true }
+  let Output = Bool
+  let add(self)(rhs: i64): Bool = { true }
 }
 let main(): i32 = { Number { value: 40 } + 2 }
 "#,
@@ -7333,9 +7335,9 @@ let Result = std.Result
 let Throws = std.error.Throws
 
 let Failure = struct { code: i32 }
-let read(fail: bool): i32 with(Throws(Failure)) = {
+let read(fail: Bool): i32 with(Throws(Failure)) = {
   if fail { throw(Failure { code: 1 }) } else { 40 } }
-let run(fail: bool): i32 with(Throws(Failure)) = { read(fail) + 2 }
+let run(fail: Bool): i32 with(Throws(Failure)) = { read(fail) + 2 }
 let main(): i32 = {
   let result: Result(Failure)(i32) = try { run(false) }
   result match { Ok(value) => value, Err(_) => 0 }
@@ -7676,9 +7678,9 @@ extend Number: Future(()) {
   }
 }
 extend Flag: Future(()) {
-  let Output = bool
-  let poll(R: region)(self: borrow(mut)(R)(Self))(): Poll(bool) = {
-    Poll(bool).Ready(true)
+  let Output = Bool
+  let poll(R: region)(self: borrow(mut)(R)(Self))(): Poll(Bool) = {
+    Poll(Bool).Ready(true)
   }
 }
 let main(): i32 = {
@@ -7704,7 +7706,7 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
     let mut analyzer = Analyzer::new(&program);
     let step = analyzer.register_async_loop_step(
         Ty::Tuple(vec![Ty::I32, Ty::Bool]),
-        Ty::Struct("Output".to_owned()),
+        Ty::Struct("output".to_owned()),
         "$test$continue".to_owned(),
         "$test$break".to_owned(),
     );
@@ -7713,7 +7715,7 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
         panic!("loop step must be an enum");
     };
     assert_eq!(step.carry, Ty::Tuple(vec![Ty::I32, Ty::Bool]));
-    assert_eq!(step.output, Ty::Struct("Output".to_owned()));
+    assert_eq!(step.output, Ty::Struct("output".to_owned()));
     assert_eq!(analyzer.enum_order.last(), Some(step_name));
     assert_eq!(
         analyzer.nominal_accesses[step_name].visibility,
@@ -7721,10 +7723,10 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
     );
     let layout = &analyzer.enum_layouts[step_name];
     assert_eq!(layout.variants.len(), 2);
-    assert_eq!(layout.variants[0].name, "Continue");
+    assert_eq!(layout.variants[0].name, "continue_effect");
     assert_eq!(layout.variants[0].payload_offset, 0);
     assert_eq!(layout.variants[0].fields[0].ty, step.carry);
-    assert_eq!(layout.variants[1].name, "Break");
+    assert_eq!(layout.variants[1].name, "break_effect");
     assert_eq!(layout.variants[1].payload_offset, 1);
     assert_eq!(layout.variants[1].fields[0].ty, step.output);
 }
@@ -7962,7 +7964,7 @@ let main(): i32 = { same([1], [2, 3]); 0 }
     assert!(errors.iter().any(|error| {
         error.message.contains("conflicting inference")
             && error.message.contains("usize")
-            && error.message.contains("L")
+            && error.message.contains("l")
     }));
 }
 
@@ -8051,7 +8053,7 @@ fn lowers_for_through_validated_iteration_lang_items() {
          let Counter = struct { current: i32, end: i32 }\n\
          extend Counter {\n\
            let into_iter(self: borrow(Self))(): i32 = { self.current }\n\
-           let next(self: borrow(Self))(): bool = { false }\n\
+           let next(self: borrow(Self))(): Bool = { false }\n\
          }\n\
          extend Counter: Iterator {\n\
            let Item = OwnedItem(i32)\n\
@@ -8141,11 +8143,11 @@ extend Payload {
 }
 let read(value: Option(Payload)): Option(i32) = { value?.value }
 let nested(value: Option(Payload)): Option(Option(i32)) = { value?.nested }
-let call(value: Result(bool)(Payload)): Result(bool)(i32) = { value?.add(2) }
+let call(value: Result(Bool)(Payload)): Result(Bool)(i32) = { value?.add(2) }
 let main(): i32 = {
   let boxed = Payload { value: 40, nested: Option(i32).Some(42) }
   let left = read(Option(Payload).Some(boxed)) ?? 0
-  let right = call(Result(bool)(Payload).Ok(Payload { value: 0, nested: Option(i32).None })) ?? 0
+  let right = call(Result(Bool)(Payload).Ok(Payload { value: 0, nested: Option(i32).None })) ?? 0
   left + right
 }
 "#,
@@ -8162,7 +8164,7 @@ fn optional_chain_expected_result_only_constrains_the_base_error_type() {
 let Result = std.Result
 
 let Boxed = struct { value: i32 }
-let read(): Result(bool)(i32) = { Result.Ok(Boxed { value: 42 })?.value }
+let read(): Result(Bool)(i32) = { Result.Ok(Boxed { value: 42 })?.value }
 let main(): i32 = { read() ?? 0 }
 "#,
     )
@@ -8221,7 +8223,7 @@ let main(): i32 = { 0 }
 fn cleanup_plan_tracks_nested_normal_and_return_scope_exits() {
     let plan = cleanup_plan_text(
         r#"
-let choose(flag: bool): i32 = {
+let choose(flag: Bool): i32 = {
   let outer = 40
   if true {
 let inner = 2
@@ -8259,7 +8261,7 @@ if flag { return(outer + inner) }
 #[test]
 fn cleanup_plan_builds_if_join_and_loop_break_edges() {
     let if_plan = cleanup_plan_text(
-        "let choose(flag: bool): i32 = { if flag { 1 } else { 2 } }\n",
+        "let choose(flag: Bool): i32 = { if flag { 1 } else { 2 } }\n",
         "choose",
     );
     assert!(if_plan
@@ -8276,7 +8278,7 @@ fn cleanup_plan_builds_if_join_and_loop_break_edges() {
 
     let loop_plan = cleanup_plan_text(
         r#"
-let choose(flag: bool): i32 = { loop {
+let choose(flag: Bool): i32 = { loop {
   if flag { break(7) }
   break(9)
 } }
@@ -8320,7 +8322,7 @@ fn cleanup_plan_transfers_resource_loop_break_between_scopes() {
     let plan = cleanup_plan_text(
         r#"
 let Boxed = struct { value: i32 }
-let make(flag: bool): Boxed = { loop {
+let make(flag: Bool): Boxed = { loop {
   if flag { break(Boxed { value: 41 }) }
   break(Boxed { value: 42 })
 } }
@@ -8534,7 +8536,7 @@ let replace(target: borrow(mut)(Pair), move replacement: Payload): () = {
 #[test]
 fn cleanup_plan_starts_storage_for_every_planner_temporary() {
     let plan = cleanup_plan_text(
-        "let choose(left: bool, right: bool): i32 = { if left { 1 } else if right { 2 } else { 3 } }\n",
+        "let choose(left: Bool, right: Bool): i32 = { if left { 1 } else if right { 2 } else { 3 } }\n",
         "choose",
     );
     let temporaries: Vec<_> = plan
@@ -8560,14 +8562,14 @@ fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
-let propagate(fail: bool): i32 with(Throws(bool)) = {
+let read(fail: Bool): i32 with(Throws(Bool)) = { if fail { throw(true) } else { 42 } }
+let propagate(fail: Bool): i32 with(Throws(Bool)) = {
   let item = read(fail)
   if item == 0 { throw(true) }
   item
 }
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { propagate(false) }
+  let result: Result(Bool)(i32) = try { propagate(false) }
   result ?? 0
 }
 "#,
@@ -9272,7 +9274,7 @@ fn cleanup_plan_forwards_one_destination_through_block_if_and_match() {
     let if_plan = cleanup_plan_text(
         r#"
 let Payload = struct { value: i32 }
-let choose(flag: bool): Payload = {
+let choose(flag: Bool): Payload = {
   if flag { Payload { value: 1 } } else { Payload { value: 2 } }
 }
 "#,
@@ -9315,7 +9317,7 @@ fn cleanup_plan_nested_loops_keep_distinct_shared_break_destinations() {
     let plan = cleanup_plan_text(
         r#"
 let Payload = struct { value: i32 }
-let choose(flag: bool): Payload = { loop {
+let choose(flag: Bool): Payload = { loop {
   let inner = loop {
 if flag { break(Payload { value: 1 }) }
 break(Payload { value: 2 })
@@ -9473,7 +9475,10 @@ let main(): i32 = {
 
 #[test]
 fn cleanup_plan_makes_uninhabited_parameter_entries_unreachable() {
-    let plan = cleanup_plan_text("let absurd(move value: Never): i32 = { value }\n", "absurd");
+    let plan = cleanup_plan_text(
+        "let absurd(move value: Never): i32 = { value }\n",
+        "absurd",
+    );
     let function_entry = plan
         .blocks
         .iter()
@@ -9851,7 +9856,7 @@ fn cleanup_plan_records_assignment_kinds_moves_and_maybe_overwrite_state() {
         r#"
 let Boxed = struct { value: i32 }
 let consume(move boxed: Boxed): () = { () }
-let classify(flag: bool): i32 = {
+let classify(flag: Bool): i32 = {
   let mut boxed = Boxed { value: 0 }
   boxed = Boxed { value: 1 }
   consume(boxed)
@@ -9898,7 +9903,7 @@ let Boxed = struct { value: i32 }
 extend Boxed: Drop {
   let drop(self: borrow(mut)(Self))(): () = { () }}
 let consume(move value: Boxed): () = { () }
-let finish(flag: bool): () = {
+let finish(flag: Bool): () = {
   let boxed = Boxed { value: 42 };
   if flag { consume(boxed) };
   ()

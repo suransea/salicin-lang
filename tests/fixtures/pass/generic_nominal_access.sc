@@ -1,12 +1,12 @@
-let AccessBox(A: access)(T: type) = struct {
-  value: borrow(A)(T),
+let access_box(comptime a: access)(comptime t: type) = struct {
+  value: borrow(a)(t),
 }
 
 let read(value: borrow(i32)): i32 = { value }
 
-let with_access(A: access, T: type)
-  (value: borrow(A)(T)): AccessBox(A)(T) = {
-  AccessBox(A)(T) { value: value }
+let with_access(comptime a: access, comptime t: type)
+  (value: borrow(a)(t)): access_box(a)(t) = {
+  access_box(a)(t) { value: value }
 }
 
 let main(): i32 = {

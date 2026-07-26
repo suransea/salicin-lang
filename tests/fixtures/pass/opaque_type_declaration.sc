@@ -1,4 +1,4 @@
-let Opaque: type
+let opaque: type
 
 let main(): i32 = { 42 }
 

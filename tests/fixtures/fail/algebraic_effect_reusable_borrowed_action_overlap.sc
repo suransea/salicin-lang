@@ -1,21 +1,21 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
-let State = struct {
+let state = struct {
   value: i32,
 }
 
-let run(state: borrow(mut)(State))(move action: (): i32 with(Ask)): i32 = {
-  Ask.handle value { (resume) -> resume(1) } action {
+let run(state: borrow(mut)(state))(move action: (): i32 with(ask)): i32 = {
+  ask.handle value { (resume) -> resume(1) } action {
       action() + state.value
     }
 }
 
 let main(): i32 = {
-  let mut state = State { value: 20 }
+  let mut state = state { value: 20 }
   run(state) { () ->
       state.value = state.value + 1
-      Ask.value() + state.value
+      ask.value() + state.value
     }
 }

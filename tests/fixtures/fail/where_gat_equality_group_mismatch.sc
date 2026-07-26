@@ -1,8 +1,8 @@
-let Lend = trait {
-  let Item(A: access)(R: region): type
+let lend = trait {
+  let item(comptime a: access)(comptime r: region): type
 }
 
-let require(T: type)(move value: T): ()
-where T: Lend(Item(A: access, R: region) = borrow(A)(R)(i32)) = {}
+let require(comptime t: type)(move value: t): ()
+where t: lend(item(comptime a: access, comptime r: region) = borrow(a)(r)(i32)) = {}
 
 let main(): () = {}

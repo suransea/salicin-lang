@@ -1,4 +1,4 @@
-let read(pointer: Ptr(i32)): i32 = {
+let read(pointer: ptr(i32)): i32 = {
   unsafe {
     do {
       return(*pointer)
@@ -9,7 +9,7 @@ let read(pointer: Ptr(i32)): i32 = {
 
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow(value)))
+  read(ptr(borrow(value)))
 }
 
 test("do_forwards_unsafe_color.sc") {

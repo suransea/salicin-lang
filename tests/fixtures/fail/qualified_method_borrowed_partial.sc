@@ -1,11 +1,11 @@
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number {
-  let add(self: borrow(Self))(amount: i32): i32 = { self.value + amount }
+extend number {
+  let add(self: borrow(self))(amount: i32): i32 = { self.value + amount }
 }
 
 let main(): i32 = {
-  let number = Number { value: 42 }
-  let partial = Number.add(number)
+  let number = number { value: 42 }
+  let partial = number.add(number)
   0
 }

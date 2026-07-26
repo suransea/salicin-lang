@@ -1,8 +1,8 @@
-let Option = std.Option
+let option = std.option
 
 let main(): i32 = {
-  let value = Option(i32, bool).Some(42)
+  let value = option(i32, bool).some(42)
   match value
-    { Some(item) -> item }
-    { None -> 0 }
+    { some(item) -> item }
+    { none -> 0 }
 }

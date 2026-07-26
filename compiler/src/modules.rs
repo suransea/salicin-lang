@@ -380,96 +380,155 @@ type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
 /// code reaches these declarations through `alloc.<module>.<name>`, while the
 /// analyzer continues to consume the flattened canonical name.
 const ALLOC_EXPORTS: &[(&str, &str)] = &[
-    ("boxed", "Box"),
-    ("vec", "Vec"),
-    ("vec", "VecIntoIter"),
-    ("string", "String"),
-    ("string", "FromUtf8Error"),
+    ("boxed", "box"),
+    ("vec", "vec"),
+    ("vec", "vec_into_iter"),
+    ("string", "string"),
+    ("string", "from_utf8_error"),
 ];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
-    ("Never", "core::never::Never"),
-    ("Move", "core::marker::Move"),
-    ("Copy", "core::marker::Copy"),
-    ("Drop", "core::marker::Drop"),
-    ("Array", "core::memory::Array"),
-    ("Ptr", "core::memory::Ptr"),
+    ("never", "core::never::never"),
+    ("movable", "core::marker::movable"),
+    ("copyable", "core::marker::copyable"),
+    ("droppable", "core::marker::droppable"),
+    ("array", "core::memory::array"),
+    ("ptr", "core::memory::ptr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
     ("copy", "core::passing::copy"),
     ("move", "core::passing::move"),
+    ("comptime", "core::passing::comptime"),
     ("mut", "$access$mut"),
     ("shared", "$access$shared"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
-    ("Never", "core::never::Never"),
-    ("Move", "core::marker::Move"),
-    ("Copy", "core::marker::Copy"),
-    ("Drop", "core::marker::Drop"),
-    ("Option", "core::option::Option"),
-    ("Result", "core::result::Result"),
-    ("Slice", "core::memory::Slice"),
+    ("abi", "core::foreign::abi"),
+    ("foreign", "core::foreign::foreign"),
+    ("never", "core::never::never"),
+    ("movable", "core::marker::movable"),
+    ("copyable", "core::marker::copyable"),
+    ("droppable", "core::marker::droppable"),
+    ("option", "core::option::option"),
+    ("result", "core::result::result"),
+    ("slice", "core::memory::slice"),
 ];
-const CORE_NEVER_EXPORTS: &[&str] = &["Never"];
-const CORE_MARKER_EXPORTS: &[&str] = &["Move", "Copy", "Drop"];
-const CORE_ARITH_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem", "Neg"];
-const CORE_BIT_EXPORTS: &[&str] = &["BitAnd", "BitOr", "BitXor", "Shl", "Shr", "Not"];
+const CORE_NEVER_EXPORTS: &[&str] = &["never"];
+const CORE_MARKER_EXPORTS: &[&str] = &["movable", "copyable", "droppable"];
+const CORE_ARITH_EXPORTS: &[&str] = &[
+    "add_operator",
+    "sub_operator",
+    "mul_operator",
+    "div_operator",
+    "rem_operator",
+    "neg_operator",
+];
+const CORE_BIT_EXPORTS: &[&str] = &[
+    "bit_and_operator",
+    "bit_or_operator",
+    "bit_xor_operator",
+    "shl_operator",
+    "shr_operator",
+    "not_operator",
+];
 const CORE_ASSIGN_EXPORTS: &[&str] = &[
-    "AddAssign",
-    "SubAssign",
-    "MulAssign",
-    "DivAssign",
-    "RemAssign",
-    "BitAndAssign",
-    "BitOrAssign",
-    "BitXorAssign",
-    "ShlAssign",
-    "ShrAssign",
+    "add_assign_operator",
+    "sub_assign_operator",
+    "mul_assign_operator",
+    "div_assign_operator",
+    "rem_assign_operator",
+    "bit_and_assign_operator",
+    "bit_or_assign_operator",
+    "bit_xor_assign_operator",
+    "shl_assign_operator",
+    "shr_assign_operator",
 ];
-const CORE_INDEX_EXPORTS: &[&str] = &["Index"];
-const CORE_CMP_EXPORTS: &[&str] = &["Eq", "PartialOrdering", "PartialOrd"];
+const CORE_INDEX_EXPORTS: &[&str] = &["index_operator"];
+const CORE_CMP_EXPORTS: &[&str] = &["equality", "partial_ordering", "partial_order"];
 const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
-    ("Add", "core::ops::arith::Add"),
-    ("Sub", "core::ops::arith::Sub"),
-    ("Mul", "core::ops::arith::Mul"),
-    ("Div", "core::ops::arith::Div"),
-    ("Rem", "core::ops::arith::Rem"),
-    ("Neg", "core::ops::arith::Neg"),
-    ("BitAnd", "core::ops::bit::BitAnd"),
-    ("BitOr", "core::ops::bit::BitOr"),
-    ("BitXor", "core::ops::bit::BitXor"),
-    ("Shl", "core::ops::bit::Shl"),
-    ("Shr", "core::ops::bit::Shr"),
-    ("Not", "core::ops::bit::Not"),
-    ("AddAssign", "core::ops::assign::AddAssign"),
-    ("SubAssign", "core::ops::assign::SubAssign"),
-    ("MulAssign", "core::ops::assign::MulAssign"),
-    ("DivAssign", "core::ops::assign::DivAssign"),
-    ("RemAssign", "core::ops::assign::RemAssign"),
-    ("BitAndAssign", "core::ops::assign::BitAndAssign"),
-    ("BitOrAssign", "core::ops::assign::BitOrAssign"),
-    ("BitXorAssign", "core::ops::assign::BitXorAssign"),
-    ("ShlAssign", "core::ops::assign::ShlAssign"),
-    ("ShrAssign", "core::ops::assign::ShrAssign"),
-    ("Eq", "core::cmp::Eq"),
-    ("PartialOrdering", "core::cmp::PartialOrdering"),
-    ("PartialOrd", "core::cmp::PartialOrd"),
-    ("Index", "core::ops::index::Index"),
-    ("Chain", "core::flow::Chain"),
-    ("Coalesce", "core::flow::Coalesce"),
-    ("Unwrap", "core::flow::Unwrap"),
-    ("Raise", "core::flow::Raise"),
+    ("add_operator", "core::ops::arith::add_operator"),
+    ("sub_operator", "core::ops::arith::sub_operator"),
+    ("mul_operator", "core::ops::arith::mul_operator"),
+    ("div_operator", "core::ops::arith::div_operator"),
+    ("rem_operator", "core::ops::arith::rem_operator"),
+    ("neg_operator", "core::ops::arith::neg_operator"),
+    ("bit_and_operator", "core::ops::bit::bit_and_operator"),
+    ("bit_or_operator", "core::ops::bit::bit_or_operator"),
+    ("bit_xor_operator", "core::ops::bit::bit_xor_operator"),
+    ("shl_operator", "core::ops::bit::shl_operator"),
+    ("shr_operator", "core::ops::bit::shr_operator"),
+    ("not_operator", "core::ops::bit::not_operator"),
+    (
+        "add_assign_operator",
+        "core::ops::assign::add_assign_operator",
+    ),
+    (
+        "sub_assign_operator",
+        "core::ops::assign::sub_assign_operator",
+    ),
+    (
+        "mul_assign_operator",
+        "core::ops::assign::mul_assign_operator",
+    ),
+    (
+        "div_assign_operator",
+        "core::ops::assign::div_assign_operator",
+    ),
+    (
+        "rem_assign_operator",
+        "core::ops::assign::rem_assign_operator",
+    ),
+    (
+        "bit_and_assign_operator",
+        "core::ops::assign::bit_and_assign_operator",
+    ),
+    (
+        "bit_or_assign_operator",
+        "core::ops::assign::bit_or_assign_operator",
+    ),
+    (
+        "bit_xor_assign_operator",
+        "core::ops::assign::bit_xor_assign_operator",
+    ),
+    (
+        "shl_assign_operator",
+        "core::ops::assign::shl_assign_operator",
+    ),
+    (
+        "shr_assign_operator",
+        "core::ops::assign::shr_assign_operator",
+    ),
+    ("equality", "core::cmp::equality"),
+    ("partial_ordering", "core::cmp::partial_ordering"),
+    ("partial_order", "core::cmp::partial_order"),
+    ("index_operator", "core::ops::index::index_operator"),
+    ("chain_operator", "core::flow::chain_operator"),
+    ("coalesce_operator", "core::flow::coalesce_operator"),
+    ("unwrap_operator", "core::flow::unwrap_operator"),
+    ("raise_operator", "core::flow::raise_operator"),
 ];
-const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap", "Raise"];
-const CORE_EFFECT_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
-const CORE_RESULT_EXPORTS: &[&str] = &["Result"];
-const CORE_ERROR_EXPORTS: &[&str] = &["Throws", "try", "throw"];
-const CORE_UNSAFE_EXPORTS: &[&str] = &["Unsafe", "unsafe"];
+const CORE_FLOW_EXPORTS: &[&str] = &[
+    "chain_operator",
+    "coalesce_operator",
+    "unwrap_operator",
+    "raise_operator",
+];
+const CORE_EFFECT_EXPORTS: &[&str] = &["continuation", "effect_callable", "handle"];
+const CORE_RESULT_EXPORTS: &[&str] = &["result"];
+const CORE_ERROR_EXPORTS: &[&str] = &["throws", "try", "throw"];
+const CORE_UNSAFE_EXPORTS: &[&str] = &["unsafe_effect", "unsafe"];
 const CORE_ASYNC_EXPORTS: &[&str] = &[
-    "Async", "Poll", "Future", "Executor", "Spin", "async", "await",
+    "async_effect",
+    "poll",
+    "future",
+    "executor",
+    "spin",
+    "async",
+    "await",
 ];
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
-    "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32",
+    "u64", "u128", "usize",
 ];
 const CORE_SORT_EXPORTS: &[&str] = &[
     "type",
@@ -478,140 +537,154 @@ const CORE_SORT_EXPORTS: &[&str] = &[
     "effects",
     "parameters",
     "string",
-    "abi",
 ];
-const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
+const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
+const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "mut", "shared", "borrow"];
-const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Slice", "Ptr", "size_of", "align_of"];
+const CORE_MEMORY_EXPORTS: &[&str] = &["array", "slice", "ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "loop", "while",
-    "if", "match", "for", "defer",
+    "break_effect",
+    "continue_effect",
+    "return_effect",
+    "attempt",
+    "break",
+    "continue",
+    "return",
+    "do",
+    "loop",
+    "while",
+    "if",
+    "match",
+    "for",
+    "defer",
 ];
 const CORE_ITER_EXPORTS: &[&str] = &[
-    "Iterator",
-    "IntoIterator",
-    "ArrayIntoIter",
-    "SliceIter",
-    "OwnedItem",
-    "BorrowedItem",
+    "iterator",
+    "into_iterator",
+    "array_into_iter",
+    "slice_iter",
+    "owned_item",
+    "borrowed_item",
 ];
-const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
-const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
+const CORE_ALGEBRA_EXPORTS: &[&str] = &["semigroup", "monoid"];
+const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["functor", "applicative", "monad"];
 
 const STD_ROOT_EXPORTS: &[(&str, &str)] = &[
-    ("Never", "core::never::Never"),
-    ("Copy", "core::marker::Copy"),
-    ("Drop", "core::marker::Drop"),
-    ("Option", "core::option::Option"),
-    ("Result", "core::result::Result"),
-    ("Slice", "core::memory::Slice"),
+    ("never", "core::never::never"),
+    ("copyable", "core::marker::copyable"),
+    ("droppable", "core::marker::droppable"),
+    ("option", "core::option::option"),
+    ("result", "core::result::result"),
+    ("slice", "core::memory::slice"),
 ];
 
 const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
-    ("prelude", "Never", "core::never::Never"),
-    ("prelude", "Copy", "core::marker::Copy"),
-    ("prelude", "Drop", "core::marker::Drop"),
-    ("never", "Never", "core::never::Never"),
-    ("marker", "Copy", "core::marker::Copy"),
-    ("marker", "Drop", "core::marker::Drop"),
-    ("option", "Option", "core::option::Option"),
-    ("result", "Result", "core::result::Result"),
-    ("error", "Throws", "core::error::Throws"),
+    ("prelude", "never", "core::never::never"),
+    ("prelude", "copyable", "core::marker::copyable"),
+    ("prelude", "droppable", "core::marker::droppable"),
+    ("never", "never", "core::never::never"),
+    ("marker", "copyable", "core::marker::copyable"),
+    ("marker", "droppable", "core::marker::droppable"),
+    ("option", "option", "core::option::option"),
+    ("result", "result", "core::result::result"),
+    ("error", "throws", "core::error::throws"),
     ("error", "try", "core::error::try"),
     ("error", "throw", "core::error::throw"),
-    ("ops", "Add", "core::ops::arith::Add"),
-    ("ops", "Sub", "core::ops::arith::Sub"),
-    ("ops", "Mul", "core::ops::arith::Mul"),
-    ("ops", "Div", "core::ops::arith::Div"),
-    ("ops", "Rem", "core::ops::arith::Rem"),
-    ("ops", "Neg", "core::ops::arith::Neg"),
-    ("ops", "BitAnd", "core::ops::bit::BitAnd"),
-    ("ops", "BitOr", "core::ops::bit::BitOr"),
-    ("ops", "BitXor", "core::ops::bit::BitXor"),
-    ("ops", "Shl", "core::ops::bit::Shl"),
-    ("ops", "Shr", "core::ops::bit::Shr"),
-    ("ops", "Not", "core::ops::bit::Not"),
-    ("ops", "AddAssign", "core::ops::assign::AddAssign"),
-    ("ops", "SubAssign", "core::ops::assign::SubAssign"),
-    ("ops", "MulAssign", "core::ops::assign::MulAssign"),
-    ("ops", "DivAssign", "core::ops::assign::DivAssign"),
-    ("ops", "RemAssign", "core::ops::assign::RemAssign"),
-    ("ops", "BitAndAssign", "core::ops::assign::BitAndAssign"),
-    ("ops", "BitOrAssign", "core::ops::assign::BitOrAssign"),
-    ("ops", "BitXorAssign", "core::ops::assign::BitXorAssign"),
-    ("ops", "ShlAssign", "core::ops::assign::ShlAssign"),
-    ("ops", "ShrAssign", "core::ops::assign::ShrAssign"),
-    ("ops", "Eq", "core::cmp::Eq"),
-    ("ops", "PartialOrdering", "core::cmp::PartialOrdering"),
-    ("ops", "PartialOrd", "core::cmp::PartialOrd"),
-    ("ops", "Index", "core::ops::index::Index"),
-    ("ops", "Chain", "core::flow::Chain"),
-    ("ops", "Coalesce", "core::flow::Coalesce"),
-    ("ops", "Unwrap", "core::flow::Unwrap"),
-    ("ops", "Raise", "core::flow::Raise"),
-    ("ops.arith", "Add", "core::ops::arith::Add"),
-    ("ops.arith", "Sub", "core::ops::arith::Sub"),
-    ("ops.arith", "Mul", "core::ops::arith::Mul"),
-    ("ops.arith", "Div", "core::ops::arith::Div"),
-    ("ops.arith", "Rem", "core::ops::arith::Rem"),
-    ("ops.arith", "Neg", "core::ops::arith::Neg"),
-    ("ops.bit", "BitAnd", "core::ops::bit::BitAnd"),
-    ("ops.bit", "BitOr", "core::ops::bit::BitOr"),
-    ("ops.bit", "BitXor", "core::ops::bit::BitXor"),
-    ("ops.bit", "Shl", "core::ops::bit::Shl"),
-    ("ops.bit", "Shr", "core::ops::bit::Shr"),
-    ("ops.bit", "Not", "core::ops::bit::Not"),
-    ("ops.assign", "AddAssign", "core::ops::assign::AddAssign"),
-    ("ops.assign", "SubAssign", "core::ops::assign::SubAssign"),
-    ("ops.assign", "MulAssign", "core::ops::assign::MulAssign"),
-    ("ops.assign", "DivAssign", "core::ops::assign::DivAssign"),
-    ("ops.assign", "RemAssign", "core::ops::assign::RemAssign"),
+    ("ops", "add_operator", "core::ops::arith::add_operator"),
+    ("ops", "sub_operator", "core::ops::arith::sub_operator"),
+    ("ops", "mul_operator", "core::ops::arith::mul_operator"),
+    ("ops", "div_operator", "core::ops::arith::div_operator"),
+    ("ops", "rem_operator", "core::ops::arith::rem_operator"),
+    ("ops", "neg_operator", "core::ops::arith::neg_operator"),
+    ("ops", "bit_and_operator", "core::ops::bit::bit_and_operator"),
+    ("ops", "bit_or_operator", "core::ops::bit::bit_or_operator"),
+    ("ops", "bit_xor_operator", "core::ops::bit::bit_xor_operator"),
+    ("ops", "shl_operator", "core::ops::bit::shl_operator"),
+    ("ops", "shr_operator", "core::ops::bit::shr_operator"),
+    ("ops", "not_operator", "core::ops::bit::not_operator"),
+    ("ops", "add_assign_operator", "core::ops::assign::add_assign_operator"),
+    ("ops", "sub_assign_operator", "core::ops::assign::sub_assign_operator"),
+    ("ops", "mul_assign_operator", "core::ops::assign::mul_assign_operator"),
+    ("ops", "div_assign_operator", "core::ops::assign::div_assign_operator"),
+    ("ops", "rem_assign_operator", "core::ops::assign::rem_assign_operator"),
+    ("ops", "bit_and_assign_operator", "core::ops::assign::bit_and_assign_operator"),
+    ("ops", "bit_or_assign_operator", "core::ops::assign::bit_or_assign_operator"),
+    ("ops", "bit_xor_assign_operator", "core::ops::assign::bit_xor_assign_operator"),
+    ("ops", "shl_assign_operator", "core::ops::assign::shl_assign_operator"),
+    ("ops", "shr_assign_operator", "core::ops::assign::shr_assign_operator"),
+    ("ops", "equality", "core::cmp::equality"),
+    ("ops", "partial_ordering", "core::cmp::partial_ordering"),
+    ("ops", "partial_order", "core::cmp::partial_order"),
+    ("ops", "index_operator", "core::ops::index::index_operator"),
+    ("ops", "chain_operator", "core::flow::chain_operator"),
+    ("ops", "coalesce_operator", "core::flow::coalesce_operator"),
+    ("ops", "unwrap_operator", "core::flow::unwrap_operator"),
+    ("ops", "raise_operator", "core::flow::raise_operator"),
+    ("ops.arith", "add_operator", "core::ops::arith::add_operator"),
+    ("ops.arith", "sub_operator", "core::ops::arith::sub_operator"),
+    ("ops.arith", "mul_operator", "core::ops::arith::mul_operator"),
+    ("ops.arith", "div_operator", "core::ops::arith::div_operator"),
+    ("ops.arith", "rem_operator", "core::ops::arith::rem_operator"),
+    ("ops.arith", "neg_operator", "core::ops::arith::neg_operator"),
+    ("ops.bit", "bit_and_operator", "core::ops::bit::bit_and_operator"),
+    ("ops.bit", "bit_or_operator", "core::ops::bit::bit_or_operator"),
+    ("ops.bit", "bit_xor_operator", "core::ops::bit::bit_xor_operator"),
+    ("ops.bit", "shl_operator", "core::ops::bit::shl_operator"),
+    ("ops.bit", "shr_operator", "core::ops::bit::shr_operator"),
+    ("ops.bit", "not_operator", "core::ops::bit::not_operator"),
+    ("ops.assign", "add_assign_operator", "core::ops::assign::add_assign_operator"),
+    ("ops.assign", "sub_assign_operator", "core::ops::assign::sub_assign_operator"),
+    ("ops.assign", "mul_assign_operator", "core::ops::assign::mul_assign_operator"),
+    ("ops.assign", "div_assign_operator", "core::ops::assign::div_assign_operator"),
+    ("ops.assign", "rem_assign_operator", "core::ops::assign::rem_assign_operator"),
     (
         "ops.assign",
-        "BitAndAssign",
-        "core::ops::assign::BitAndAssign",
+        "bit_and_assign_operator",
+        "core::ops::assign::bit_and_assign_operator",
     ),
     (
         "ops.assign",
-        "BitOrAssign",
-        "core::ops::assign::BitOrAssign",
+        "bit_or_assign_operator",
+        "core::ops::assign::bit_or_assign_operator",
     ),
     (
         "ops.assign",
-        "BitXorAssign",
-        "core::ops::assign::BitXorAssign",
+        "bit_xor_assign_operator",
+        "core::ops::assign::bit_xor_assign_operator",
     ),
-    ("ops.assign", "ShlAssign", "core::ops::assign::ShlAssign"),
-    ("ops.assign", "ShrAssign", "core::ops::assign::ShrAssign"),
-    ("ops.index", "Index", "core::ops::index::Index"),
-    ("cmp", "Eq", "core::cmp::Eq"),
-    ("cmp", "PartialOrdering", "core::cmp::PartialOrdering"),
-    ("cmp", "PartialOrd", "core::cmp::PartialOrd"),
-    ("flow", "Chain", "core::flow::Chain"),
-    ("flow", "Coalesce", "core::flow::Coalesce"),
-    ("flow", "Unwrap", "core::flow::Unwrap"),
-    ("flow", "Raise", "core::flow::Raise"),
-    ("unsafe", "Unsafe", "core::unsafe::Unsafe"),
+    ("ops.assign", "shl_assign_operator", "core::ops::assign::shl_assign_operator"),
+    ("ops.assign", "shr_assign_operator", "core::ops::assign::shr_assign_operator"),
+    ("ops.index", "index_operator", "core::ops::index::index_operator"),
+    ("cmp", "equality", "core::cmp::equality"),
+    ("cmp", "partial_ordering", "core::cmp::partial_ordering"),
+    ("cmp", "partial_order", "core::cmp::partial_order"),
+    ("flow", "chain_operator", "core::flow::chain_operator"),
+    ("flow", "coalesce_operator", "core::flow::coalesce_operator"),
+    ("flow", "unwrap_operator", "core::flow::unwrap_operator"),
+    ("flow", "raise_operator", "core::flow::raise_operator"),
+    ("unsafe", "unsafe_effect", "core::unsafe::unsafe_effect"),
     ("unsafe", "unsafe", "core::unsafe::unsafe"),
-    ("async", "Async", "core::async::Async"),
-    ("async", "Poll", "core::async::Poll"),
-    ("async", "Future", "core::async::Future"),
-    ("async", "Executor", "core::async::Executor"),
-    ("async", "Spin", "core::async::Spin"),
+    ("async", "async_effect", "core::async::async_effect"),
+    ("async", "poll", "core::async::poll"),
+    ("async", "future", "core::async::future"),
+    ("async", "executor", "core::async::executor"),
+    ("async", "spin", "core::async::spin"),
     ("async", "async", "core::async::async"),
     ("async", "await", "core::async::await"),
-    ("effect", "Continuation", "core::effect::Continuation"),
-    ("effect", "EffectCallable", "core::effect::EffectCallable"),
-    ("effect", "Handle", "core::effect::Handle"),
+    ("effect", "continuation", "core::effect::continuation"),
+    ("effect", "effect_callable", "core::effect::effect_callable"),
+    ("effect", "handle", "core::effect::handle"),
     ("sorts", "type", "core::sorts::type"),
     ("sorts", "region", "core::sorts::region"),
     ("sorts", "effect", "core::sorts::effect"),
     ("sorts", "effects", "core::sorts::effects"),
     ("sorts", "parameters", "core::sorts::parameters"),
     ("sorts", "string", "core::sorts::string"),
-    ("sorts", "abi", "core::sorts::abi"),
+    ("foreign", "abi", "core::foreign::abi"),
+    ("foreign", "foreign", "core::foreign::foreign"),
     ("passing", "copy", "core::passing::copy"),
     ("passing", "move", "core::passing::move"),
+    ("passing", "comptime", "core::passing::comptime"),
     ("borrow", "access", "core::borrow::access"),
     ("borrow", "mut", "$access$mut"),
     ("borrow", "shared", "$access$shared"),
@@ -619,22 +692,22 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("control", "do", "core::control::do"),
     ("control", "defer", "core::control::defer"),
     ("control", "loop", "core::control::loop"),
-    ("iter", "Iterator", "core::iter::Iterator"),
-    ("iter", "IntoIterator", "core::iter::IntoIterator"),
-    ("iter", "ArrayIntoIter", "core::iter::ArrayIntoIter"),
-    ("iter", "SliceIter", "core::iter::SliceIter"),
-    ("iter", "OwnedItem", "core::iter::OwnedItem"),
-    ("iter", "BorrowedItem", "core::iter::BorrowedItem"),
-    ("algebra", "Semigroup", "core::algebra::Semigroup"),
-    ("algebra", "Monoid", "core::algebra::Monoid"),
-    ("functional", "Functor", "core::functional::Functor"),
-    ("functional", "Applicative", "core::functional::Applicative"),
-    ("functional", "Monad", "core::functional::Monad"),
-    ("boxed", "Box", "alloc::boxed::Box"),
-    ("vec", "Vec", "alloc::vec::Vec"),
-    ("vec", "VecIntoIter", "alloc::vec::VecIntoIter"),
-    ("string", "String", "alloc::string::String"),
-    ("string", "FromUtf8Error", "alloc::string::FromUtf8Error"),
+    ("iter", "iterator", "core::iter::iterator"),
+    ("iter", "into_iterator", "core::iter::into_iterator"),
+    ("iter", "array_into_iter", "core::iter::array_into_iter"),
+    ("iter", "slice_iter", "core::iter::slice_iter"),
+    ("iter", "owned_item", "core::iter::owned_item"),
+    ("iter", "borrowed_item", "core::iter::borrowed_item"),
+    ("algebra", "semigroup", "core::algebra::semigroup"),
+    ("algebra", "monoid", "core::algebra::monoid"),
+    ("functional", "functor", "core::functional::functor"),
+    ("functional", "applicative", "core::functional::applicative"),
+    ("functional", "monad", "core::functional::monad"),
+    ("boxed", "box", "alloc::boxed::box"),
+    ("vec", "vec", "alloc::vec::vec"),
+    ("vec", "vec_into_iter", "alloc::vec::vec_into_iter"),
+    ("string", "string", "alloc::string::string"),
+    ("string", "from_utf8_error", "alloc::string::from_utf8_error"),
 ];
 
 fn validate_package_layout(
@@ -830,7 +903,7 @@ fn stable_package_root(identity: &str) -> String {
     let mut root = String::from("@");
     for byte in identity.as_bytes() {
         use std::fmt::Write as _;
-        write!(root, "{byte:02x}").expect("writing to a String cannot fail");
+        write!(root, "{byte:02x}").expect("writing to a string cannot fail");
     }
     root
 }
@@ -1179,7 +1252,16 @@ fn install_standard_namespaces(
             required_imports.insert((*name).to_owned(), format!("core.async.{name}"));
         }
         for name in CORE_SORT_EXPORTS {
+            // `String` is also the alloc runtime type. Compile-parameter
+            // positions recognize its sort directly, so preserve the runtime
+            // type as the unqualified import when alloc is exposed.
+            if *name == "string" && exposure.expose_alloc {
+                continue;
+            }
             required_imports.insert((*name).to_owned(), format!("core.sorts.{name}"));
+        }
+        for name in CORE_FOREIGN_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.foreign.{name}"));
         }
         for name in CORE_PASSING_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.passing.{name}"));
@@ -1215,7 +1297,7 @@ fn install_standard_namespaces(
             ) {
                 continue;
             }
-            if *module == "ops" && matches!(*name, "Chain" | "Coalesce" | "Unwrap" | "Raise") {
+            if *module == "ops" && matches!(*name, "chain_operator" | "coalesce_operator" | "unwrap_operator" | "raise_operator") {
                 continue;
             }
             std_required_imports
@@ -1337,6 +1419,7 @@ fn install_core_namespace(
             "async",
             "unsafe",
             "sorts",
+            "foreign",
             "control",
             "iter",
             "algebra",
@@ -1393,8 +1476,8 @@ fn install_core_namespace(
             package_root,
             &core_root,
             "option",
-            "Option",
-            "core::option::Option",
+            "option",
+            "core::option::option",
             "<core>",
         );
         for name in CORE_RESULT_EXPORTS {
@@ -1548,6 +1631,17 @@ fn install_core_namespace(
                 "sorts",
                 name,
                 &format!("core::sorts::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_FOREIGN_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "foreign",
+                name,
+                &format!("core::foreign::{name}"),
                 "<core>",
             );
         }
@@ -1766,6 +1860,7 @@ fn install_std_namespace(
         "async",
         "unsafe",
         "sorts",
+        "foreign",
         "control",
         "iter",
         "algebra",
@@ -1865,13 +1960,6 @@ fn collect_imports(
                 diagnostics.push(format!(
                     "{}: error: import alias `{}` conflicts with declaration in {}",
                     unit.source.path, definition.alias, symbol.source_path
-                ));
-            } else if module_paths.contains(&key) {
-                diagnostics.push(format!(
-                    "{}: error: import alias `{}` conflicts with child module `{}`",
-                    unit.source.path,
-                    definition.alias,
-                    key.join(".")
                 ));
             } else if unit.module_path == unit.package_root
                 && dependencies
@@ -2475,7 +2563,7 @@ fn validate_item_api(
         Item::Trait(definition) => {
             let mut trait_bound_types =
                 compile_parameter_names(&definition.compile_groups, &no_bound_types);
-            trait_bound_types.insert("Self".to_owned());
+            trait_bound_types.insert("self".to_owned());
             trait_bound_types.extend(definition.members.iter().filter_map(|member| match member {
                 TraitMember::AssociatedType { name, .. } => Some(name.clone()),
                 TraitMember::Function(_) => None,
@@ -2521,7 +2609,7 @@ fn validate_item_api(
             };
             let mut bound_types =
                 compile_parameter_names(&extension.compile_groups, &no_bound_types);
-            bound_types.insert("Self".to_owned());
+            bound_types.insert("self".to_owned());
             for (index, predicate) in extension.where_predicates.iter().enumerate() {
                 validate_exposed_type(
                     &predicate.subject,
@@ -3104,7 +3192,7 @@ impl Resolver {
             &HashSet::new(),
         );
         let mut trait_types = compile_parameter_names(&definition.compile_groups, &HashSet::new());
-        trait_types.insert("Self".to_owned());
+        trait_types.insert("self".to_owned());
         trait_types.extend(definition.members.iter().filter_map(|member| match member {
             TraitMember::AssociatedType { name, .. } => Some(name.clone()),
             TraitMember::Function(_) => None,
@@ -3155,7 +3243,7 @@ impl Resolver {
         }
 
         let mut member_type_scope = header_type_scope;
-        member_type_scope.insert("Self".to_owned());
+        member_type_scope.insert("self".to_owned());
         if extension.trait_ref.is_some() {
             member_type_scope.extend(extension.members.iter().filter_map(|member| match member {
                 ExtendMember::Const(binding) => Some(binding.name.clone()),
@@ -4002,7 +4090,8 @@ fn compile_parameter_names(
 fn compile_argument_name_is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16"
+        "i8"
+            | "i16"
             | "i32"
             | "i64"
             | "i128"
@@ -4339,7 +4428,12 @@ mod tests {
     #[test]
     fn reports_private_sibling_access_but_allows_descendants() {
         let error = resolve_sources(&[
-            unit("src/main.sc", &[], "let main(): i32 = { b.read() }\n", true),
+            unit(
+                "src/main.sc",
+                &[],
+                "let main(): i32 = { b.read() }\n",
+                true,
+            ),
             unit("src/a.sc", &["a"], "let secret(): i32 = { 1 }\n", false),
             unit(
                 "src/a/child.sc",
@@ -4409,16 +4503,16 @@ mod tests {
                 mutable: false,
                 access: None,
                 region: None,
-                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+                pointee: Box::new(Type::Named("self".into(), Vec::new())),
             }
         );
         assert_eq!(
             trait_method.groups[1][0].ty,
-            Type::Named("Self".into(), Vec::new())
+            Type::Named("self".into(), Vec::new())
         );
         assert_eq!(
             trait_method.return_type,
-            Some(Type::Named("Output".into(), Vec::new()))
+            Some(Type::Named("output".into(), Vec::new()))
         );
 
         let extension = program
@@ -4443,16 +4537,16 @@ mod tests {
                 mutable: false,
                 access: None,
                 region: None,
-                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+                pointee: Box::new(Type::Named("self".into(), Vec::new())),
             }
         );
         assert_eq!(
             implementation.groups[1][0].ty,
-            Type::Named("Self".into(), Vec::new())
+            Type::Named("self".into(), Vec::new())
         );
         assert_eq!(
             implementation.return_type,
-            Some(Type::Named("Output".into(), Vec::new()))
+            Some(Type::Named("output".into(), Vec::new()))
         );
         let associated_values = extension
             .members
@@ -4464,8 +4558,8 @@ mod tests {
                 ExtendMember::Function(_) => None,
             })
             .collect::<HashMap<_, _>>();
-        assert_eq!(associated_values["A"], Expr::Name("Self".into()));
-        assert_eq!(associated_values["B"], Expr::Name("A".into()));
+        assert_eq!(associated_values["a"], Expr::Name("self".into()));
+        assert_eq!(associated_values["B"], Expr::Name("a".into()));
     }
 
     #[test]
@@ -4498,12 +4592,12 @@ mod tests {
                 _ => None,
             })
             .expect("missing generic extension");
-        assert_eq!(extension.compile_groups[0][0].name, "T");
+        assert_eq!(extension.compile_groups[0][0].name, "t");
         assert_eq!(
             extension.target,
             Type::Named(
                 "api::Cell".into(),
-                vec![Type::Named("T".into(), Vec::new())]
+                vec![Type::Named("t".into(), Vec::new())]
             )
         );
         let ExtendMember::Function(new) = &extension.members[0] else {
@@ -4513,7 +4607,7 @@ mod tests {
             new.return_type,
             Some(Type::Named(
                 "api::Cell".into(),
-                vec![Type::Named("T".into(), Vec::new())]
+                vec![Type::Named("t".into(), Vec::new())]
             ))
         );
     }
@@ -5594,7 +5688,7 @@ let main(): i32 = { Option {} }
         let bare_result = resolve_sources(&[unit(
             "result.sc",
             &[],
-            "let outcome(): Result(bool)(i32) = { Result.Ok(1) }\n",
+            "let outcome(): Result(Bool)(i32) = { Result.Ok(1) }\n",
             true,
         )])
         .unwrap_err();
@@ -5736,7 +5830,7 @@ let main(): i32 = { Option {} }
                     .iter()
                     .map(|name| ("primitives", *name)),
             )
-            .chain([("option", "Option")])
+            .chain([("option", "option")])
             .chain(CORE_RESULT_EXPORTS.iter().map(|name| ("result", *name)))
             .chain(CORE_ERROR_EXPORTS.iter().map(|name| ("error", *name)))
             .chain(CORE_CMP_EXPORTS.iter().map(|name| ("cmp", *name)))
@@ -5749,6 +5843,7 @@ let main(): i32 = { Option {} }
             .chain(CORE_UNSAFE_EXPORTS.iter().map(|name| ("unsafe", *name)))
             .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
             .chain(CORE_SORT_EXPORTS.iter().map(|name| ("sorts", *name)))
+            .chain(CORE_FOREIGN_EXPORTS.iter().map(|name| ("foreign", *name)))
             .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(
                 CORE_BORROW_EXPORTS

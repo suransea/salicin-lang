@@ -1,7 +1,7 @@
-let Payload = struct { value: i32 }
+let payload = struct { value: i32 }
 
-let Container = struct { payload: Payload }
+let container = struct { payload: payload }
 
-extend Container: Copy {}
+extend container: copyable {}
 
 let main(): i32 = { 42 }

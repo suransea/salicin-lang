@@ -1,6 +1,6 @@
-let bounce(T: type)(move value: T)(again: bool): T = {
+let bounce(comptime t: type)(move value: t)(again: bool): t = {
   if again {
-    bounce(T)(value)(false)
+    bounce(t)(value)(false)
   } else {
     value
   }

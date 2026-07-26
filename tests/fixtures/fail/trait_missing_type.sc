@@ -1,9 +1,9 @@
-let Convert = trait {
-  let Output: type
+let convert = trait {
+  let output: type
 }
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: Convert() {}
+extend number: convert() {}
 
 let main(): i32 = { 0 }

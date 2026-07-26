@@ -1,17 +1,17 @@
-let Choice = enum {
-  Answer( answer: i32 ),
-  Empty,
+let choice = enum {
+  answer( answer: i32 ),
+  empty,
 }
 
-extend Choice {
+extend choice {
   let unwrap(move self)(): i32 = { match self
-      { Choice.Answer( answer: value ) -> value }
-      { Choice.Empty -> 0 }
+      { choice.answer( answer: value ) -> value }
+      { choice.empty -> 0 }
   }
 }
 
 let main(): i32 = {
-  let choice = Choice.Answer( answer: 42 )
+  let choice = choice.answer( answer: 42 )
   choice.unwrap()
 }
 

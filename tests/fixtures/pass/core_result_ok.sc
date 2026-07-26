@@ -1,10 +1,10 @@
-let Result = std.Result
+let result = std.result
 
 let main(): i32 = {
-  let value = Result(bool)(i32).Ok(42)
+  let value = result(bool)(i32).ok(42)
   match value
-    { Ok(item) -> item }
-    { Err(_) -> 0 }
+    { ok(item) -> item }
+    { err(_) -> 0 }
 }
 
 test("core_result_ok.sc") {

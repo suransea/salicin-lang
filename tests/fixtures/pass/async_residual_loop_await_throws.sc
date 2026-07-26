@@ -1,32 +1,32 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Result = std.Result
-let Throws = std.error.Throws
+let future = std.async.future
+let poll = std.async.poll
+let result = std.result
+let throws = std.error.throws
 
-let Step = struct {
-  drops: Ptr(mut)(i32),
+let step = struct {
+  drops: ptr(mut)(i32),
   done: bool,
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = bool
+extend step: future(()) {
+  let output = bool
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = {
-    Poll(bool).Ready(self.done)
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(bool) = {
+    poll(bool).ready(self.done)
   }
 }
 
-let increment(calls: Ptr(mut)(i32)): i32 = {
+let increment(calls: ptr(mut)(i32)): i32 = {
   unsafe {
     *calls = *calls + 1
     *calls
@@ -34,24 +34,24 @@ let increment(calls: Ptr(mut)(i32)): i32 = {
 }
 
 let make_step(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   fail_at: i32,
-): Step with(Throws(bool)) = {
+): step with(throws(bool)) = {
   let call = increment(calls)
   if call == fail_at {
     throw true
   } else {
-    Step { drops: drops, done: call == 3 }
+    step { drops: drops, done: call == 3 }
   }
 }
 
 let run(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   fail_at: i32,
 ): i32 = {
-  let result: Result(bool)(i32) = try {
+  let result: result(bool)(i32) = try {
     let mut future = async {
       loop {
         let done = await make_step(drops, calls, fail_at)
@@ -66,17 +66,17 @@ let run(
     if fail_at == 0 {
       let second = future.poll()
       match first
-        { Pending -> match second
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     } else {
       0
     }
   }
   match result
-    { Ok(value) -> value }
-    { Err(error) -> if error { 42 } else { 0 } }
+    { ok(value) -> value }
+    { err(error) -> if error { 42 } else { 0 } }
 }
 
 let main(): i32 = {

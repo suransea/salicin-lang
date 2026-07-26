@@ -1,23 +1,23 @@
-let Fixed(L: usize): type = Array(i32)(L)
+let fixed(comptime l: usize): type = array(i32)(l)
 
-let Keep = trait {
-  let Output(L: usize): type
+let keep = trait {
+  let output(comptime l: usize): type
 
-  let keep(L: usize)(move value: Output(L)): Output(L)
+  let keep(comptime l: usize)(move value: output(l)): output(l)
 }
 
-let Marker = struct {}
+let marker = struct {}
 
-extend Marker: Keep {
-  let Output = Fixed
+extend marker: keep {
+  let output = fixed
 
-  let keep(L: usize)(move value: Array(i32)(L)): Array(i32)(L) = {
+  let keep(comptime l: usize)(move value: array(i32)(l)): array(i32)(l) = {
     value
   }
 }
 
 let main(): i32 = {
-  let values = Marker.keep(2)([20, 22])
+  let values = marker.keep(2)([20, 22])
   values[0] + values[1]
 }
 

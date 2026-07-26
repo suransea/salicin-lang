@@ -1,19 +1,19 @@
-let read(R: region)(value: borrow(R)(i32)): i32 = {
-  let alias: borrow(R)(i32) = borrow(value)
+let read(comptime r: region)(value: borrow(r)(i32)): i32 = {
+  let alias: borrow(r)(i32) = borrow(value)
   alias
 }
 
-let generic_read(R: region, T: type)(cell: borrow(R)(Cell(T))): T
-where T: Copy = {
-  let alias: borrow(R)(Cell(T)) = borrow(cell)
+let generic_read(comptime r: region, comptime t: type)(cell: borrow(r)(cell(t))): t
+where t: copyable = {
+  let alias: borrow(r)(cell(t)) = borrow(cell)
   alias.value
 }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
 let main(): i32 = {
   let value = 20
-  read(value) + generic_read(cell: Cell { value: 22 })
+  read(value) + generic_read(cell: cell { value: 22 })
 }
 
 test("region_scoped_borrow.sc") {

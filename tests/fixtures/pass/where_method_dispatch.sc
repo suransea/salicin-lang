@@ -1,21 +1,21 @@
-let Measure = trait {
-  let measure(self: borrow(Self))(): i32
+let measure = trait {
+  let measure(self: borrow(self))(): i32
 }
 
-let Value = struct { value: i32 }
+let value = struct { value: i32 }
 
-extend Value: Measure {
-  let measure(self: borrow(Self))(): i32 = { self.value }
+extend value: measure {
+  let measure(self: borrow(self))(): i32 = { self.value }
 }
 
-let read(T: type)(value: borrow(T)): i32
-where T: Measure = { value.measure() }
+let read(comptime t: type)(value: borrow(t)): i32
+where t: measure = { value.measure() }
 
-let forward(T: type)(value: borrow(T)): i32
-where T: Measure = { read(value) }
+let forward(comptime t: type)(value: borrow(t)): i32
+where t: measure = { read(value) }
 
 let main(): i32 = {
-  let value = Value { value: 42 }
+  let value = value { value: 42 }
   forward(value)
 }
 

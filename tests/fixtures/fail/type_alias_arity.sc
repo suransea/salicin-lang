@@ -1,4 +1,4 @@
-let Cell(T: type) = struct { value: T }
-let Family(T: type): type = Cell(T)
+let cell(comptime t: type) = struct { value: t }
+let family(comptime t: type): type = cell(t)
 
-let main(value: Family): i32 = { 0 }
+let main(value: family): i32 = { 0 }

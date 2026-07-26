@@ -156,7 +156,7 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
             push_canonical_component(&mut encoded, name);
             encoded
         }
-        Ty::Never => "Never".to_owned(),
+        Ty::Never => "never".to_owned(),
         Ty::Function(function) => {
             let mut encoded = String::from("function");
             encoded.push_str(&function.groups.len().to_string());

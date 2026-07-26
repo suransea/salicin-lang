@@ -1,12 +1,12 @@
-let Pair(A: type, B: type) = struct { first: A, second: B }
+let pair(comptime a: type, comptime b: type) = struct { first: a, second: b }
 
-extend(X: type, Y: type) Pair(Y, X) {
-  let new(move first: Y, move second: X): Pair(Y, X) = { Pair { first: first, second: second } }
-  let take_first(move self)(): Y = { self.first }
+extend(comptime x: type, comptime y: type) pair(y, x) {
+  let new(move first: y, move second: x): pair(y, x) = { pair { first: first, second: second } }
+  let take_first(move self)(): y = { self.first }
 }
 
 let main(): i32 = {
-  let pair = Pair.new(42, true)
+  let pair = pair.new(42, true)
   pair.take_first()
 }
 

@@ -1,29 +1,29 @@
-let Option = std.Option
+let option = std.option
 
-let Iterator = std.iter.Iterator
-let IntoIterator = std.iter.IntoIterator
-let OwnedItem = std.iter.OwnedItem
+let iterator = std.iter.iterator
+let into_iterator = std.iter.into_iterator
+let owned_item = std.iter.owned_item
 
-let Once = struct { done: bool }
+let once = struct { done: bool }
 
-extend Once: Iterator {
-  let Item = OwnedItem(i32)
-  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
+extend once: iterator {
+  let item = owned_item(i32)
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
     if self.done {
-      None
+      none
     } else {
       self.done = true
-      Some(1)
+      some(1)
     }
   }
 }
 
-extend Once: IntoIterator {
-  let IntoIter = Once
-  let into_iter(move self)(): Once = { self }}
+extend once: into_iterator {
+  let into_iter = once
+  let into_iter(move self)(): once = { self }}
 
 let main(): i32 = {
-  for Once { done: false } { value ->
+  for once { done: false } { value ->
     break(value)
   }
   0

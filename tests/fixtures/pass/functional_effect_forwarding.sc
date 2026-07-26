@@ -1,33 +1,33 @@
-let Option = std.Option
-let Unsafe = std.unsafe.Unsafe
-let Applicative = std.functional.Applicative
-let Functor = std.functional.Functor
-let Monad = std.functional.Monad
+let option = std.option
+let unsafe_effect = std.unsafe.unsafe_effect
+let applicative = std.functional.applicative
+let functor = std.functional.functor
+let monad = std.functional.monad
 
-let unsafe_add_one(value: i32): i32 with(Unsafe) = {
+let unsafe_add_one(value: i32): i32 with(unsafe_effect) = {
   value + 1
 }
 
-let unsafe_next(value: i32): Option(i32) with(Unsafe) = {
-  Option(i32).Some(value + 2)
+let unsafe_next(value: i32): option(i32) with(unsafe_effect) = {
+  option(i32).some(value + 2)
 }
 
-let read_option(value: Option(i32)): i32 = {
+let read_option(value: option(i32)): i32 = {
   match value
-    { Some(number) -> number }
-    { None -> 0 }
+    { some(number) -> number }
+    { none -> 0 }
 }
 
 let main(): i32 = {
   let mapped = unsafe {
-    Option(i32).Some(40).map(unsafe_add_one)
+    option(i32).some(40).map(unsafe_add_one)
   }
   let applied = unsafe {
-    let transform: Option((i32): i32 with(Unsafe)) = Option.Some(unsafe_add_one)
-    transform.apply(Option(i32).Some(1))
+    let transform: option((i32): i32 with(unsafe_effect)) = option.some(unsafe_add_one)
+    transform.apply(option(i32).some(1))
   }
   let chained = unsafe {
-    Option(i32).Some(40).flat_map(unsafe_next)
+    option(i32).some(40).flat_map(unsafe_next)
   }
   read_option(mapped) + read_option(applied) + read_option(chained) - 43
 }

@@ -1,15 +1,15 @@
-let Read = trait {
-  let read(self: borrow(Self))(): i32
+let read = trait {
+  let read(self: borrow(self))(): i32
 }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend Cell(i32): Read {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend cell(i32): read {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
 let main(): i32 = {
-  let cell = Cell(i32) { value: 42 }
+  let cell = cell(i32) { value: 42 }
   cell.read()
 }
 

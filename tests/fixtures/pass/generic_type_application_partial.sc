@@ -1,4 +1,4 @@
-let identity(T: type)(move value: T): T = { value }
+let identity(comptime t: type)(move value: t): t = { value }
 
 let main(): i32 = {
   let identity_i32 = identity(i32)

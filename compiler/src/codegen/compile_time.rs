@@ -19,10 +19,7 @@ pub(super) fn access_mutability(name: &str) -> Option<bool> {
     match name {
         ACCESS_SHARED_MARKER | "shared" => Some(false),
         ACCESS_MUT_MARKER | "mut" => Some(true),
-        _ => match name
-            .rsplit(|character| character == ':' || character == '.')
-            .find(|segment| !segment.is_empty())
-        {
+        _ => match name.rsplit([':', '.']).find(|segment| !segment.is_empty()) {
             Some("shared") => Some(false),
             Some("mut") => Some(true),
             _ => None,

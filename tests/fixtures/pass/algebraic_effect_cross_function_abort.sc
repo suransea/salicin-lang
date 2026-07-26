@@ -1,14 +1,14 @@
-let Stop = effect {
+let stop = effect {
   let stop(): i32
 }
 
-let program(): i32 with(Stop) = {
-  let value = Stop.stop()
+let program(): i32 with(stop) = {
+  let value = stop.stop()
   value + 1
 }
 
 let main(): i32 = {
-  let result = Stop.handle stop { (resume) -> 40 } action {
+  let result = stop.handle stop { (resume) -> 40 } action {
       program() + 1
     }
   result + 2

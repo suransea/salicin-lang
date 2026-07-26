@@ -1,17 +1,17 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
-let ask(): i32 with(Ask) = {
-  Ask.value()
+let ask(): i32 with(ask) = {
+  ask.value()
 }
 
-let invoke(action: (): i32 with(Ask)): i32 with(Ask) = {
+let invoke(action: (): i32 with(ask)): i32 with(ask) = {
   action()
 }
 
 let main(): i32 = {
-  Ask.handle value { (resume) -> resume(42) } action {
+  ask.handle value { (resume) -> resume(42) } action {
       let selected = ask
       invoke(selected)
     }

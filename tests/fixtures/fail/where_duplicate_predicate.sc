@@ -1,4 +1,4 @@
-let identity(T: type)(value: T): T
-where T: Copy, T: Copy = { value }
+let identity(comptime t: type)(value: t): t
+where t: copyable, comptime t: copyable = { value }
 
 let main(): i32 = { identity(42) }

@@ -1,12 +1,12 @@
-let Cell(T: type) = struct { value: T }
-let Holder = struct { cell: Cell(i32) }
+let cell(comptime t: type) = struct { value: t }
+let holder = struct { cell: cell(i32) }
 
-extend(T: type) Cell(T) {
-  let take(move self)(): T = { self.value }
+extend(comptime t: type) cell(t) {
+  let take(move self)(): t = { self.value }
 }
 
 let main(): i32 = {
-  let holder = Holder { cell: Cell { value: 42 } }
+  let holder = holder { cell: cell { value: 42 } }
   holder.cell.take()
 }
 

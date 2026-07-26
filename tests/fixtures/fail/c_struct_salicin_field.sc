@@ -1,9 +1,9 @@
-let Inner = struct {
+let inner = struct {
   value: i32,
 }
 
-let Invalid = struct(c) {
-  inner: Inner,
+let invalid = struct(c) {
+  inner: inner,
 }
 
 let main(): i32 = { 0 }

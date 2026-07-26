@@ -1,12 +1,12 @@
-let Option = std.Option
+let option = std.option
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number {
-  let plus(self: borrow(Self))(x: i32)(y: i32): i32 = { self.value + x + y }
+extend number {
+  let plus(self: borrow(self))(x: i32)(y: i32): i32 = { self.value + x + y }
 }
 
 let main(): i32 = {
-  let add_last = Option(Number).Some(Number { value: 40 })?.plus(1)
+  let add_last = option(number).some(number { value: 40 })?.plus(1)
   add_last(1) ?? 0
 }

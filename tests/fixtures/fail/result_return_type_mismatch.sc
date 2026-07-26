@@ -1,5 +1,5 @@
-let Result = std.Result
+let result = std.result
 
-let wrong(): Result(bool)(i32) = { true }
+let wrong(): result(bool)(i32) = { true }
 
 let main(): i32 = { wrong() ?? 0 }

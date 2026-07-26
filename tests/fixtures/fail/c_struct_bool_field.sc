@@ -1,4 +1,4 @@
-let Invalid = struct(c) {
+let invalid = struct(c) {
   value: bool,
 }
 

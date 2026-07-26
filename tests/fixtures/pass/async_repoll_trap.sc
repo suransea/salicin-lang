@@ -1,4 +1,4 @@
-let Future = std.async.Future
+let future = std.async.future
 
 let main(): i32 = {
   let mut future = async { 42 }

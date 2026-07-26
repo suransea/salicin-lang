@@ -1,8 +1,8 @@
-let Option = std.Option
+let option = std.option
 
-let Adder = struct { base: i32 }
+let adder = struct { base: i32 }
 
-extend Adder {
+extend adder {
   let add(self)(value: i32): i32 = { self.base + value }
 }
 
@@ -13,7 +13,7 @@ let side_effect(count: borrow(mut)(i32)): i32 = {
 
 let main(): i32 = {
   let mut count = 0
-  let answer = Option(Adder).None?.add(side_effect(count)) ?? 42
+  let answer = option(adder).none?.add(side_effect(count)) ?? 42
   if count == 0 { answer } else { 0 }
 }
 

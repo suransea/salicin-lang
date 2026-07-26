@@ -1,63 +1,63 @@
 /// Internal suspension effect discharged by compiler-generated futures.
-pub let Async = effect {
+pub let async_effect = effect {
   /// Suspends the current asynchronous computation.
   let suspend(): ()
 }
 
 /// Result of polling an asynchronous computation once.
-pub let Poll(T: type) = enum {
-  Pending,
-  Ready(T)
+pub let poll(comptime t: type) = enum {
+  pending,
+  ready(t)
 }
 
 /// A cold asynchronous computation with residual effect row `E`.
-pub let Future(E: effects) = trait
-where Self: Move {
-  let Output: type
+pub let future(comptime e: effects) = trait
+where self: movable {
+  let output: type
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(Output) with(E)
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(output) with(e)
 }
 
 /// Explicit executor protocol. Creating a future never selects an executor.
-pub let Executor = trait {
-  let run(E: effects, F: type, T: type)
-    (self: borrow(mut)(Self))
-    (move future: F): T with(E)
-  where F: Future(E, Output = T)
+pub let executor = trait {
+  let run(comptime e: effects, comptime f: type, comptime t: type)
+    (self: borrow(mut)(self))
+    (move future: f): t with(e)
+  where f: future(e, output = t)
 }
 
 /// Minimal allocation-free executor that polls one future until completion.
-pub let Spin = struct {}
+pub let spin = struct {}
 
-extend Spin: Executor {
-  let run(E: effects, F: type, T: type)
-    (self: borrow(mut)(Self))
-    (move future: F): T with(E)
-  where F: Future(E, Output = T) = {
+extend spin: executor {
+  let run(comptime e: effects, comptime f: type, comptime t: type)
+    (self: borrow(mut)(self))
+    (move future: f): t with(e)
+  where f: future(e, output = t) = {
     let mut current = future
     loop {
       match current.poll()
-        { Ready(value) -> break(value) }
-        { Pending -> continue() }
+        { ready(value) -> break(value) }
+        { pending -> continue() }
     }
   }
 }
 
 /// Constructs a cold compiler-generated future without running `action`.
-pub let async(E: effects, F: type, T: type)
-  (move action: (): T with(core.async.Async, E)): F
-where F: Future(E, Output = T) = builtin()
+pub let async(comptime e: effects, comptime f: type, comptime t: type)
+  (move action: (): t with(core.async.async_effect, e)): f
+where f: future(e, output = t) = builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
-pub let await(E: effects, F: type, T: type)
-  (move future: F): T with(core.async.Async, E)
-where F: Future(E, Output = T) = {
+pub let await(comptime e: effects, comptime f: type, comptime t: type)
+  (move future: f): t with(core.async.async_effect, e)
+where f: future(e, output = t) = {
   let mut current = future
   loop {
     match current.poll()
-      { Pending -> Async.suspend() }
-      { Ready(value) -> break(value) }
+      { pending -> async_effect.suspend() }
+      { ready(value) -> break(value) }
   }
 }

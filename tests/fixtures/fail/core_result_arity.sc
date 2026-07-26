@@ -1,8 +1,8 @@
-let Result = std.Result
+let result = std.result
 
 let main(): i32 = {
-  let value: Result(i32) = Result(i32).Ok(42)
+  let value: result(i32) = result(i32).ok(42)
   match value
-    { Ok(item) -> item }
-    { Err(_) -> 0 }
+    { ok(item) -> item }
+    { err(_) -> 0 }
 }

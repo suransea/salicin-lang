@@ -1,55 +1,55 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
-let Unsafe = std.unsafe.Unsafe
+let poll = std.async.poll
+let future = std.async.future
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let Resource = struct {
-  counter: Ptr(mut)(i32),
+let resource = struct {
+  counter: ptr(mut)(i32),
   value: i32
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let Step = struct {
-  counter: Ptr(mut)(i32),
+let step = struct {
+  counter: ptr(mut)(i32),
   polled: bool
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polled {
-      Poll(i32).Ready(0)
+      poll(i32).ready(0)
     } else {
       self.polled = true
-      Poll(i32).Pending
+      poll(i32).pending
     }
   }
 }
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+let allocate(): ptr(mut)(i32) with(unsafe_effect) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+let release(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
@@ -60,26 +60,26 @@ let main(): i32 = {
     let counter = allocate()
     *counter = 0
     let mut future = async {
-      let resource = Resource { counter: counter, value: 40 }
-      let awaited = await Step { counter: counter, polled: false }
+      let resource = resource { counter: counter, value: 40 }
+      let awaited = await step { counter: counter, polled: false }
       resource.value + awaited
     }
     let pending = match future.poll()
-      { Pending -> 0 }
-      { Ready(_) -> 100 }
+      { pending -> 0 }
+      { ready(_) -> 100 }
     let result = match future.poll()
-      { Ready(value) -> value }
-      { Pending -> 100 }
+      { ready(value) -> value }
+      { pending -> 100 }
 
     do {
       let mut cancelled = async {
-        let resource = Resource { counter: counter, value: 0 }
-        let awaited = await Step { counter: counter, polled: false }
+        let resource = resource { counter: counter, value: 0 }
+        let awaited = await step { counter: counter, polled: false }
         resource.value + awaited
       }
       match cancelled.poll()
-        { Pending -> () }
-        { Ready(_) -> () }
+        { pending -> () }
+        { ready(_) -> () }
     }
 
     let drops = *counter

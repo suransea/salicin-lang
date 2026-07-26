@@ -121,7 +121,7 @@ impl Analyzer {
                 let fixed_output;
                 let output = match operator_trait.method_output {
                     OperatorMethodOutput::Associated => {
-                        implementation.associated_types.get("Output")?
+                        implementation.associated_types.get("output")?
                     }
                     OperatorMethodOutput::Bool => {
                         fixed_output = Ty::Bool;
@@ -197,7 +197,7 @@ impl Analyzer {
                 && Self::access_boundary_allows(origin, &implementation.access)
         })?;
         let method = implementation.methods.get(operator.method())?.clone();
-        let output = implementation.associated_types.get("Output")?.clone();
+        let output = implementation.associated_types.get("output")?.clone();
         expected
             .filter(|expected| **expected != Ty::Error)
             .is_none_or(|expected| output == *expected || self.is_uninhabited_type(&output))

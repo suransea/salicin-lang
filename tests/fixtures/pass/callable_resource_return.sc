@@ -1,21 +1,21 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let consume(move resource: Resource): () = { () }
+let consume(move resource: resource): () = { () }
 
-let finish(move resource: Resource)(value: i32): i32 = {
+let finish(move resource: resource)(value: i32): i32 = {
   consume(resource)
   value
 }
 
 let make() = {
-  let pending = finish(Resource { value: 1 })
+  let pending = finish(resource { value: 1 })
   pending
 }
 

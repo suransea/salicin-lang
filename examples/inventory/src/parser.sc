@@ -1,9 +1,9 @@
-let Result = std.Result
-let FromUtf8Error = std.string.FromUtf8Error
-let String = std.string.String
-let Vec = std.vec.Vec
+let result = std.result
+let from_utf8_error = std.string.from_utf8_error
+let string = std.string.string
+let vec = std.vec.vec
 
 /// Validates and transfers ownership of bytes into an owning product name.
-pub(package) let decode_name(move bytes: Vec(u8)): Result(FromUtf8Error)(String) = {
-  String.from_utf8(bytes)
+pub(package) let decode_name(move bytes: vec(u8)): result(from_utf8_error)(string) = {
+  string.from_utf8(bytes)
 }

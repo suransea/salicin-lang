@@ -599,7 +599,7 @@ impl Analyzer {
             Ty::Slice(element) => format!("Slice({})", self.diagnostic_type_name(element)),
             Ty::Pointer { pointee, mutable } => format!(
                 "{}({})",
-                if *mutable { "Ptr(mut)" } else { "Ptr" },
+                if *mutable { "Ptr(mut)" } else { "ptr" },
                 self.diagnostic_type_name(pointee)
             ),
             Ty::Reference {
@@ -635,7 +635,7 @@ impl Analyzer {
                     .join(", ");
                 format!("{}({arguments})", instance.key.template)
             }
-            Ty::Never => "Never".to_owned(),
+            Ty::Never => "never".to_owned(),
             Ty::Error => "<error>".to_owned(),
             Ty::Function(function) => {
                 let mut rendered = String::new();
@@ -654,7 +654,7 @@ impl Analyzer {
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
                 let mut effects = function.custom_effects.clone();
                 if function.unsafe_effect {
-                    effects.insert(0, "Unsafe".to_owned());
+                    effects.insert(0, "unsafe_effect".to_owned());
                 }
                 if !effects.is_empty() {
                     rendered.push_str(" with(");
@@ -1526,7 +1526,8 @@ impl Analyzer {
                     || self.abstract_type_parameters.contains_key(name)
                     || matches!(
                         name.as_str(),
-                        "i8" | "i16"
+                        "i8"
+                            | "i16"
                             | "i32"
                             | "i64"
                             | "i128"
@@ -1538,7 +1539,7 @@ impl Analyzer {
                             | "u128"
                             | "usize"
                             | "bool"
-                            | "Never"
+                            | "never"
                     )
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)

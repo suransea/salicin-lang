@@ -1,20 +1,20 @@
-let Tick = effect {
+let tick = effect {
   let tick(): i32
 }
 
-let even(count: i32): i32 with(Tick) = {
+let even(count: i32): i32 with(tick) = {
   if count == 0 { return(0) }
-  Tick.tick() + odd(count - 1)
+  tick.tick() + odd(count - 1)
 }
 
-let odd(count: i32): i32 with(Tick) = {
+let odd(count: i32): i32 with(tick) = {
   if count == 0 { return(0) }
-  Tick.tick() + even(count - 1)
+  tick.tick() + even(count - 1)
 }
 
 let main(): i32 = {
   let value = 14
-  Tick.handle tick { (resume) -> resume(value) } action {
+  tick.handle tick { (resume) -> resume(value) } action {
       even(3)
     }
 }

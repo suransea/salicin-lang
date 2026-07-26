@@ -11,6 +11,28 @@ use super::lower::{error_expr, flatten_call, BoundMethodConstraint, TypeProbe};
 use super::registry::NominalKind;
 use super::Analyzer;
 
+pub(super) fn empty_trailing_closure_constructor(expression: &Expr) -> Option<&Expr> {
+    let Expr::Call(constructor, arguments) = expression.unlocated() else {
+        return None;
+    };
+    let [CallArg {
+        label: None,
+        value,
+    }] = arguments.as_slice()
+    else {
+        return None;
+    };
+    let Expr::Closure(parameters, body) = value.unlocated() else {
+        return None;
+    };
+    if !parameters.is_empty()
+        || !matches!(body.unlocated(), Expr::Block(statements, None) if statements.is_empty())
+    {
+        return None;
+    }
+    Some(constructor.unlocated())
+}
+
 impl Analyzer {
     pub(super) fn lower_call(
         &mut self,
@@ -371,9 +393,14 @@ impl Analyzer {
                 self.error(format!("type parameter `{name}` is not callable"));
                 return error_expr();
             }
-            if name == "Self" {
+            if name == "self" {
                 self.error("expression `Self` is only available inside an extend member");
                 return error_expr();
+            }
+            if self.empty_struct_candidate(name, &groups, context) {
+                let constructor = empty_trailing_closure_constructor(expression)
+                    .expect("empty struct candidate has an empty trailing closure");
+                return self.lower_struct_literal(constructor, &[], expected, context);
             }
             if self.function_overloads.contains_key(name) {
                 let Some(selected) = self.resolve_function_overload(name, &groups) else {
@@ -694,6 +721,36 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    pub(super) fn empty_struct_candidate(
+        &self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> bool {
+        if context.shadows_top_level_name(name)
+            || groups.last().is_none_or(|group| {
+                group.len() != 1
+                    || !matches!(
+                        group[0].value.unlocated(),
+                        Expr::Closure(parameters, body)
+                            if parameters.is_empty()
+                                && matches!(
+                                    body.unlocated(),
+                                    Expr::Block(statements, None) if statements.is_empty()
+                                )
+                    )
+            })
+        {
+            return false;
+        }
+        self.struct_layouts
+            .get(name)
+            .is_some_and(|layout| layout.fields.is_empty() && groups.len() == 1)
+            || self.struct_templates.get(name).is_some_and(|template| {
+                template.fields.is_empty() && groups.len() == template.compile_groups.len() + 1
+            })
     }
 
     fn lower_recursive_frame_call(

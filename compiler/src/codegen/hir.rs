@@ -190,7 +190,7 @@ impl fmt::Display for Ty {
                 write!(
                     f,
                     "{}({pointee})",
-                    if *mutable { "Ptr(mut)" } else { "Ptr" }
+                    if *mutable { "Ptr(mut)" } else { "ptr" }
                 )
             }
             Self::Reference {
@@ -212,7 +212,7 @@ impl fmt::Display for Ty {
             Self::Slice(element) => write!(f, "Slice({element})"),
             Self::Array(element, length) => write!(f, "Array({element})({length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
-            Self::Never => f.write_str("Never"),
+            Self::Never => f.write_str("never"),
             Self::Error => f.write_str("<error>"),
             Self::Function(function) => {
                 for group in &function.groups {
@@ -229,7 +229,7 @@ impl fmt::Display for Ty {
                 write!(f, "{}", function.result)?;
                 let mut effects = function.custom_effects.clone();
                 if function.unsafe_effect {
-                    effects.insert(0, "Unsafe".to_owned());
+                    effects.insert(0, "unsafe_effect".to_owned());
                 }
                 if let Some(error) = &function.throws_error {
                     effects.push(format!("Throws({error})"));
@@ -255,7 +255,7 @@ impl fmt::Display for Ty {
             } => {
                 let mut effects = custom_effects.clone();
                 if *unsafe_effect {
-                    effects.insert(0, "Unsafe".to_owned());
+                    effects.insert(0, "unsafe_effect".to_owned());
                 }
                 if let Some(error) = throws_error {
                     effects.push(format!("Throws({error})"));

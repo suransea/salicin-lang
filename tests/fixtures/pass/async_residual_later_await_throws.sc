@@ -1,62 +1,62 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Result = std.Result
-let Throws = std.error.Throws
+let future = std.async.future
+let poll = std.async.poll
+let result = std.result
+let throws = std.error.throws
 
-let Step = struct {
-  drops: Ptr(mut)(i32),
+let step = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
   drop_amount: i32,
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + self.drop_amount
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
 let make_second(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   first: i32,
   fail: bool,
-): Step with(Throws(bool)) = {
+): step with(throws(bool)) = {
   unsafe {
     *calls = *calls + 1
   }
   if fail {
     throw true
   } else {
-    Step { drops: drops, polls: 0, value: first + 40, drop_amount: 1 }
+    step { drops: drops, polls: 0, value: first + 40, drop_amount: 1 }
   }
 }
 
 let run(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   fail: bool,
 ): i32 = {
-  let result: Result(bool)(i32) = try {
+  let result: result(bool)(i32) = try {
     let mut future = async {
-      let first = await Step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
+      let first = await step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
       let second = await make_second(drops, calls, first, fail)
       second
     }
@@ -67,17 +67,17 @@ let run(
     } else {
       let third = future.poll()
       match first
-        { Pending -> match second
-          { Pending -> match third
-            { Ready(value) -> value }
-            { Pending -> 0 } }
-          { Ready(_) -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { pending -> match third
+            { ready(value) -> value }
+            { pending -> 0 } }
+          { ready(_) -> 0 } }
+        { ready(_) -> 0 }
     }
   }
   match result
-    { Ok(value) -> value }
-    { Err(error) -> if error { 42 } else { 0 } }
+    { ok(value) -> value }
+    { err(error) -> if error { 42 } else { 0 } }
 }
 
 let main(): i32 = {

@@ -1,13 +1,13 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
-let Resource = struct { counter: Ptr(mut)(i32), value: i32 }
+let resource = struct { counter: ptr(mut)(i32), value: i32 }
 
-extend Resource {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend resource {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
@@ -23,14 +23,14 @@ let main(): i32 = {
   }
   let mut score = 0
   do {
-    let mut empty: Vec(Resource) = Vec(Resource).new()
+    let mut empty: vec(resource) = vec(resource).new()
     empty.reverse()
 
-    let mut values: Vec(Resource) = Vec(Resource).new()
-    values.push(Resource { counter: counter, value: 1 })
-    values.push(Resource { counter: counter, value: 2 })
-    values.push(Resource { counter: counter, value: 3 })
-    values.push(Resource { counter: counter, value: 4 })
+    let mut values: vec(resource) = vec(resource).new()
+    values.push(resource { counter: counter, value: 1 })
+    values.push(resource { counter: counter, value: 2 })
+    values.push(resource { counter: counter, value: 3 })
+    values.push(resource { counter: counter, value: 4 })
     values.swap(0, 3)
     values.swap(1, 1)
     values.reverse()

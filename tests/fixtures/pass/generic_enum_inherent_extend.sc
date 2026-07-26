@@ -1,17 +1,17 @@
-let Maybe(T: type) = enum {
-  Some(T),
-  None,
+let maybe(comptime t: type) = enum {
+  some(t),
+  none,
 }
 
-extend(T: type) Maybe(T) {
-  let unwrap_or(move self)(move fallback: T): T = { match self
-      { Some(value) -> value }
-      { None -> fallback }
+extend(comptime t: type) maybe(t) {
+  let unwrap_or(move self)(move fallback: t): t = { match self
+      { some(value) -> value }
+      { none -> fallback }
   }
 }
 
 let main(): i32 = {
-  let value = Maybe.Some(42)
+  let value = maybe.some(42)
   value.unwrap_or(0)
 }
 

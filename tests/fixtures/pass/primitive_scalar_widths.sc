@@ -41,8 +41,8 @@ let layouts(): bool = {
     size_of(u64) == 8 &&
     size_of(i128) == 16 &&
     size_of(u128) == 16 &&
-    size_of(isize) == size_of(Ptr(i8)) &&
-    size_of(usize) == size_of(Ptr(i8))
+    size_of(isize) == size_of(ptr(i8)) &&
+    size_of(usize) == size_of(ptr(i8))
 }
 
 let main(): i32 = {

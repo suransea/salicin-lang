@@ -1,18 +1,18 @@
-let Step = effect {
+let step = effect {
   let tick(): ()
 }
 
-let Pair = struct { left: i32, right: i32 }
+let pair = struct { left: i32, right: i32 }
 
-let update(pair: borrow(mut)(Pair), left: borrow(mut)(i32)): () with(Step) = {
-  Step.tick()
+let update(pair: borrow(mut)(pair), left: borrow(mut)(i32)): () with(step) = {
+  step.tick()
   pair.right = pair.right + 1
   left = left + 1
 }
 
 let main(): i32 = {
-  let mut pair = Pair { left: 20, right: 20 }
-  Step.handle tick { (resume) ->
+  let mut pair = pair { left: 20, right: 20 }
+  step.handle tick { (resume) ->
       resume(())
     } action {
       update(pair, pair.left)

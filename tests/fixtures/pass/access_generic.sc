@@ -1,15 +1,15 @@
-let inspect(A: access)(value: borrow(A)(i32)): i32 = { value }
+let inspect(comptime a: access)(value: borrow(a)(i32)): i32 = { value }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let view(A: access)(self: borrow(A)(Self))(): borrow(A)(T) = { borrow(A)(self.value) }
+extend(comptime t: type) cell(t) {
+  let view(comptime a: access)(self: borrow(a)(self))(): borrow(a)(t) = { borrow(a)(self.value) }
 }
 
 let main(): i32 = {
   let mut left = 1
   let right = 20
-  let mut cell = Cell { value: 20 }
+  let mut cell = cell { value: 20 }
   do {
     let reference = cell.view(mut)()
     reference = 22

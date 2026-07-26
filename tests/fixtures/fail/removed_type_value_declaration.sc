@@ -1,3 +1,3 @@
-let Legacy = type
+let legacy = type
 
 let main(): i32 = { 42 }

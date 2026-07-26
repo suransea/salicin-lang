@@ -1,103 +1,103 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Resource = struct {
-  drops: Ptr(mut)(i32),
+let resource = struct {
+  drops: ptr(mut)(i32),
   value: i32,
 }
 
-let Step = struct {
-  drops: Ptr(mut)(i32),
+let step = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 100
     }
   }
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 10
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let record(calls: Ptr(mut)(i32), value: i32): i32 = {
+let record(calls: ptr(mut)(i32), value: i32): i32 = {
   unsafe {
     *calls = *calls + 1
   }
   value
 }
 
-let run_success(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
+let run_success(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
   let mut future = async {
-    let retained = Resource { drops: drops, value: 1 }
-    let value = await Step { drops: drops, polls: 0, value: 40 }
-    value + retained.value + Ask.ask()
+    let retained = resource { drops: drops, value: 1 }
+    let value = await step { drops: drops, polls: 0, value: 40 }
+    value + retained.value + ask.ask()
   }
-  Ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
+  ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let run_cancelled(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
+let run_cancelled(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
       let mut future = async {
-        let retained = Resource { drops: drops, value: 1 }
-        let value = await Step { drops: drops, polls: 0, value: 40 }
-        value + retained.value + Ask.ask()
+        let retained = resource { drops: drops, value: 1 }
+        let value = await step { drops: drops, polls: 0, value: 40 }
+        value + retained.value + ask.ask()
       }
       match future.poll()
-        { Pending -> 42 }
-        { Ready(_) -> 0 }
+        { pending -> 42 }
+        { ready(_) -> 0 }
     }
 }
 
-let run_abandoned(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (_) -> record(calls, 42) } action {
+let run_abandoned(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (_) -> record(calls, 42) } action {
       let mut future = async {
-        let retained = Resource { drops: drops, value: 1 }
-        let value = await Step { drops: drops, polls: 0, value: 40 }
-        value + retained.value + Ask.ask()
+        let retained = resource { drops: drops, value: 1 }
+        let value = await step { drops: drops, polls: 0, value: 40 }
+        value + retained.value + ask.ask()
       }
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 

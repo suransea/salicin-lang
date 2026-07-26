@@ -1,5 +1,5 @@
-extend(A: access, T: type) Ptr(A)(T) {
-  let identity(self)(): Ptr(A)(T) = { self }
+extend(comptime a: access, comptime t: type) ptr(a)(t) {
+  let identity(self)(): ptr(a)(t) = { self }
 }
 
 let main(): i32 = { 0 }

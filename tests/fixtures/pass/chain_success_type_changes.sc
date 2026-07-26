@@ -1,9 +1,9 @@
-let Result = std.Result
+let result = std.result
 
-let Boxed = struct { answer: bool }
+let boxed = struct { answer: bool }
 
 let main(): i32 = {
-  let answer = Result(bool)(Boxed).Ok(Boxed { answer: true })?.answer
+  let answer = result(bool)(boxed).ok(boxed { answer: true })?.answer
   if answer ?? false { 42 } else { 0 }
 }
 

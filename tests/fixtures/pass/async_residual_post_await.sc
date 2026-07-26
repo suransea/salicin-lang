@@ -1,32 +1,32 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Step = struct {
+let step = struct {
   polls: i32,
   value: i32,
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let make_step(): Step with(Ask) = {
-  Step { polls: 0, value: Ask.ask() }
+let make_step(): step with(ask) = {
+  step { polls: 0, value: ask.ask() }
 }
 
 let main(): i32 = {
@@ -34,14 +34,14 @@ let main(): i32 = {
     let value = await make_step()
     value + 2
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let first = future.poll()
       let second = future.poll()
       match first
-        { Pending -> match second
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 

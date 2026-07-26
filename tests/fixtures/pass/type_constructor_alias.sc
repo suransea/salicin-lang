@@ -1,12 +1,12 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-let Family(T: type): type = Cell(T)
-let Constructor: (T: type): type = Cell
-let Scalar = i32
+let family(comptime t: type): type = cell(t)
+let constructor: (comptime t: type): type = cell
+let scalar = i32
 
-let main(): Scalar = {
-  let left: Family(i32) = Family(i32) { value: 41 }
-  let right = Constructor(i32) { value: 1 }
+let main(): scalar = {
+  let left: family(i32) = family(i32) { value: 41 }
+  let right = constructor(i32) { value: 1 }
   left.value + right.value
 }
 

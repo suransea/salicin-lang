@@ -1,32 +1,32 @@
-let Decide = effect {
+let decide = effect {
   let accept(value: i32): bool
 }
 
-let Event = enum { Value( value: i32 ), Empty }
+let event = enum { value( value: i32 ), empty }
 
-extend Event: Copy {}
+extend event: copyable {}
 
-let accepted(value: i32): bool with(Decide) = {
-  Decide.accept(value)
+let accepted(value: i32): bool with(decide) = {
+  decide.accept(value)
 }
 
-let classify_direct(event: Event): i32 with(Decide) = {
+let classify_direct(event: event): i32 with(decide) = {
   match event
-    { Value( value: value ) if Decide.accept(value) -> value }
-    { Value( value: value ) -> value + 1 }
-    { Empty -> 0 }
+    { value( value: value ) if decide.accept(value) -> value }
+    { value( value: value ) -> value + 1 }
+    { empty -> 0 }
 }
 
-let classify_named(event: Event): i32 with(Decide) = {
+let classify_named(event: event): i32 with(decide) = {
   match event
-    { Value( value: value ) if accepted(value) -> value }
-    { Value( value: value ) -> value + 1 }
-    { Empty -> 0 }
+    { value( value: value ) if accepted(value) -> value }
+    { value( value: value ) -> value + 1 }
+    { empty -> 0 }
 }
 
 let main(): i32 = {
-  Decide.handle accept { (value, resume) -> resume(value == 20) } action {
-      classify_direct(Event.Value( value: 20 )) + classify_named(Event.Value( value: 21 ))
+  decide.handle accept { (value, resume) -> resume(value == 20) } action {
+      classify_direct(event.value( value: 20 )) + classify_named(event.value( value: 21 ))
     }
 }
 

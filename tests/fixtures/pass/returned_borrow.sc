@@ -1,57 +1,57 @@
-let Pair = struct { left: i32, right: i32 }
-let Holder(T: type) = struct { value: T }
+let pair = struct { left: i32, right: i32 }
+let holder(comptime t: type) = struct { value: t }
 
-let RightView = trait {
-  let view(R: region)(self: borrow(R)(Self))(): borrow(R)(i32)
+let right_view = trait {
+  let view(comptime r: region)(self: borrow(r)(self))(): borrow(r)(i32)
 }
 
-let left(R: region)(pair: borrow(R)(Pair)): borrow(R)(i32) = { borrow(pair.left) }
+let left(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { borrow(pair.left) }
 
-let left_mut(R: region)
-  (pair: borrow(mut, R)(Pair)): borrow(mut, R)(i32) = { borrow(mut)(pair.left) }
+let left_mut(comptime r: region)
+  (pair: borrow(mut, r)(pair)): borrow(mut, r)(i32) = { borrow(mut)(pair.left) }
 
-let forward(R: region)(pair: borrow(R)(Pair)): borrow(R)(i32) = { left(pair) }
+let forward(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { left(pair) }
 
-let same(R: region, T: type)(value: borrow(R)(T)): borrow(R)(T) = { borrow(value) }
+let same(comptime r: region, comptime t: type)(value: borrow(r)(t)): borrow(r)(t) = { borrow(value) }
 
-let forwarded_method(R: region)(pair: borrow(R)(Pair)): borrow(R)(i32) = { pair.right_method() }
+let forwarded_method(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { pair.right_method() }
 
-let inferred_left(pair: borrow(Pair)): borrow(i32) = { borrow(pair.left) }
+let inferred_left(pair: borrow(pair)): borrow(i32) = { borrow(pair.left) }
 
-let inferred_same(T: type)(value: borrow(T)): borrow(T) = { borrow(value) }
+let inferred_same(comptime t: type)(value: borrow(t)): borrow(t) = { borrow(value) }
 
-let inferred_forward(R: region)(pair: borrow(R)(Pair)): borrow(R)(i32) = { inferred_left(pair) }
+let inferred_forward(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { inferred_left(pair) }
 
-extend Pair {
-  let right_ref(R: region)(pair: borrow(R)(Pair)): borrow(R)(i32) = { borrow(pair.right) }
+extend pair {
+  let right_ref(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { borrow(pair.right) }
 
-  let right_method(R: region)(self: borrow(R)(Self))(): borrow(R)(i32) = { borrow(self.right) }
+  let right_method(comptime r: region)(self: borrow(r)(self))(): borrow(r)(i32) = { borrow(self.right) }
 
-  let left_mut_method(R: region)
-    (self: borrow(mut, R)(Self))(): borrow(mut, R)(i32) = { borrow(mut)(self.left) }
+  let left_mut_method(comptime r: region)
+    (self: borrow(mut, r)(self))(): borrow(mut, r)(i32) = { borrow(mut)(self.left) }
 
-  let inferred_right(self: borrow(Self))(): borrow(i32) = { borrow(self.right) }
+  let inferred_right(self: borrow(self))(): borrow(i32) = { borrow(self.right) }
 
-  let inferred_left_mut(self: borrow(mut)(Self))(): borrow(mut)(i32) = { borrow(mut)(self.left) }
+  let inferred_left_mut(self: borrow(mut)(self))(): borrow(mut)(i32) = { borrow(mut)(self.left) }
 }
 
-extend(T: type) Holder(T) {
-  let get(R: region)(self: borrow(R)(Self))(): borrow(R)(T) = { borrow(self.value) }
+extend(comptime t: type) holder(t) {
+  let get(comptime r: region)(self: borrow(r)(self))(): borrow(r)(t) = { borrow(self.value) }
 }
 
-extend Pair: RightView {
-  let view(R: region)(self: borrow(R)(Self))(): borrow(R)(i32) = { borrow(self.right) }
+extend pair: right_view {
+  let view(comptime r: region)(self: borrow(r)(self))(): borrow(r)(i32) = { borrow(self.right) }
 }
 
 let main(): i32 = {
-  let mut pair = Pair { left: 20, right: 0 }
-  let holder = Holder { value: 0 }
+  let mut pair = pair { left: 20, right: 0 }
+  let holder = holder { value: 0 }
   let before = do {
     let reference = forward(pair)
     let generic = same(value: pair)
-    let associated = Pair.right_ref(pair)
+    let associated = pair.right_ref(pair)
     let method = pair.right_method()
-    let qualified = Pair.right_method(self: pair)()
+    let qualified = pair.right_method(self: pair)()
     let forwarded = forwarded_method(pair)
     let generic_method = holder.get()
     let trait_method = pair.view()

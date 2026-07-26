@@ -1,9 +1,9 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { counter: Ptr(mut)(i32), value: i32 }
+let resource = struct { counter: ptr(mut)(i32), value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
@@ -18,9 +18,9 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let mut boxed = Box.new(T: Resource)(Resource { counter: counter, value: 10 })
+    let mut boxed = box.new(comptime t: resource)(resource { counter: counter, value: 10 })
     do {
-      let previous = boxed.replace(Resource { counter: counter, value: 20 })
+      let previous = boxed.replace(resource { counter: counter, value: 20 })
     }
   }
   let drops = unsafe {

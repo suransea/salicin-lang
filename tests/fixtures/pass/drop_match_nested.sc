@@ -1,27 +1,27 @@
-let Resource = struct { value: i32 }
-let Bundle = struct { left: Resource, right: Resource }
-let Choice = enum { Some(Bundle, Resource), None }
+let resource = struct { value: i32 }
+let bundle = struct { left: resource, right: resource }
+let choice = enum { some(bundle, resource), none }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
-let inspect(move choice: Choice): i32 = { match choice
-    { Some(Bundle(left: left, right: _), _) -> do {
+let inspect(move choice: choice): i32 = { match choice
+    { some(bundle(left: left, right: _), _) -> do {
         consume(left)
         return(42)
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
 let main(): i32 = { inspect(
-    Choice.Some(Bundle { left: Resource { value: 1 }, right: Resource { value: 1 } }, Resource { value: 1 })
+    choice.some(bundle { left: resource { value: 1 }, right: resource { value: 1 } }, resource { value: 1 })
   )
 }
 

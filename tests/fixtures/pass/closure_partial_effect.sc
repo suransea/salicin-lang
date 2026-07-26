@@ -1,9 +1,9 @@
-let Unsafe = std.unsafe.Unsafe
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let dangerous(): i32 with(Unsafe) = { 40 }
+let dangerous(): i32 with(unsafe_effect) = { 40 }
 
 let main(): i32 = {
-  let action: (i32)(i32): i32 with(Unsafe) = {
+  let action: (i32)(i32): i32 with(unsafe_effect) = {
     (left: i32)(right: i32) -> dangerous() + left + right
   }
   let pending = action(1)

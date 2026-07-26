@@ -1,10 +1,10 @@
-let State(S: type) = effect {
-  let get(): S
-  let put(move value: S): ()
+let state(comptime s: type) = effect {
+  let get(): s
+  let put(move value: s): ()
 }
 
 let main(): i32 = {
-  State(i32).handle get { (resume) -> resume(42) } action {
-      State(i32).get()
+  state(i32).handle get { (resume) -> resume(42) } action {
+      state(i32).get()
     }
 }

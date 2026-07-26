@@ -23,7 +23,7 @@ Conceptually, `if` has this shape:
 
 ```sc fragment
 let if(E: effects, T: type)
-  (condition: bool)
+  (condition: Bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E)
 ```

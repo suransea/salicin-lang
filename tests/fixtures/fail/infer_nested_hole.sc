@@ -1,6 +1,6 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
 let main(): i32 = {
-  let cell = Cell(Cell(_)) { value: Cell(i32) { value: 42 } }
+  let cell = cell(cell(_)) { value: cell(i32) { value: 42 } }
   cell.value.value
 }

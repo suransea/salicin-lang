@@ -1,13 +1,13 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
-let Resource = struct { counter: Ptr(mut)(i32), value: i32 }
+let resource = struct { counter: ptr(mut)(i32), value: i32 }
 
-extend Resource {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend resource {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
@@ -23,14 +23,14 @@ let main(): i32 = {
   }
   let mut score = 0
   do {
-    let mut values: Vec(Resource) = Vec(Resource).new()
-    values.push(Resource { counter: counter, value: 1 })
-    values.push(Resource { counter: counter, value: 3 })
-    values.insert(1)(Resource { counter: counter, value: 2 })
+    let mut values: vec(resource) = vec(resource).new()
+    values.push(resource { counter: counter, value: 1 })
+    values.push(resource { counter: counter, value: 3 })
+    values.insert(1)(resource { counter: counter, value: 2 })
 
-    let mut other: Vec(Resource) = Vec(Resource).new()
-    other.push(Resource { counter: counter, value: 4 })
-    other.push(Resource { counter: counter, value: 5 })
+    let mut other: vec(resource) = vec(resource).new()
+    other.push(resource { counter: counter, value: 4 })
+    other.push(resource { counter: counter, value: 5 })
     values.append(other)
     values.shrink_to_fit()
 
@@ -39,7 +39,7 @@ let main(): i32 = {
       removed.read()
     }
     let end = values.len()
-    values.insert(end)(Resource { counter: counter, value: 6 })
+    values.insert(end)(resource { counter: counter, value: 6 })
     let last = values.len() - 1
     let removed_last = do {
       let removed = values.remove(last)

@@ -1,21 +1,21 @@
-let PartialOrd = std.ops.PartialOrd
-let PartialOrdering = std.ops.PartialOrdering
+let partial_order = std.ops.partial_order
+let partial_ordering = std.ops.partial_ordering
 
-let Number = struct { value: i32, unordered: bool }
+let number = struct { value: i32, unordered: bool }
 
-extend Number: PartialOrd(Number) {
-  let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = {
-    if self.unordered || rhs.unordered { Unordered }
-    else if self.value < rhs.value { Less }
-    else if self.value > rhs.value { Greater }
-    else { Equal }
+extend number: partial_order(number) {
+  let partial_cmp(self: borrow(self))(rhs: borrow(number)): partial_ordering = {
+    if self.unordered || rhs.unordered { unordered }
+    else if self.value < rhs.value { less }
+    else if self.value > rhs.value { greater }
+    else { equal }
   }
 }
 
 let main(): i32 = {
-  let low = Number { value: 1, unordered: false }
-  let high = Number { value: 2, unordered: false }
-  let none = Number { value: 0, unordered: true }
+  let low = number { value: 1, unordered: false }
+  let high = number { value: 2, unordered: false }
+  let none = number { value: 0, unordered: true }
   if low < high && low <= high && high > low && high >= low &&
     !(none < low) && !(none <= low) && !(none > low) && !(none >= low) {
     42

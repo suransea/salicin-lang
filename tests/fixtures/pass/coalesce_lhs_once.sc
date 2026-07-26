@@ -1,8 +1,8 @@
-let Option = std.Option
+let option = std.option
 
-let make(count: borrow(mut)(i32)): Option(i32) = {
+let make(count: borrow(mut)(i32)): option(i32) = {
   count = count + 1
-  Option(i32).Some(42)
+  option(i32).some(42)
 }
 
 let main(): i32 = {

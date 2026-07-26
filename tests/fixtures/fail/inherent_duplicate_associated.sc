@@ -1,10 +1,10 @@
-let A = struct { value: i32 }
+let a = struct { value: i32 }
 
-extend A {
+extend a {
   let answer = 41
 }
 
-extend A {
+extend a {
   let answer(): i32 = { 42 }
 }
 

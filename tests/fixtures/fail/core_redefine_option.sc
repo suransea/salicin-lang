@@ -1,8 +1,8 @@
-let Option = std.Option
+let option = std.option
 
-let Option(T: type) = enum {
-  Some(T),
-  None,
+let option(comptime t: type) = enum {
+  some(t),
+  none,
 }
 
 let main(): i32 = { 42 }

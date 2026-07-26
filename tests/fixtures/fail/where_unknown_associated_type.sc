@@ -1,6 +1,6 @@
-let Marker = trait {}
+let marker = trait {}
 
-let identity(T: type)(value: T): T
-where T: Marker(Item = T) = { value }
+let identity(comptime t: type)(value: t): t
+where t: marker(item = t) = { value }
 
 let main(): i32 = { identity(42) }

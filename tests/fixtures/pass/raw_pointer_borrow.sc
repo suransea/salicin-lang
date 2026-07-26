@@ -1,12 +1,12 @@
-let shared(R: region)
-  (anchor: borrow(R)(i32))(pointer: Ptr(mut)(i32)): borrow(R)(i32) = {
+let shared(comptime r: region)
+  (anchor: borrow(r)(i32))(pointer: ptr(mut)(i32)): borrow(r)(i32) = {
   unsafe {
     raw_borrow(pointer, borrow(anchor))
   }
 }
 
-let mutable(R: region)
-  (anchor: borrow(mut, R)(i32))(pointer: Ptr(mut)(i32)): borrow(mut, R)(i32) = {
+let mutable(comptime r: region)
+  (anchor: borrow(mut, r)(i32))(pointer: ptr(mut)(i32)): borrow(mut, r)(i32) = {
   unsafe {
     raw_borrow(mut)(pointer, borrow(mut)(anchor))
   }

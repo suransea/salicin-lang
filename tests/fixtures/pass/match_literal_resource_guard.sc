@@ -1,32 +1,32 @@
-let Resource = struct { value: i32 }
-let Choice = enum { Pair(Resource, i32), None }
+let resource = struct { value: i32 }
+let choice = enum { pair(resource, i32), none }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
-let choose(move choice: Choice): i32 = { match choice
-    { Pair(resource, 42) -> do {
+let choose(move choice: choice): i32 = { match choice
+    { pair(resource, 42) -> do {
         consume(resource)
         21
       }
     }
-    { Pair(resource, _) -> do {
+    { pair(resource, _) -> do {
         consume(resource)
         21
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
 let main(): i32 = {
-  choose(Choice.Pair(Resource { value: 1 }, 0)) +
-    choose(Choice.Pair(Resource { value: 1 }, 42))
+  choose(choice.pair(resource { value: 1 }, 0)) +
+    choose(choice.pair(resource { value: 1 }, 42))
 }
 
 test("match_literal_resource_guard.sc") {

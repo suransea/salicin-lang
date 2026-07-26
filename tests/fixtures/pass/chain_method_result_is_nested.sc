@@ -1,16 +1,16 @@
-let Option = std.Option
+let option = std.option
 
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-extend Boxed {
-  let optional(move self)(): Option(i32) = { Option(i32).Some(self.value) }
+extend boxed {
+  let optional(move self)(): option(i32) = { option(i32).some(self.value) }
 }
 
 let main(): i32 = {
-  let nested = Option(Boxed).Some(Boxed { value: 42 })?.optional()
+  let nested = option(boxed).some(boxed { value: 42 })?.optional()
   match nested
-    { Some(inner) -> inner ?? 0 }
-    { None -> 0 }
+    { some(inner) -> inner ?? 0 }
+    { none -> 0 }
 }
 
 test("chain_method_result_is_nested.sc") {

@@ -1,16 +1,16 @@
-let Unsafe = std.unsafe.Unsafe
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let Step = effect {
+let step = effect {
   let delta(): i32
 }
 
-let State = struct {
+let state = struct {
   value: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend state: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
@@ -18,23 +18,23 @@ extend State: Drop {
 }
 
 let update(
-  state: borrow(mut)(State),
-  calls: Ptr(mut)(i32),
-): i32 with(Step, Unsafe) = {
-  let delta = Step.delta()
+  state: borrow(mut)(state),
+  calls: ptr(mut)(i32),
+): i32 with(step, unsafe_effect) = {
+  let delta = step.delta()
   unsafe { *calls = *calls + 1 }
   state.value = state.value + delta
   state.value
 }
 
 let unsafe_outside(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   abandon: bool,
 ): i32 = {
   unsafe {
-    let mut state = State { value: 20, drops: drops }
-    Step.handle delta { (resume) ->
+    let mut state = state { value: 20, drops: drops }
+    step.handle delta { (resume) ->
         if abandon { 40 } else { resume(1) }
       } action {
         let value = update(state, calls)
@@ -44,12 +44,12 @@ let unsafe_outside(
 }
 
 let unsafe_inside(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   abandon: bool,
 ): i32 = {
-  let mut state = State { value: 20, drops: drops }
-  Step.handle delta { (resume) ->
+  let mut state = state { value: 20, drops: drops }
+  step.handle delta { (resume) ->
       if abandon { 40 } else { resume(1) }
     } action {
       unsafe {

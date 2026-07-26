@@ -1,28 +1,28 @@
-let Pair(K: type, V: type) = struct { key: K, value: V }
+let pair(comptime k: type, comptime v: type) = struct { key: k, value: v }
 
-let PairAlias: (Key: type, Value: type): type = Pair
+let pair_alias: (comptime key: type, comptime value: type): type = pair
 
-let Holds(Item: type) = trait {
-  let get(self: borrow(Self))(): Item
+let holds(comptime item: type) = trait {
+  let get(self: borrow(self))(): item
 }
 
-extend Pair(i32, bool): Holds(Item: i32) {
-  let get(self: borrow(Self))(): i32 = { self.key }
+extend pair(i32, bool): holds(comptime item: i32) {
+  let get(self: borrow(self))(): i32 = { self.key }
 }
 
-let read(T: type)(value: borrow(T)): i32
-where T: Holds(Item: i32)
+let read(comptime t: type)(value: borrow(t)): i32
+where t: holds(item: i32)
 = {
   value.get()
 }
 
-let make(): PairAlias(Value: bool, Key: i32) = {
-  Pair(K: i32, V: bool) { key: 41, value: true }
+let make(): pair_alias(comptime value: bool, comptime key: i32) = {
+  pair(k: i32, v: bool) { key: 41, value: true }
 }
 
 let main(): i32 = {
-  let pair: Pair(V: bool, K: i32) = make()
-  if pair.value { read(Pair(i32, bool))(pair) + 1 } else { 0 }
+  let pair: pair(comptime v: bool, comptime k: i32) = make()
+  if pair.value { read(pair(i32, bool))(pair) + 1 } else { 0 }
 }
 
 test("type_constructor_labeled_arguments.sc") {

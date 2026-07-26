@@ -1,13 +1,13 @@
-let Read = effect {
+let read = effect {
   let read(): i32
 }
 
 let main(): i32 = {
-  Read.handle read { (resume) -> resume(40) } action {
-      let inner = Read.handle read { (resume) -> resume(2) } action {
-        Read.read()
+  read.handle read { (resume) -> resume(40) } action {
+      let inner = read.handle read { (resume) -> resume(2) } action {
+        read.read()
       }
-      inner + Read.read()
+      inner + read.read()
     }
 }
 

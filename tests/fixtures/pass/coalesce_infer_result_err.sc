@@ -1,6 +1,6 @@
-let Result = std.Result
+let result = std.result
 
-let main(): i32 = { Result(E: bool).Err(false) ?? 42 }
+let main(): i32 = { result(comptime e: bool).err(false) ?? 42 }
 
 test("coalesce_infer_result_err.sc") {
   main() == 42

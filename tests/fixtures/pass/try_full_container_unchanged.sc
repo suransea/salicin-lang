@@ -1,16 +1,16 @@
-let Option = std.Option
-let Result = std.Result
+let option = std.option
+let result = std.result
 
-let option_tail(): Option(i32) = { Option(i32).Some(10) }
+let option_tail(): option(i32) = { option(i32).some(10) }
 
-let option_return(): Option(i32) = {
-  return(Option(i32).Some(10))
+let option_return(): option(i32) = {
+  return(option(i32).some(10))
 }
 
-let result_tail(): Result(bool)(i32) = { Result(bool)(i32).Ok(11) }
+let result_tail(): result(bool)(i32) = { result(bool)(i32).ok(11) }
 
-let result_return(): Result(bool)(i32) = {
-  return(Result(bool)(i32).Ok(11))
+let result_return(): result(bool)(i32) = {
+  return(result(bool)(i32).ok(11))
 }
 
 let main(): i32 = {

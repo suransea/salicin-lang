@@ -1,12 +1,12 @@
-let Probe = effect {
+let probe = effect {
   let read(): bool
 }
 
 let main(): i32 = {
-  Probe.handle read { (resume) -> resume(true) } done {
+  probe.handle read { (resume) -> resume(true) } done {
       (value) -> if value { 42 } else { 0 }
     } action {
-      Probe.read()
+      probe.read()
     }
 }
 

@@ -1,9 +1,9 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-let duplicate(T: type)(copy value: T): T
-where T: Copy = {
+let duplicate(comptime t: type)(copy value: t): t
+where t: copyable = {
   let first = value
   value
 }
 
-let main(): i32 = { duplicate(Resource { value: 42 }).value }
+let main(): i32 = { duplicate(resource { value: 42 }).value }

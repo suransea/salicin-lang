@@ -1,38 +1,38 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Result = std.Result
-let Throws = std.error.Throws
+let future = std.async.future
+let poll = std.async.poll
+let result = std.result
+let throws = std.error.throws
 
-let Step = struct {
+let step = struct {
   polls: i32,
   value: i32,
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let make_step(fail: bool): Step with(Throws(bool)) = {
+let make_step(fail: bool): step with(throws(bool)) = {
   if fail {
     throw true
   } else {
-    Step { polls: 0, value: 40 }
+    step { polls: 0, value: 40 }
   }
 }
 
 let run(fail: bool): i32 = {
-  let result: Result(bool)(i32) = try {
+  let result: result(bool)(i32) = try {
     let mut future = async {
       let value = await make_step(fail)
       value + 2
@@ -40,15 +40,15 @@ let run(fail: bool): i32 = {
     let first = future.poll()
     let second = future.poll()
     match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
+      { pending -> match second
+        { ready(value) -> value }
+        { pending -> 0 } }
+      { ready(_) -> 0 }
   }
 
   match result
-    { Ok(value) -> value }
-    { Err(error) -> if error { 42 } else { 0 } }
+    { ok(value) -> value }
+    { err(error) -> if error { 42 } else { 0 } }
 }
 
 let main(): i32 = {

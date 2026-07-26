@@ -1,43 +1,43 @@
-let Step = effect {
+let step = effect {
   let delta(): i32
 }
 
-let State = struct {
+let state = struct {
   value: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend state: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let even(state: borrow(mut)(State), count: i32): i32 with(Step) = {
+let even(state: borrow(mut)(state), count: i32): i32 with(step) = {
   if count == 0 {
     return(state.value)
   }
-  let delta = Step.delta()
+  let delta = step.delta()
   state.value = state.value + delta
   let nested = odd(state, count - 1)
   nested + state.value
 }
 
-let odd(state: borrow(mut)(State), count: i32): i32 with(Step) = {
+let odd(state: borrow(mut)(state), count: i32): i32 with(step) = {
   if count == 0 {
     return(state.value)
   }
-  let delta = Step.delta()
+  let delta = step.delta()
   state.value = state.value + delta
   let nested = even(state, count - 1)
   nested + state.value
 }
 
-let run(drops: Ptr(mut)(i32), abandon: bool): i32 = {
-  let mut state = State { value: 10, drops: drops }
-  let result = Step.handle delta { (resume) ->
+let run(drops: ptr(mut)(i32), abandon: bool): i32 = {
+  let mut state = state { value: 10, drops: drops }
+  let result = step.handle delta { (resume) ->
       if abandon { 40 } else { resume(1) }
     } action {
       even(state, 2)

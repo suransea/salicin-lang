@@ -1,27 +1,27 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
+let poll = std.async.poll
+let future = std.async.future
 
-let Step = struct {
+let step = struct {
   polled: bool,
-  remaining: Ptr(mut)(i32),
-  drops: Ptr(mut)(i32),
+  remaining: ptr(mut)(i32),
+  drops: ptr(mut)(i32),
   finish: bool
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = bool
+extend step: future(()) {
+  let output = bool
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(bool) = {
     if self.polled {
       let done = if self.finish {
         unsafe {
@@ -31,23 +31,23 @@ extend Step: Future(()) {
       } else {
         false
       }
-      Poll(bool).Ready(done)
+      poll(bool).ready(done)
     } else {
       self.polled = true
-      Poll(bool).Pending
+      poll(bool).pending
     }
   }
 }
 
-let step(remaining: Ptr(mut)(i32), drops: Ptr(mut)(i32), finish: bool): Step = {
-  Step { polled: false, remaining: remaining, drops: drops, finish: finish }
+let step(remaining: ptr(mut)(i32), drops: ptr(mut)(i32), finish: bool): step = {
+  step { polled: false, remaining: remaining, drops: drops, finish: finish }
 }
 
 let main(): i32 = {
   let mut remaining = 2
   let mut drops = 0
-  let remaining_ptr = Ptr(mut)(borrow(mut)(remaining))
-  let drops_ptr = Ptr(mut)(borrow(mut)(drops))
+  let remaining_ptr = ptr(mut)(borrow(mut)(remaining))
+  let drops_ptr = ptr(mut)(borrow(mut)(drops))
   let mut future = async {
     loop {
       let first = await step(remaining_ptr, drops_ptr, false)
@@ -61,25 +61,25 @@ let main(): i32 = {
   }
 
   let first = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let second = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let third = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let fourth = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let fifth = match future.poll()
-    { Pending -> 0 }
-    { Ready(value) -> value }
+    { pending -> 0 }
+    { ready(value) -> value }
 
   let mut cancel_remaining = 2
   let mut cancel_drops = 0
-  let cancel_remaining_ptr = Ptr(mut)(borrow(mut)(cancel_remaining))
-  let cancel_drops_ptr = Ptr(mut)(borrow(mut)(cancel_drops))
+  let cancel_remaining_ptr = ptr(mut)(borrow(mut)(cancel_remaining))
+  let cancel_drops_ptr = ptr(mut)(borrow(mut)(cancel_drops))
   do {
     let mut cancelled = async {
       loop {
@@ -93,11 +93,11 @@ let main(): i32 = {
       }
     }
     match cancelled.poll()
-      { Pending -> () }
-      { Ready(_) -> () }
+      { pending -> () }
+      { ready(_) -> () }
     match cancelled.poll()
-      { Pending -> () }
-      { Ready(_) -> () }
+      { pending -> () }
+      { ready(_) -> () }
   }
 
   first + second + third + fourth + fifth + unsafe { *drops_ptr } +

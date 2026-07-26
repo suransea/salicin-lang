@@ -1,57 +1,57 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
+let poll = std.async.poll
+let future = std.async.future
 
-let Step = struct {
+let step = struct {
   polled: bool,
   value: i32
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polled {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     } else {
       self.polled = true
-      Poll(i32).Pending
+      poll(i32).pending
     }
   }
 }
 
-let OtherStep = struct {
+let other_step = struct {
   polled: bool,
   value: i32
 }
 
-extend OtherStep: Future(()) {
-  let Output = i32
+extend other_step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polled {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     } else {
       self.polled = true
-      Poll(i32).Pending
+      poll(i32).pending
     }
   }
 }
 
-let step(value: i32): Step = {
-  Step { polled: false, value: value }
+let step(value: i32): step = {
+  step { polled: false, value: value }
 }
 
-let other_step(value: i32): OtherStep = {
-  OtherStep { polled: false, value: value }
+let other_step(value: i32): other_step = {
+  other_step { polled: false, value: value }
 }
 
-let Choice = enum {
-  Left,
-  Right
+let choice = enum {
+  left,
+  right
 }
 
 let main(): i32 = {
@@ -66,24 +66,24 @@ let main(): i32 = {
     value
   }
   match conditional.poll()
-    { Pending -> () }
-    { Ready(_) -> () }
+    { pending -> () }
+    { ready(_) -> () }
   let first = match conditional.poll()
-    { Ready(value) -> value }
-    { Pending -> 0 }
+    { ready(value) -> value }
+    { pending -> 0 }
 
   let mut matched = async {
-    let value = match Choice.Left
-      { Left -> await step(22) }
-      { Right -> await other_step(0) }
+    let value = match choice.left
+      { left -> await step(22) }
+      { right -> await other_step(0) }
     value
   }
   match matched.poll()
-    { Pending -> () }
-    { Ready(_) -> () }
+    { pending -> () }
+    { ready(_) -> () }
   let second = match matched.poll()
-    { Ready(value) -> value }
-    { Pending -> 0 }
+    { ready(value) -> value }
+    { pending -> 0 }
 
   first + second
 }

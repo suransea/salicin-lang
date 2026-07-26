@@ -1,1 +1,1 @@
-let main(): i32 = { Self { value: 42 } }
+let main(): i32 = { self { value: 42 } }

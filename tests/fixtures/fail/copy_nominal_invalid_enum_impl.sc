@@ -1,10 +1,10 @@
-let Payload = struct { value: i32 }
+let payload = struct { value: i32 }
 
-let Message = enum {
-  Data(Payload),
-  Empty,
+let message = enum {
+  data(payload),
+  empty,
 }
 
-extend Message: Copy {}
+extend message: copyable {}
 
 let main(): i32 = { 42 }

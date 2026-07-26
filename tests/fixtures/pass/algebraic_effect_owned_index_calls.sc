@@ -1,41 +1,41 @@
-let Step = effect {
+let step = effect {
   let delta(): i32
 }
 
-let State = struct {
-  values: Array(i32)(2),
-  drops: Ptr(mut)(i32),
+let state = struct {
+  values: array(i32)(2),
+  drops: ptr(mut)(i32),
 }
 
-extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend state: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let mark(calls: Ptr(mut)(i32))(digit: i32): i32 = {
+let mark(calls: ptr(mut)(i32))(digit: i32): i32 = {
   unsafe {
     *calls = *calls * 10 + digit
     0
   }
 }
 
-let next_index(calls: Ptr(mut)(i32)): i32 = {
+let next_index(calls: ptr(mut)(i32)): i32 = {
   unsafe {
     *calls = *calls * 10 + 2
     1
   }
 }
 
-let update(before: i32)(value: borrow(mut)(i32))(after: i32): () with(Step) = {
-  let delta = Step.delta()
+let update(before: i32)(value: borrow(mut)(i32))(after: i32): () with(step) = {
+  let delta = step.delta()
   value = value + delta + before + after
 }
 
-let program(drops: Ptr(mut)(i32))(calls: Ptr(mut)(i32)): i32 with(Step) = {
-  let mut state = State { values: [0, 40], drops: drops }
+let program(drops: ptr(mut)(i32))(calls: ptr(mut)(i32)): i32 with(step) = {
+  let mut state = state { values: [0, 40], drops: drops }
   update(mark(calls)(1))(state.values[next_index(calls)])(mark(calls)(3))
   state.values[1]
 }
@@ -52,12 +52,12 @@ let main(): i32 = {
     *calls = 0
   }
 
-  let resumed = Step.handle delta { (resume) ->
+  let resumed = step.handle delta { (resume) ->
       resume(1)
     } action {
       program(drops)(calls)
     }
-  let abandoned = Step.handle delta { (_) ->
+  let abandoned = step.handle delta { (_) ->
       40
     } action {
       program(drops)(calls)

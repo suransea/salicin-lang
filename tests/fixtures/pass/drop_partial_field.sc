@@ -1,35 +1,35 @@
-let Resource = struct { value: i32 }
-let Pair = struct { left: Resource, right: Resource }
-let Nested = struct { pair: Pair, tail: Resource }
+let resource = struct { value: i32 }
+let pair = struct { left: resource, right: resource }
+let nested = struct { pair: pair, tail: resource }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
 let conditional(flag: bool): () = {
-  let pair = Pair { left: Resource { value: 1 }, right: Resource { value: 1 } }
+  let pair = pair { left: resource { value: 1 }, right: resource { value: 1 } }
   if flag { consume(pair.left) }
 }
 
 let rebuild(): () = {
-  let mut pair = Pair { left: Resource { value: 1 }, right: Resource { value: 1 } }
+  let mut pair = pair { left: resource { value: 1 }, right: resource { value: 1 } }
   consume(pair.left)
-  pair.left = Resource { value: 1 }
+  pair.left = resource { value: 1 }
 }
 
 let conditional_rebuild(flag: bool): () = {
-  let mut pair = Pair { left: Resource { value: 1 }, right: Resource { value: 1 } }
+  let mut pair = pair { left: resource { value: 1 }, right: resource { value: 1 } }
   if flag { consume(pair.left) }
-  pair.left = Resource { value: 1 }
+  pair.left = resource { value: 1 }
 }
 
 let nested(): () = {
-  let value = Nested { pair: Pair { left: Resource { value: 1 }, right: Resource { value: 1 } }, tail: Resource { value: 1 } }
+  let value = nested { pair: pair { left: resource { value: 1 }, right: resource { value: 1 } }, tail: resource { value: 1 } }
   consume(value.pair.left)
 }
 

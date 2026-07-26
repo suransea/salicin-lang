@@ -1,5 +1,5 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T): Copy {}
+extend(comptime t: type) cell(t): copyable {}
 
 let main(): i32 = { 42 }

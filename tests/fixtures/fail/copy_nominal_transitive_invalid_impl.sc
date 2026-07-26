@@ -1,11 +1,11 @@
-let Leaf = struct { value: i32 }
+let leaf = struct { value: i32 }
 
-let Branch = struct { leaf: Leaf }
+let branch = struct { leaf: leaf }
 
-let Tree = struct { branch: Branch }
+let tree = struct { branch: branch }
 
-extend Branch: Copy {}
+extend branch: copyable {}
 
-extend Tree: Copy {}
+extend tree: copyable {}
 
 let main(): i32 = { 42 }

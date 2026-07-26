@@ -1,7 +1,7 @@
-let Cell(T: type) = struct { value: T }
-let identity(T: type)(move value: T): T = { value }
+let cell(comptime t: type) = struct { value: t }
+let identity(comptime t: type)(move value: t): t = { value }
 
-let main(): i32 = { identity(Cell(i32) { value: 42 }).value }
+let main(): i32 = { identity(cell(i32) { value: 42 }).value }
 
 test("infer_fresh_constructor.sc") {
   main() == 42

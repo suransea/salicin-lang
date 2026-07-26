@@ -1,24 +1,24 @@
-let choose(T: type)(left: T): T = { left }
-let choose(T: type)(right: T): T = { right }
+let choose(comptime t: type)(left: t): t = { left }
+let choose(comptime t: type)(right: t): t = { right }
 
-let Counter = struct { value: i32 }
+let counter = struct { value: i32 }
 
-extend Counter {
-  let add(T: type)(self: borrow(Self))(left: T): T = { left }
-  let add(T: type)(self: borrow(Self))(right: T): T = { right }
+extend counter {
+  let add(comptime t: type)(self: borrow(self))(left: t): t = { left }
+  let add(comptime t: type)(self: borrow(self))(right: t): t = { right }
 }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let choose(left: T): T = { left }
-  let choose(right: T): T = { right }
-  let add(self: borrow(Self))(left: T): T = { left }
-  let add(self: borrow(Self))(right: T): T = { right }
+extend(comptime t: type) cell(t) {
+  let choose(left: t): t = { left }
+  let choose(right: t): t = { right }
+  let add(self: borrow(self))(left: t): t = { left }
+  let add(self: borrow(self))(right: t): t = { right }
 }
 
 let main(): i32 = {
-  choose(left: 10) + Cell.choose(right: 10) + Cell(i32) { value: 0 }.add(left: 22)
+  choose(left: 10) + cell.choose(right: 10) + cell(i32) { value: 0 }.add(left: 22)
 }
 
 test("generic_overload_named.sc") {

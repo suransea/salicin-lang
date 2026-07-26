@@ -1,15 +1,15 @@
-let Rem = std.ops.Rem
+let rem_operator = std.ops.rem_operator
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: Rem(Number) {
-  let Output = Number
-  let rem(self)(rhs: Number): Number = { Number { value: self.value % rhs.value } }
+extend number: rem_operator(number) {
+  let output = number
+  let rem(self)(rhs: number): number = { number { value: self.value % rhs.value } }
 }
 
 let main(): i32 = {
-  let left = Number { value: 86 }
-  let right = Number { value: 44 }
+  let left = number { value: 86 }
+  let right = number { value: 44 }
   let answer = left % right
   left.value + right.value + answer.value
 }

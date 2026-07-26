@@ -1,7 +1,7 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
-let fail(Error: type)(move error: Error): Never with(Throws(i32), Throws(bool)) = {
+let fail(comptime error: type)(move error: error): never with(throws(i32), throws(bool)) = {
   throw(error)
 }
 

@@ -1,11 +1,11 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
-let leak(value: borrow(mut)(i32)): (): i32 with(Ask) = {
-  let mut action: (): i32 with(Ask) = { () ->
+let leak(value: borrow(mut)(i32)): (): i32 with(ask) = {
+  let mut action: (): i32 with(ask) = { () ->
     value = value + 1
-    Ask.value() + value
+    ask.value() + value
   }
   action
 }

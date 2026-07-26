@@ -1,13 +1,13 @@
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: Copy {}
+extend number: copyable {}
 
-let consume(move number: Number): i32 = { number.value }
+let consume(move number: number): i32 = { number.value }
 
 let main(): i32 = {
-  let mut number = Number { value: 20 }
+  let mut number = number { value: 20 }
   let first = consume(number)
-  number = Number { value: 22 }
+  number = number { value: 22 }
   first + consume(number)
 }
 

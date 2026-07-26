@@ -22,7 +22,7 @@ rather than host `usize::BITS`.
 | --- | --- | --- |
 | `i8`/`u8` through `i128`/`u128` | same-width LLVM integer | native and bounded C |
 | `isize`/`usize` | host pointer-width LLVM integer | native and bounded C |
-| `bool` | `i1` | native only |
+| `Bool` | `i1` | native only |
 | `()` | erased parameter, `void` result, `[0 x i8]` aggregate field | native only |
 | `Never` | no first-class value; terminating path is `unreachable` | native control only |
 | `Ptr(A)(T)` | opaque LLVM `ptr`; access and pointee are static | native and bounded C |
@@ -76,7 +76,7 @@ generic specialization ownership, and collision behavior.
 implicitly require `Unsafe` at calls. A declaration must have exactly one
 runtime parameter group, no compile-time runtime residue, no `Throws` or
 custom effect row, integer or raw-pointer parameters, and an integer,
-raw-pointer, or unit result. `bool`, borrows, slices, Salicin aggregates,
+raw-pointer, or unit result. `Bool`, borrows, slices, Salicin aggregates,
 callables, continuations, and effect callables are rejected at the source
 declaration.
 

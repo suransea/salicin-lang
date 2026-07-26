@@ -1,25 +1,25 @@
-let Resource = struct { value: i32 }
-let Bundle = struct { left: Resource, right: Resource }
-let Choice = enum { Some(Bundle, Resource), None }
+let resource = struct { value: i32 }
+let bundle = struct { left: resource, right: resource }
+let choice = enum { some(bundle, resource), none }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.value
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
-let main(): i32 = { match Choice.Some(
-    Bundle { left: Resource { value: 1 }, right: Resource { value: 0 } },
-    Resource { value: 1 }
+let main(): i32 = { match choice.some(
+    bundle { left: resource { value: 1 }, right: resource { value: 0 } },
+    resource { value: 1 }
   )
-    { Some(Bundle(left: left, right: _), _) -> do {
+    { some(bundle(left: left, right: _), _) -> do {
         consume(left)
         0
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
 test("drop_match_nested_trap.sc") {

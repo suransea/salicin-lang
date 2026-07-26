@@ -1,13 +1,13 @@
-let Number = struct { raw: i32 }
+let number = struct { raw: i32 }
 
-extend Number {
-  let value(self: borrow(Self))(): i32 = { self.raw }
+extend number {
+  let value(self: borrow(self))(): i32 = { self.raw }
   let value = 2
 }
 
 let main(): i32 = {
-  let number = Number { raw: 40 }
-  number.value() + Number.value
+  let number = number { raw: 40 }
+  number.value() + number.value
 }
 
 test("inherent_method_and_associated_same_name.sc") {

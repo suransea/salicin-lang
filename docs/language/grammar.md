@@ -65,7 +65,7 @@ test_registration =
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
 identifier outside this top-level form. The edition-owned
-`let test(name: string)(move body: (): bool): () = builtin()` declaration validates both
+`let test(Name: String)(move body: (): Bool): () = builtin()` declaration validates both
 metadata and body contracts; the string is compile-time runner metadata.
 
 ### 2.1 Let Declarations
@@ -130,6 +130,7 @@ compile_parameter_name = IDENT | REGION ;
 compile_parameter_sort =
     contextual("type")
   | contextual("usize")
+  | contextual("String")
   | contextual("region")
   | contextual("effect")
   | contextual("effects")
@@ -321,7 +322,7 @@ bodyless declarations rather than builtin definitions.
 
 The root `core` module also contains the private declarations
 `let foreign(ABI: abi): Never = builtin()` and
-`let test(name: string)(move body: (): bool): () = builtin()`. They authorize the
+`let test(Name: String)(move body: (): Bool): () = builtin()`. They authorize the
 `foreign(c, ...)` initializer and top-level test registration respectively;
 `c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.
 

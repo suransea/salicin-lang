@@ -1,25 +1,25 @@
 /// Trait backing equality comparison.
-pub let Eq(Rhs: type) = trait {
+pub let equality(comptime rhs: type) = trait {
   /// Returns whether `self` and `rhs` compare equal.
-  let eq(self: borrow(Self))
-    (rhs: borrow(Rhs)): bool
+  let eq(self: borrow(self))
+    (rhs: borrow(rhs)): bool
 }
 
 /// Four-way result for partial comparison.
-pub let PartialOrdering = enum {
+pub let partial_ordering = enum {
   /// `self` is less than the compared value.
-  Less,
+  less,
   /// The compared values are equivalent for ordering.
-  Equal,
+  equal,
   /// `self` is greater than the compared value.
-  Greater,
+  greater,
   /// The values cannot be ordered relative to each other.
-  Unordered,
+  unordered,
 }
 
 /// Trait backing partial ordering comparisons.
-pub let PartialOrd(Rhs: type) = trait {
+pub let partial_order(comptime rhs: type) = trait {
   /// Compares `self` with `rhs`, returning a partial ordering result.
-  let partial_cmp(self: borrow(Self))
-    (rhs: borrow(Rhs)): PartialOrdering
+  let partial_cmp(self: borrow(self))
+    (rhs: borrow(rhs)): partial_ordering
 }

@@ -1,5 +1,5 @@
-let Slice = std.Slice
+let slice = std.slice
 
-let consume(value: Slice(i32)): () = {}
+let consume(value: slice(i32)): () = {}
 
 let main(): i32 = { 42 }

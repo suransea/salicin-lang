@@ -1,3 +1,3 @@
-let Result = std.Result
+let result = std.result
 
-let main(): i32 = { Result(bool)(i32).Err(false) ?? true }
+let main(): i32 = { result(bool)(i32).err(false) ?? true }

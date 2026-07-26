@@ -1,7 +1,7 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let mut values: Vec(i32) = Vec(i32).new()
+  let mut values: vec(i32) = vec(i32).new()
   values.push(42)
   let mutable = values.at(mut)(0)
   let shared = values.at(0)

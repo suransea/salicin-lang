@@ -1,10 +1,10 @@
-let Option = std.Option
+let option = std.option
 
 let main(): i32 = {
-  let value: Option(i32) = Option.None
+  let value: option(i32) = option.none
   match value
-    { Some(_) -> 0 }
-    { None -> 42 }
+    { some(_) -> 0 }
+    { none -> 42 }
 }
 
 test("core_option_none.sc") {

@@ -1,41 +1,41 @@
-let Audit = effect {
+let audit = effect {
   let adjust(): i32
 }
 
-let Step = effect {
+let step = effect {
   let delta(): i32
 }
 
-let State = struct {
+let state = struct {
   value: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend state: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let update(state: borrow(mut)(State)): i32 with(Audit, Step) = {
-  let adjustment = Audit.adjust()
-  let delta = Step.delta()
+let update(state: borrow(mut)(state)): i32 with(audit, step) = {
+  let adjustment = audit.adjust()
+  let delta = step.delta()
   state.value = state.value + adjustment + delta
   state.value
 }
 
 let audit_outside(
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
   abandon_audit: bool,
   abandon_step: bool,
 ): i32 = {
-  let mut state = State { value: 20, drops: drops }
-  Audit.handle adjust { (resume) ->
+  let mut state = state { value: 20, drops: drops }
+  audit.handle adjust { (resume) ->
       if abandon_audit { 40 } else { resume(1) }
     } action {
-      Step.handle delta { (resume) ->
+      step.handle delta { (resume) ->
         if abandon_step { 40 } else { resume(1) }
       } action {
         let value = update(state)
@@ -45,15 +45,15 @@ let audit_outside(
 }
 
 let step_outside(
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
   abandon_audit: bool,
   abandon_step: bool,
 ): i32 = {
-  let mut state = State { value: 20, drops: drops }
-  Step.handle delta { (resume) ->
+  let mut state = state { value: 20, drops: drops }
+  step.handle delta { (resume) ->
       if abandon_step { 40 } else { resume(1) }
     } action {
-      Audit.handle adjust { (resume) ->
+      audit.handle adjust { (resume) ->
         if abandon_audit { 40 } else { resume(1) }
       } action {
         let value = update(state)

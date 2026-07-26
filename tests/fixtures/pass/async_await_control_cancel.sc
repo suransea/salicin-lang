@@ -1,71 +1,71 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
-let Unsafe = std.unsafe.Unsafe
+let poll = std.async.poll
+let future = std.async.future
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let First = struct {
-  counter: Ptr(mut)(i32)
+let first = struct {
+  counter: ptr(mut)(i32)
 }
 
-let Second = struct {
-  counter: Ptr(mut)(i32)
+let second = struct {
+  counter: ptr(mut)(i32)
 }
 
-let Marker = struct {
-  counter: Ptr(mut)(i32),
+let marker = struct {
+  counter: ptr(mut)(i32),
   amount: i32
 }
 
-extend Marker: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend marker: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + self.amount
     }
   }
 }
 
-extend First: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend first: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 10
     }
   }
 }
 
-extend Second: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend second: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-extend First: Future(()) {
-  let Output = i32
+extend first: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
-    Poll(i32).Pending
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
+    poll(i32).pending
   }
 }
 
-extend Second: Future(()) {
-  let Output = i32
+extend second: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
-    Poll(i32).Pending
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
+    poll(i32).pending
   }
 }
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+let allocate(): ptr(mut)(i32) with(unsafe_effect) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+let release(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
@@ -78,16 +78,16 @@ let main(): i32 = {
     do {
       let mut future = async {
         if false {
-          let marker = Marker { counter: counter, amount: 1000 }
-          await First { counter: counter }
+          let marker = marker { counter: counter, amount: 1000 }
+          await first { counter: counter }
         } else {
-          let marker = Marker { counter: counter, amount: 100 }
-          await Second { counter: counter }
+          let marker = marker { counter: counter, amount: 100 }
+          await second { counter: counter }
         }
       }
       match future.poll()
-        { Pending -> () }
-        { Ready(_) -> () }
+        { pending -> () }
+        { ready(_) -> () }
     }
     let drops = *counter
     release(counter)

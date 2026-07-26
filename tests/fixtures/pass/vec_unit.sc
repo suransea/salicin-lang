@@ -1,7 +1,7 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let mut values: Vec(()) = Vec(()).new()
+  let mut values: vec(()) = vec(()).new()
   let mut index: u64 = 0
   while { index < 100 } {
     values.push(())

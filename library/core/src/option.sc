@@ -1,94 +1,94 @@
 /// Represents either a present value or the absence of one.
-pub let Option(T: type) = enum {
+pub let option(comptime t: type) = enum {
   /// Contains a value of type `T`.
-  Some(T),
+  some(t),
   /// Contains no value.
-  None,
+  none,
 }
 
 /// Provides `?.` chaining for `Option`.
-extend(T: type) Option(T): core.flow.Chain {
+extend(comptime t: type) option(t): core.flow.chain_operator {
   /// The payload type produced by a successful option.
-  let Item = T
+  let item = t
   /// Rebuilds `Option` around a transformed payload type.
-  let Rebind = Option
+  let rebind = option
 
   /// Applies `transform` to `Some` and propagates `None`.
-  let chain(E: effects, U: type)
+  let chain(comptime e: effects, comptime u: type)
     (self)
-    (transform: (T): U with(E)): Option(U) with(E) = {
+    (transform: (t): u with(e)): option(u) with(e) = {
     match self
-      { Some(value) -> Option.Some(transform(value)) }
-      { None -> Option.None }
+      { some(value) -> option.some(transform(value)) }
+      { none -> option.none }
   }
 }
 
 /// Provides `??` fallback evaluation for `Option`.
-extend(T: type) Option(T): core.flow.Coalesce {
+extend(comptime t: type) option(t): core.flow.coalesce_operator {
   /// The value type returned by coalescing.
-  let Item = T
+  let item = t
 
   /// Extracts `Some` or evaluates `fallback` for `None`.
-  let coalesce(E: effects)
+  let coalesce(comptime e: effects)
     (self)
-    (fallback: (): T with(E)): T with(E) = {
+    (fallback: (): t with(e)): t with(e) = {
     match self
-      { Some(value) -> value }
-      { None -> fallback() }
+      { some(value) -> value }
+      { none -> fallback() }
   }
 }
 
 /// Provides postfix `!` extraction for `Option`.
-extend(T: type) Option(T): core.flow.Unwrap {
-  let Output = T
+extend(comptime t: type) option(t): core.flow.unwrap_operator {
+  let output = t
 
-  let unwrap(move self): T = {
+  let unwrap(move self): t = {
     match self
-      { Some(value) -> value }
-      { None -> unsafe { raw_trap() } }
+      { some(value) -> value }
+      { none -> unsafe { raw_trap() } }
   }
 }
 
 /// Implements `Functor` for `Option`.
-extend Option: core.functional.Functor {
+extend option: core.functional.functor {
   /// Maps `Some` through `transform` and preserves `None`.
-  let map(E: effects, A: type, B: type)
-    (self: Option(A))
-    (transform: (A): B with(E)): Option(B) with(E) = {
+  let map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: option(a))
+    (transform: (a): b with(e)): option(b) with(e) = {
     match self
-      { Some(value) -> Option.Some(transform(value)) }
-      { None -> Option.None }
+      { some(value) -> option.some(transform(value)) }
+      { none -> option.none }
   }
 }
 
 /// Implements `Applicative` for `Option`.
-extend Option: core.functional.Applicative {
+extend option: core.functional.applicative {
   /// Wraps `value` in `Some`.
-  let pure(A: type)
-    (value: A): Option(A) = {
-    Option.Some(value)
+  let pure(comptime a: type)
+    (value: a): option(a) = {
+    option.some(value)
   }
 
   /// Applies a `Some` function to a `Some` value and otherwise returns `None`.
-  let apply(E: effects, A: type, B: type)
-    (self: Option((A): B with(E)))
-    (value: Option(A)): Option(B) with(E) = {
+  let apply(comptime e: effects, comptime a: type, comptime b: type)
+    (self: option((a): b with(e)))
+    (value: option(a)): option(b) with(e) = {
     match self
-      { Some(transform) -> match value
-        { Some(value) -> Option.Some(transform(value)) }
-        { None -> Option.None } }
-      { None -> Option.None }
+      { some(transform) -> match value
+        { some(value) -> option.some(transform(value)) }
+        { none -> option.none } }
+      { none -> option.none }
   }
 }
 
 /// Implements `Monad` for `Option`.
-extend Option: core.functional.Monad {
+extend option: core.functional.monad {
   /// Runs `next` for `Some` and propagates `None`.
-  let flat_map(E: effects, A: type, B: type)
-    (self: Option(A))
-    (next: (A): Option(B) with(E)): Option(B) with(E) = {
+  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: option(a))
+    (next: (a): option(b) with(e)): option(b) with(e) = {
     match self
-      { Some(value) -> next(value) }
-      { None -> Option.None }
+      { some(value) -> next(value) }
+      { none -> option.none }
   }
 }

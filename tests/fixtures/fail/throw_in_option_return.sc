@@ -1,6 +1,6 @@
-let Option = std.Option
+let option = std.option
 
-let fail(): Option(i32) = {
+let fail(): option(i32) = {
   throw(true)
 }
 

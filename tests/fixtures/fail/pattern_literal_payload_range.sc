@@ -1,7 +1,7 @@
-let Value = enum { Number( value: u32 ), Empty }
+let value = enum { number( value: u32 ), empty }
 
-let main(): i32 = { match Value.Number( value: 42 )
-    { Number( value: -1 ) -> 1 }
-    { Number( value: _ ) -> 2 }
-    { Empty -> 0 }
+let main(): i32 = { match value.number( value: 42 )
+    { number( value: -1 ) -> 1 }
+    { number( value: _ ) -> 2 }
+    { empty -> 0 }
 }

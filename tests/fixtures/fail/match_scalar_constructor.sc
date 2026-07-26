@@ -1,6 +1,6 @@
-let Value = enum { Number( value: i32 ) }
+let value = enum { number( value: i32 ) }
 
 let main(): i32 = { match 42
-    { Value.Number( value: value ) -> value }
+    { value.number( value: value ) -> value }
     { _ -> 0 }
 }

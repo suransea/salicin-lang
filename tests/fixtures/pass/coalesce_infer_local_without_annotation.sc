@@ -1,7 +1,7 @@
-let Option = std.Option
+let option = std.option
 
 let main(): i32 = {
-  let answer = Option.None ?? 42
+  let answer = option.none ?? 42
   answer
 }
 

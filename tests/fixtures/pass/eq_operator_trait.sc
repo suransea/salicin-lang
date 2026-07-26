@@ -1,15 +1,15 @@
-let Eq = std.ops.Eq
+let equality = std.ops.equality
 
-let Token = struct { value: i32 }
+let token = struct { value: i32 }
 
-extend Token: Eq(Token) {
-  let eq(self: borrow(Self))(rhs: borrow(Token)): bool = { self.value == rhs.value }
+extend token: equality(token) {
+  let eq(self: borrow(self))(rhs: borrow(token)): bool = { self.value == rhs.value }
 }
 
 let main(): i32 = {
-  let left = Token { value: 7 }
-  let same = Token { value: 7 }
-  let different = Token { value: 8 }
+  let left = token { value: 7 }
+  let same = token { value: 7 }
+  let different = token { value: 8 }
   if left == same && left != different { 42 } else { 0 }
 }
 

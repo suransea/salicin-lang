@@ -567,7 +567,7 @@ impl Parser {
                 compile_groups,
                 groups,
                 return_type: annotation
-                    .or(builtin_bootstrap.then_some(Type::Named("Never".to_owned(), Vec::new()))),
+                    .or(builtin_bootstrap.then_some(Type::Named("never".to_owned(), Vec::new()))),
                 effects,
                 where_predicates,
                 body: None,
@@ -790,9 +790,6 @@ impl Parser {
         name: String,
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<EffectDef, ParseError> {
-        if !effect_name_is_uppercase(&name) {
-            return Err(self.error_here("effect declarations must use an uppercase nominal name"));
-        }
         if !self.take(&TokenKind::LBrace) {
             return Ok(EffectDef {
                 name,
@@ -1368,13 +1365,12 @@ impl Parser {
             };
             match group {
                 HeaderGroup::Compile(params) => {
-                    self.effect_parameters_in_scope
-                        .extend(params.iter().filter_map(|parameter| {
-                            parameter
-                                .kind
-                                .is_effect_classifier()
-                                .then(|| parameter.name.clone())
-                        }));
+                    self.effect_parameters_in_scope.extend(
+                        params
+                            .iter()
+                            .filter(|parameter| parameter.kind.is_effect_classifier())
+                            .map(|parameter| parameter.name.clone()),
+                    );
                     compile_groups.push(params);
                 }
                 HeaderGroup::Runtime(params) => {
@@ -1481,53 +1477,42 @@ impl Parser {
 
     fn group_starts_with_compile_parameter(&self) -> bool {
         self.at(&TokenKind::LParen)
-            && matches!(
-                self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Ident(_))
-                    | Some(TokenKind::RegionName(_))
-                    | Some(TokenKind::Ellipsis)
-            )
-            && if self.at_offset(1, &TokenKind::Ellipsis) {
+            && self.at_offset(1, &TokenKind::Comptime)
+            && if self.at_offset(2, &TokenKind::Ellipsis) {
                 matches!(
-                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                    self.tokens.get(self.index + 3).map(|token| &token.kind),
                     Some(TokenKind::Ident(_))
-                ) && self.at_offset(3, &TokenKind::Colon)
+                ) && self.at_offset(4, &TokenKind::Colon)
                     && matches!(
-                        self.tokens.get(self.index + 4).map(|token| &token.kind),
+                        self.tokens.get(self.index + 5).map(|token| &token.kind),
                         Some(TokenKind::Ident(kind)) if kind == "parameters"
                     )
             } else {
-                self.at_offset(2, &TokenKind::Colon) && self.compile_parameter_sort_starts_at(3)
+                matches!(
+                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                    Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
+                ) && self.at_offset(3, &TokenKind::Colon)
+                    && self.compile_parameter_sort_starts_at(4)
             }
     }
 
     fn current_starts_compile_parameter(&self) -> bool {
-        matches!(
-            self.current().kind,
-            TokenKind::Ident(_) | TokenKind::RegionName(_)
-        ) && self.at_offset(1, &TokenKind::Colon)
-            && self.compile_parameter_sort_starts_at(2)
+        self.at(&TokenKind::Comptime)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
+            )
+            && self.at_offset(2, &TokenKind::Colon)
+            && self.compile_parameter_sort_starts_at(3)
     }
 
     fn compile_parameter_sort_starts_at(&self, offset: usize) -> bool {
-        let conventionally_compile_time = matches!(
-            self.tokens
-                .get(self.index + offset.saturating_sub(2))
-                .map(|token| &token.kind),
-            Some(TokenKind::Ident(name))
-                if name.chars().next().is_some_and(char::is_uppercase)
-        );
         self.at_offset(offset, &TokenKind::Type)
             || self.at_offset(offset, &TokenKind::Region)
             || self.constructor_compile_parameter_sort_starts_at(offset)
             || matches!(
                 self.tokens.get(self.index + offset).map(|token| &token.kind),
-                Some(TokenKind::Ident(name))
-                    if conventionally_compile_time
-                        || matches!(
-                            name.as_str(),
-                            "access" | "effect" | "effects" | "parameters" | "string"
-                        )
+                Some(TokenKind::Ident(_))
             )
     }
 
@@ -1541,6 +1526,10 @@ impl Parser {
             groups += 1;
             index += 1;
             loop {
+                if !self.kind_at(index, &TokenKind::Comptime) {
+                    return false;
+                }
+                index += 1;
                 if !matches!(
                     self.tokens.get(index).map(|token| &token.kind),
                     Some(TokenKind::Ident(_))
@@ -1614,7 +1603,7 @@ impl Parser {
         if region_name {
             return Err(self.error_at(
                 name_token,
-                "region literals cannot be compile-time parameter names; write `R: region` for a region parameter",
+                "region literals cannot be compile-time parameter names; write `comptime r: region` for a region parameter",
             ));
         }
 
@@ -1634,7 +1623,7 @@ impl Parser {
                     | "u128"
                     | "usize"
                     | "bool"
-                    | "Never"
+                    | "never"
             ) {
                 return Err(self.error_at(
                     name_token,
@@ -1652,12 +1641,6 @@ impl Parser {
                     return Err(self.error_at(
                         name_token,
                         "region entity `'static` is predefined and cannot be redeclared",
-                    ));
-                }
-                if !name.chars().next().is_some_and(char::is_uppercase) {
-                    return Err(self.error_at(
-                        name_token,
-                        "region compile-time parameters must use ordinary uppercase names like `R: region`; region literals use names like `'r`",
                     ));
                 }
                 self.advance();
@@ -1694,7 +1677,7 @@ impl Parser {
                     | "u128"
                     | "usize"
                     | "bool"
-                    | "Never"
+                    | "never"
             ) {
                 return Err(self.error_at(
                     name_token,
@@ -1714,12 +1697,6 @@ impl Parser {
             return Err(self.error_at(
                 name_token,
                 "region entity `'static` is predefined and cannot be redeclared",
-            ));
-        }
-        if !name.chars().next().is_some_and(char::is_uppercase) {
-            return Err(self.error_at(
-                name_token,
-                "region compile-time parameters must use ordinary uppercase names like `R: region`; region literals use names like `'r`",
             ));
         }
         Ok(Sort::Region)
@@ -1758,6 +1735,10 @@ impl Parser {
 
         let mut parameter_kinds = Vec::new();
         loop {
+            self.expect(
+                &TokenKind::Comptime,
+                "`comptime` before constructor sort parameter",
+            )?;
             let name_token = self.current().clone();
             let name = self.expect_ident("a constructor sort parameter name")?;
             if matches!(
@@ -1775,7 +1756,7 @@ impl Parser {
                     | "u128"
                     | "usize"
                     | "bool"
-                    | "Never"
+                    | "never"
             ) {
                 return Err(self.error_at(
                     &name_token,
@@ -1809,6 +1790,7 @@ impl Parser {
         let mut params = Vec::new();
 
         loop {
+            self.expect(&TokenKind::Comptime, "`comptime` before compile-time parameter")?;
             let variadic = self.take(&TokenKind::Ellipsis);
             if variadic {
                 let name = self.expect_ident("a parameter-pack name")?;
@@ -1828,7 +1810,12 @@ impl Parser {
                 self.expect(&TokenKind::RParen, "`)` after parameter pack")?;
                 break;
             }
-            if !self.current_starts_compile_parameter() {
+            if !matches!(
+                self.current().kind,
+                TokenKind::Ident(_) | TokenKind::RegionName(_)
+            ) || !self.at_offset(1, &TokenKind::Colon)
+                || !self.compile_parameter_sort_starts_at(2)
+            {
                 return Err(self.error_here(
                     "compile-time and runtime parameters cannot be mixed in one group",
                 ));
@@ -2046,7 +2033,7 @@ impl Parser {
                 if self.take(&TokenKind::Colon) {
                     self.type_expr()?
                 } else {
-                    Type::Named("Self".into(), Vec::new())
+                    Type::Named("self".into(), Vec::new())
                 }
             } else {
                 self.expect(&TokenKind::Colon, "`:` after parameter name")?;
@@ -2204,7 +2191,7 @@ impl Parser {
             if self.take(&TokenKind::Colon) {
                 if option == "derive" {
                     let derive = self.expect_ident("a derive name")?;
-                    if derive != "Copy" {
+                    if derive != "copyable" {
                         return Err(self.error_here(format!(
                             "unsupported struct derive `{derive}`; only `Copy` is supported"
                         )));
@@ -2341,11 +2328,11 @@ impl Parser {
             let group = self.compile_parameter_group()?;
             let [parameter] = group.as_slice() else {
                 return Err(
-                    self.error_here("trait self sort must declare exactly one `Self` parameter")
+                    self.error_here("trait self sort must declare exactly one `self` parameter")
                 );
             };
-            if parameter.name != "Self" {
-                return Err(self.error_here("trait self sort parameter must be named `Self`"));
+            if parameter.name != "self" {
+                return Err(self.error_here("trait self sort parameter must be named `self`"));
             }
             parameter.clone()
         } else {
@@ -2520,14 +2507,6 @@ impl Parser {
                     while self.take(&TokenKind::Dot) {
                         path.push(self.expect_ident("an effect path segment")?);
                     }
-                    if !path
-                        .last()
-                        .is_some_and(|segment| effect_name_is_uppercase(segment))
-                    {
-                        return Err(
-                            self.error_here("effect names in `with(...)` must end with an uppercase nominal segment")
-                        );
-                    }
                     let name = path.join(".");
                     let mut arguments = Vec::new();
                     if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
@@ -2613,7 +2592,7 @@ impl Parser {
     fn apply_throws_effect(output: Type, throws_error: Option<Type>) -> Type {
         match throws_error {
             None => output,
-            Some(error) => Type::Named("Result".to_owned(), vec![error, output]),
+            Some(error) => Type::Named("result".to_owned(), vec![error, output]),
         }
     }
 
@@ -2772,8 +2751,8 @@ impl Parser {
             path.push(segment);
         }
         let name = path.join(".");
-        if name.split('.').next_back() == Some("Array") && self.take(&TokenKind::LParen) {
-            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "T")
+        if name.split('.').next_back() == Some("array") && self.take(&TokenKind::LParen) {
+            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "t")
                 && self.at_offset(1, &TokenKind::Colon)
             {
                 self.advance();
@@ -2787,9 +2766,9 @@ impl Parser {
             )?;
             self.expect(
                 &TokenKind::LParen,
-                "`(` before the array length; write `Array(T)(L)`",
+                "`(` before the array length; write `array(t)(l)`",
             )?;
-            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "L")
+            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "l")
                 && self.at_offset(1, &TokenKind::Colon)
             {
                 self.advance();
@@ -3923,19 +3902,17 @@ impl Parser {
     fn struct_literal_follows(&self, expression: &Expr) -> bool {
         self.at(&TokenKind::LBrace)
             && Self::expression_can_head_struct_literal(expression)
-            && (self.at_offset(1, &TokenKind::RBrace)
-                || matches!(
-                    (
-                        self.tokens.get(self.index + 1).map(|token| &token.kind),
-                        self.tokens.get(self.index + 2).map(|token| &token.kind),
-                    ),
-                    (Some(TokenKind::Ident(_)), Some(TokenKind::Colon))
-                ))
+            && matches!(
+                (
+                    self.tokens.get(self.index + 1).map(|token| &token.kind),
+                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                ),
+                (Some(TokenKind::Ident(_)), Some(TokenKind::Colon))
+            )
     }
 
     fn expression_can_head_struct_literal(expression: &Expr) -> bool {
-        let root = Self::struct_literal_root(expression);
-        root.chars().next().is_some_and(char::is_uppercase)
+        !Self::struct_literal_root(expression).is_empty()
     }
 
     fn struct_literal_root(expression: &Expr) -> &str {
@@ -5139,10 +5116,6 @@ fn reject_effect_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result
     }
 }
 
-fn effect_name_is_uppercase(name: &str) -> bool {
-    name.chars().next().is_some_and(char::is_uppercase)
-}
-
 fn declared_accesses(
     groups: &[Vec<CompileParam>],
     outer: &HashSet<String>,
@@ -6071,6 +6044,7 @@ fn contextual_spelling(kind: &TokenKind) -> Option<&'static str> {
         TokenKind::Mut => "mut",
         TokenKind::Copy => "copy",
         TokenKind::Move => "move",
+        TokenKind::Comptime => "comptime",
         TokenKind::Borrow => "borrow",
         TokenKind::Type => "type",
         TokenKind::Region => "region",
@@ -6118,6 +6092,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Mut => "`mut`",
         TokenKind::Copy => "`copy`",
         TokenKind::Move => "`move`",
+        TokenKind::Comptime => "`comptime`",
         TokenKind::Borrow => "`borrow`",
         TokenKind::Type => "`type`",
         TokenKind::Region => "`region`",
@@ -6315,7 +6290,7 @@ mod tests {
         assert!(!function.effects.unsafe_effect);
         assert_eq!(
             function.effects.custom,
-            vec![Type::Named("Unsafe".to_owned(), Vec::new())]
+            vec![Type::Named("unsafe_effect".to_owned(), Vec::new())]
         );
 
         let program = parse(
@@ -6329,7 +6304,7 @@ mod tests {
         assert!(error.message.contains("expected a newline or `;`"));
 
         let program =
-            parse("let fallible(): i32 with(Throws(bool), Unsafe) = { throw(true) }\n").unwrap();
+            parse("let fallible(): i32 with(Throws(Bool), Unsafe) = { throw(true) }\n").unwrap();
         let Item::Function(fallible) = &program.items[0] else {
             panic!("expected fallible function");
         };
@@ -6339,14 +6314,14 @@ mod tests {
         assert_eq!(
             fallible.effects.custom,
             vec![
-                Type::Named("Throws".to_owned(), vec![Type::Bool]),
-                Type::Named("Unsafe".to_owned(), Vec::new())
+                Type::Named("throws".to_owned(), vec![Type::Bool]),
+                Type::Named("unsafe_effect".to_owned(), Vec::new())
             ]
         );
 
         for source in [
             "let f(): i32 with(Unsafe, Unsafe) = { 0 }\n",
-            "let f(): i32 with(Throws(bool), Throws(bool)) = { 0 }\n",
+            "let f(): i32 with(Throws(Bool), Throws(Bool)) = { 0 }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
@@ -6354,7 +6329,7 @@ mod tests {
 
         for source in [
             "let f(): i32 with(unsafe) = { 0 }\n",
-            "let f(): i32 with(try(bool)) = { 0 }\n",
+            "let f(): i32 with(try(Bool)) = { 0 }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(!error.message.is_empty());
@@ -6449,7 +6424,7 @@ mod tests {
                 },
                 UseDecl {
                     visibility: Visibility::Package,
-                    path: vec!["root".into(), "core".into(), "Value".into()],
+                    path: vec!["root".into(), "core".into(), "value".into()],
                     alias: None,
                 },
             ]
@@ -6475,8 +6450,8 @@ mod tests {
             vec![
                 UseDecl {
                     visibility: Visibility::Private,
-                    path: vec!["std".into(), "Option".into()],
-                    alias: Some("Option".into()),
+                    path: vec!["std".into(), "option".into()],
+                    alias: Some("option".into()),
                 },
                 UseDecl {
                     visibility: Visibility::Private,
@@ -6490,8 +6465,8 @@ mod tests {
                 },
                 UseDecl {
                     visibility: Visibility::Package,
-                    path: vec!["root".into(), "core".into(), "Value".into()],
-                    alias: Some("Value".into()),
+                    path: vec!["root".into(), "core".into(), "value".into()],
+                    alias: Some("value".into()),
                 },
             ]
         );
@@ -6626,7 +6601,7 @@ mod tests {
         assert!(matches!(
             pattern,
             Pattern::Constructor { path, fields: PatternFields::Positional(fields) }
-                if path == &vec!["root".to_owned(), "Option".to_owned(), "Some".to_owned()]
+                if path == &vec!["root".to_owned(), "option".to_owned(), "Some".to_owned()]
                     && fields == &vec![Pattern::Binding("self".into())]
         ));
     }
@@ -6660,7 +6635,8 @@ mod tests {
             .message
             .contains("`extend` declarations cannot have visibility"));
 
-        let trait_member = parse("let Trait = trait { pub let f(value: i32): i32 }\n").unwrap_err();
+        let trait_member =
+            parse("let Trait = trait { pub let f(value: i32): i32 }\n").unwrap_err();
         assert!(trait_member.message.contains("trait members"));
 
         let extend_member = parse("extend Thing { pub(package) let answer = 42 }\n").unwrap_err();
@@ -6670,8 +6646,8 @@ mod tests {
     #[test]
     fn separates_compile_time_and_runtime_parameter_groups() {
         let program = parse(
-            "let identity(T: type)(value: T): T = { value }\n\
-             let staged(T: type)(U: type)(value: T): U = { value }\n",
+            "let identity(comptime t: type)(value: t): t = { value }\n\
+             let staged(comptime t: type)(comptime u: type)(value: t): u = { value }\n",
         )
         .unwrap();
 
@@ -6680,16 +6656,16 @@ mod tests {
         };
         assert_eq!(identity.compile_groups.len(), 1);
         assert_eq!(identity.compile_groups[0].len(), 1);
-        assert_eq!(identity.compile_groups[0][0].name, "T");
+        assert_eq!(identity.compile_groups[0][0].name, "t");
         assert_eq!(identity.compile_groups[0][0].kind, Sort::Type);
         assert_eq!(identity.groups.len(), 1);
         assert_eq!(
             identity.groups[0][0].ty,
-            Type::Named("T".into(), Vec::new())
+            Type::Named("t".into(), Vec::new())
         );
         assert_eq!(
             identity.return_type,
-            Some(Type::Named("T".into(), Vec::new()))
+            Some(Type::Named("t".into(), Vec::new()))
         );
 
         let Item::Function(staged) = &program.items[1] else {
@@ -6730,7 +6706,7 @@ mod tests {
                 .iter()
                 .map(|param| param.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["T", "U"]
+            vec!["t", "u"]
         );
     }
 
@@ -6749,8 +6725,8 @@ mod tests {
         let Item::Struct(cell) = &program.items[0] else {
             panic!("expected generic struct");
         };
-        assert_eq!(cell.compile_groups[0][0].name, "T");
-        assert_eq!(cell.fields[0].ty, Type::Named("T".into(), Vec::new()));
+        assert_eq!(cell.compile_groups[0][0].name, "t");
+        assert_eq!(cell.fields[0].ty, Type::Named("t".into(), Vec::new()));
 
         let Item::Enum(maybe) = &program.items[1] else {
             panic!("expected generic enum");
@@ -6759,12 +6735,12 @@ mod tests {
         assert!(matches!(
             &maybe.variants[0].fields,
             VariantFields::Positional(types)
-                if types == &vec![Type::Named("T".into(), Vec::new())]
+                if types == &vec![Type::Named("t".into(), Vec::new())]
         ));
         assert!(matches!(
             &maybe.variants[1].fields,
             VariantFields::Named(fields)
-                if fields[0].ty == Type::Named("T".into(), Vec::new())
+                if fields[0].ty == Type::Named("t".into(), Vec::new())
         ));
     }
 
@@ -6786,7 +6762,7 @@ mod tests {
             panic!("expected derived C representation struct");
         };
         assert_eq!(pair.representation, StructRepresentation::C);
-        assert_eq!(pair.derives, ["Copy"]);
+        assert_eq!(pair.derives, ["copyable"]);
 
         for source in [
             "let Bad = struct(system) { value: i32 }\n",
@@ -6861,7 +6837,7 @@ mod tests {
                 mutable: false,
                 access: None,
                 region: None,
-                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+                pointee: Box::new(Type::Named("self".into(), Vec::new())),
             }
         );
         assert_eq!(function.groups[1][0].name, "x");
@@ -6878,7 +6854,7 @@ mod tests {
         else {
             panic!("expected associated type");
         };
-        assert_eq!(name, "Item");
+        assert_eq!(name, "item");
         assert!(compile_groups.is_empty());
         assert_eq!(default, &None);
     }
@@ -6897,15 +6873,15 @@ mod tests {
             panic!("expected generic trait definition");
         };
         assert_eq!(definition.compile_groups.len(), 1);
-        assert_eq!(definition.compile_groups[0][0].name, "T");
+        assert_eq!(definition.compile_groups[0][0].name, "t");
 
         let TraitMember::Function(function) = &definition.members[0] else {
             panic!("expected default method");
         };
-        assert_eq!(function.compile_groups[0][0].name, "U");
+        assert_eq!(function.compile_groups[0][0].name, "u");
         assert_eq!(
             function.return_type,
-            Some(Type::Named("T".into(), Vec::new()))
+            Some(Type::Named("t".into(), Vec::new()))
         );
         assert_eq!(function_tail(function), &Expr::Name("value".into()));
 
@@ -6918,14 +6894,14 @@ mod tests {
         else {
             panic!("expected generic associated type");
         };
-        assert_eq!(name, "Output");
+        assert_eq!(name, "output");
         assert_eq!(compile_groups[0][0].name, "V");
         assert_eq!(
             default,
             &Some(Type::Named(
                 "Pair".into(),
                 vec![
-                    Type::Named("T".into(), Vec::new()),
+                    Type::Named("t".into(), Vec::new()),
                     Type::Named("V".into(), Vec::new()),
                 ],
             ))
@@ -7123,8 +7099,8 @@ mod tests {
     #[test]
     fn rejects_reserved_compile_parameter_names() {
         for name in [
-            "_", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
-            "usize", "bool", "Never",
+            "_", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16",
+            "u32", "u64", "u128", "usize", "bool", "never",
         ] {
             let source = format!("let invalid({name}: type)(value: i32): i32 = {{ value }}\n");
             let error = parse(&source).unwrap_err();
@@ -7368,7 +7344,7 @@ mod tests {
     #[test]
     fn parses_do_if_else_and_return() {
         let program = parse(
-            "let choose(flag: bool): i32 = { do {\n\
+            "let choose(flag: Bool): i32 = { do {\n\
                if flag { return(1) }\n\
                else { 2 }\n\
              } }\n",
@@ -7393,7 +7369,7 @@ mod tests {
 
     #[test]
     fn parses_throw_as_a_core_error_function() {
-        let program = parse("let fail(): Result(bool)(i32) = { throw(false) }\n").unwrap();
+        let program = parse("let fail(): Result(Bool)(i32) = { throw(false) }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -7414,7 +7390,7 @@ mod tests {
             )
         );
 
-        let program = parse("let fail(): Result(bool)(i32) = { throw false }\n").unwrap();
+        let program = parse("let fail(): Result(Bool)(i32) = { throw false }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -7439,7 +7415,7 @@ mod tests {
     #[test]
     fn parses_do_and_try_as_distinct_immediate_handlers() {
         let program = parse(
-            "let main(): Result(bool)(i32) = { try { 42 } }\n\
+            "let main(): Result(Bool)(i32) = { try { 42 } }\n\
              let other(): i32 = { do { 42 } }\n",
         )
         .unwrap();
@@ -7452,9 +7428,10 @@ mod tests {
         };
         assert!(matches!(function_tail(other), Expr::DoBlock { .. }));
 
-        let member =
-            parse("let unwrap(value: Result(bool)(i32)): i32 with(Throws(bool)) = { value.try }\n")
-                .unwrap();
+        let member = parse(
+            "let unwrap(value: Result(Bool)(i32)): i32 with(Throws(Bool)) = { value.try }\n",
+        )
+        .unwrap();
         let Item::Function(member) = &member.items[0] else {
             panic!("expected function");
         };
@@ -7463,7 +7440,7 @@ mod tests {
             Expr::Member(_, name) if name == "try"
         ));
 
-        let program = parse("let value: Result(bool)(i32) = try do { 42 }\n").unwrap();
+        let program = parse("let value: Result(Bool)(i32) = try do { 42 }\n").unwrap();
         let Item::Global(binding) = &program.items[0] else {
             panic!("expected global");
         };
@@ -8062,7 +8039,7 @@ mod tests {
         assert_eq!(
             function.groups[0][0].ty,
             Type::ArrayApplication {
-                constructor: "Array".to_owned(),
+                constructor: "array".to_owned(),
                 element: Box::new(Type::I32),
                 length: USizeConst::Literal(2),
             }
@@ -8076,7 +8053,7 @@ mod tests {
         assert_eq!(
             binding.annotation,
             Some(Type::ArrayApplication {
-                constructor: "Array".to_owned(),
+                constructor: "array".to_owned(),
                 element: Box::new(Type::I32),
                 length: USizeConst::Literal(3),
             })
@@ -8103,7 +8080,7 @@ mod tests {
         assert_eq!(
             consume.groups[0][0].ty,
             Type::ArrayApplication {
-                constructor: "Array".into(),
+                constructor: "array".into(),
                 element: Box::new(Type::I32),
                 length: USizeConst::Expression(Box::new(StaticExpr::Binary(
                     Box::new(StaticExpr::Call {
@@ -8217,14 +8194,14 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(function.compile_groups[0][0].name, "R");
+        assert_eq!(function.compile_groups[0][0].name, "r");
         assert_eq!(function.compile_groups[0][0].kind, Sort::Region);
         assert_eq!(
             function.groups[0][0].ty,
             Type::Borrow {
                 mutable: false,
                 access: None,
-                region: Some("R".to_owned()),
+                region: Some("r".to_owned()),
                 pointee: Box::new(Type::I32),
             }
         );
@@ -8233,7 +8210,7 @@ mod tests {
             Some(Type::Borrow {
                 mutable: false,
                 access: None,
-                region: Some("R".to_owned()),
+                region: Some("r".to_owned()),
                 pointee: Box::new(Type::I32),
             })
         );
@@ -8254,9 +8231,9 @@ mod tests {
             function.groups[0][0].ty,
             Type::Borrow {
                 mutable: false,
-                access: Some("A".to_owned()),
-                region: Some("R".to_owned()),
-                pointee: Box::new(Type::Named("T".into(), Vec::new())),
+                access: Some("a".to_owned()),
+                region: Some("r".to_owned()),
+                pointee: Box::new(Type::Named("t".into(), Vec::new())),
             }
         );
         assert!(matches!(
@@ -8266,7 +8243,7 @@ mod tests {
                 access: Some(ref access),
                 region: Some(ref region),
                 ..
-            }) if access == "A" && region == "R"
+            }) if access == "a" && region == "r"
         ));
         assert!(matches!(
             function_tail(function),
@@ -8274,7 +8251,7 @@ mod tests {
                 mutable: false,
                 access: Some(ref access),
                 ..
-            } if access == "A"
+            } if access == "a"
         ));
     }
 
@@ -8282,7 +8259,7 @@ mod tests {
     fn parses_closed_types_as_compile_parameter_types() {
         let program = parse(
             "let optimization = enum { size, speed }\n\
-             let select(B: bool, O: optimization)(value: i32): i32 = { value }\n",
+             let select(B: Bool, O: optimization)(value: i32): i32 = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[1] else {
@@ -8301,19 +8278,32 @@ mod tests {
     #[test]
     fn parses_metadata_string_compile_parameters() {
         let program =
-            parse("let register(name: string)(move body: (): bool): () = builtin()\n").unwrap();
+            parse("let register(Name: String)(move body: (): Bool): () = builtin()\n").unwrap();
         let [Item::Function(function)] = program.items.as_slice() else {
             panic!("expected one metadata function");
         };
         assert_eq!(
             function.compile_groups,
             vec![vec![CompileParam {
-                name: "name".to_owned(),
+                name: "Name".to_owned(),
                 kind: Sort::String,
                 default: None,
             }]]
         );
         assert_eq!(function.groups.len(), 1);
+
+        let runtime = parse("let identity(value: String): String = { value }\n").unwrap();
+        let [Item::Function(function)] = runtime.items.as_slice() else {
+            panic!("expected one runtime String function");
+        };
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Named("string".to_owned(), Vec::new())
+        );
+        assert_eq!(
+            function.return_type,
+            Some(Type::Named("string".to_owned(), Vec::new()))
+        );
     }
 
     #[test]
@@ -8333,7 +8323,7 @@ mod tests {
     #[test]
     fn parses_parameter_prefixes_as_composable_modifiers() {
         let program = parse(
-            "let decorate(B: bool, M: (P: parameters): parameters)(B M value: i32): i32 = { value }\n",
+            "let decorate(B: Bool, M: (P: parameters): parameters)(B M value: i32): i32 = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -8367,15 +8357,15 @@ mod tests {
             panic!("expected function");
         };
         assert_eq!(function.compile_groups[0][0].kind, Sort::Effects);
-        assert_eq!(function.effects.parameters, vec!["E"]);
+        assert_eq!(function.effects.parameters, vec!["e"]);
         let Item::Function(combined) = &program.items[1] else {
             panic!("expected function");
         };
         assert_eq!(
             combined.effects.custom,
-            vec![Type::Named("Unsafe".to_owned(), Vec::new())]
+            vec![Type::Named("unsafe_effect".to_owned(), Vec::new())]
         );
-        assert_eq!(combined.effects.parameters, vec!["E"]);
+        assert_eq!(combined.effects.parameters, vec!["e"]);
 
         let error = parse("let Box(E: effects) = struct { value: i32 }\n").unwrap_err();
         assert!(error
@@ -8420,19 +8410,19 @@ mod tests {
             Type::Named(
                 "$parameter$groups$expand".to_owned(),
                 vec![Type::Named(
-                    "Clauses".to_owned(),
+                    "clauses".to_owned(),
                     vec![
-                        Type::Named("Value".to_owned(), Vec::new()),
-                        Type::Named("Answer".to_owned(), Vec::new()),
+                        Type::Named("value".to_owned(), Vec::new()),
+                        Type::Named("answer".to_owned(), Vec::new()),
                     ],
                 )],
             )
         );
-        assert_eq!(function.effects.parameters, vec!["Rest"]);
+        assert_eq!(function.effects.parameters, vec!["rest"]);
         let Type::Function { effects, .. } = &function.groups[1][0].ty else {
             panic!("expected action callable parameter");
         };
-        assert_eq!(effects.parameters, vec!["Rest", "Self"]);
+        assert_eq!(effects.parameters, vec!["rest", "self"]);
         assert!(effects.custom.is_empty());
     }
 
@@ -8511,7 +8501,7 @@ mod tests {
                 if function.name == "builtin"
                     && function.builtin
                     && function.body.is_none()
-                    && function.return_type == Some(Type::Named("Never".to_owned(), Vec::new()))
+                    && function.return_type == Some(Type::Named("never".to_owned(), Vec::new()))
         ));
         assert!(matches!(
             &program.items[1],
@@ -8572,22 +8562,22 @@ mod tests {
             function.compile_groups,
             vec![vec![
                 CompileParam {
-                    name: "Input".to_owned(),
+                    name: "input".to_owned(),
                     kind: Sort::Type,
                     default: None,
                 },
                 CompileParam {
-                    name: "Output".to_owned(),
+                    name: "output".to_owned(),
                     kind: Sort::Type,
                     default: None,
                 },
                 CompileParam {
-                    name: "E".to_owned(),
+                    name: "e".to_owned(),
                     kind: Sort::Effects,
                     default: None,
                 },
                 CompileParam {
-                    name: "Cases".to_owned(),
+                    name: "cases".to_owned(),
                     kind: Sort::ParameterPack,
                     default: None,
                 },
@@ -8597,24 +8587,24 @@ mod tests {
             function.groups.as_slice(),
             [input, cases]
                 if input[0].name == "input"
-                    && cases[0].name == "Cases"
+                    && cases[0].name == "cases"
                     && cases[0].ty
                         == Type::Named(
                             "$parameter$groups$expand".to_owned(),
-                            vec![Type::Named("Cases".to_owned(), Vec::new())],
+                            vec![Type::Named("cases".to_owned(), Vec::new())],
                         )
         ));
         assert_eq!(
             function.return_type,
-            Some(Type::Named("Output".to_owned(), Vec::new()))
+            Some(Type::Named("output".to_owned(), Vec::new()))
         );
-        assert_eq!(function.effects.parameters, vec!["E"]);
+        assert_eq!(function.effects.parameters, vec!["e"]);
         assert!(function.body.is_none());
     }
 
     #[test]
     fn parses_type_forms_and_closed_enums_from_the_type_sort() {
-        let program = parse("pub let i32: type\npub let bool = enum { false, true }\n").unwrap();
+        let program = parse("pub let i32: type\npub let Bool = enum { false, true }\n").unwrap();
         assert!(matches!(
             &program.items[0],
             Item::TypeForm(definition)
@@ -8637,14 +8627,14 @@ mod tests {
         let error = parse("let i32 = type\n").unwrap_err();
         assert!(error.message.contains("abstract sort"));
 
-        let error = parse("let bool = type { false, true }\n").unwrap_err();
+        let error = parse("let Bool = type { false, true }\n").unwrap_err();
         assert!(error.message.contains("abstract sort"));
 
         let error = parse("let kind = sort\n").unwrap_err();
         assert!(error.message.contains("let Name: sort"));
         assert!(error.message.contains("sort {}"));
 
-        let error = parse("let bool = enum { false, false }\n").unwrap_err();
+        let error = parse("let Bool = enum { false, false }\n").unwrap_err();
         assert!(error.message.contains("duplicate enum variant `false`"));
     }
 
@@ -8774,13 +8764,14 @@ mod tests {
             &function.groups[0][0].ty,
             Type::Function { groups, effects, result }
                 if groups == &vec![vec![Type::I32]]
-                    && effects.parameters == vec!["E"]
+                    && effects.parameters == vec!["e"]
                     && result.as_ref() == &Type::I32
         ));
 
-        let old =
-            parse("let apply(E: effects)(action: (i32): i32(E))(value: i32): i32 = { value }\n")
-                .unwrap_err();
+        let old = parse(
+            "let apply(E: effects)(action: (i32): i32(E))(value: i32): i32 = { value }\n",
+        )
+        .unwrap_err();
         assert!(
             old.message
                 .contains("effect parameter `E` cannot be used as a runtime type"),
@@ -8792,8 +8783,9 @@ mod tests {
 
     #[test]
     fn rejects_parameter_modifier_parameters_on_data_declarations() {
-        let error = parse("let Wrapper(M: (P: parameters): parameters) = struct { value: i32 }\n")
-            .unwrap_err();
+        let error =
+            parse("let Wrapper(M: (P: parameters): parameters) = struct { value: i32 }\n")
+                .unwrap_err();
         assert!(error
             .message
             .contains("modifier parameters belong to functions"));
@@ -8982,12 +8974,12 @@ mod tests {
             array.compile_groups,
             vec![
                 vec![CompileParam {
-                    name: "T".to_owned(),
+                    name: "t".to_owned(),
                     kind: Sort::Type,
                     default: None,
                 }],
                 vec![CompileParam {
-                    name: "L".to_owned(),
+                    name: "l".to_owned(),
                     kind: Sort::USize,
                     default: None,
                 }]
@@ -9013,7 +9005,7 @@ mod tests {
         let Item::Extend(extension) = &program.items[1] else {
             panic!("expected extend declaration");
         };
-        assert_eq!(extension.target, Type::Named("A".into(), Vec::new()));
+        assert_eq!(extension.target, Type::Named("a".into(), Vec::new()));
         assert_eq!(
             extension.trait_ref,
             Some(Type::Named("Foo".into(), Vec::new()))
@@ -9034,7 +9026,7 @@ mod tests {
                 mutable: true,
                 access: None,
                 region: None,
-                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+                pointee: Box::new(Type::Named("self".into(), Vec::new())),
             }
         );
         assert!(reset.groups[1].is_empty());
@@ -9072,10 +9064,10 @@ mod tests {
         let ExtendMember::Function(convert) = &extension.members[0] else {
             panic!("expected generic method");
         };
-        assert_eq!(convert.compile_groups[0][0].name, "T");
+        assert_eq!(convert.compile_groups[0][0].name, "t");
         assert_eq!(convert.groups.len(), 2);
         assert_eq!(convert.groups[0][0].name, "self");
-        assert_eq!(convert.groups[1][0].ty, Type::Named("T".into(), Vec::new()));
+        assert_eq!(convert.groups[1][0].ty, Type::Named("t".into(), Vec::new()));
 
         let ExtendMember::Function(make) = &extension.members[1] else {
             panic!("expected generic associated function");
@@ -9099,10 +9091,10 @@ mod tests {
         };
         assert_eq!(extension.compile_groups.len(), 1);
         assert_eq!(extension.where_predicates.len(), 1);
-        assert_eq!(extension.compile_groups[0][0].name, "T");
+        assert_eq!(extension.compile_groups[0][0].name, "t");
         assert_eq!(
             extension.target,
-            Type::Named("Cell".into(), vec![Type::Named("T".into(), Vec::new())])
+            Type::Named("Cell".into(), vec![Type::Named("t".into(), Vec::new())])
         );
     }
 
@@ -9120,7 +9112,7 @@ mod tests {
         assert_eq!(function.where_predicates.len(), 2);
         assert_eq!(
             function.where_predicates[0].subject,
-            Type::Named("T".into(), Vec::new())
+            Type::Named("t".into(), Vec::new())
         );
         assert_eq!(
             function.where_predicates[1].trait_ref,
@@ -9129,11 +9121,11 @@ mod tests {
         assert_eq!(function.where_predicates[1].associated_types.len(), 1);
         assert_eq!(
             function.where_predicates[1].associated_types[0].name,
-            "Item"
+            "item"
         );
         assert_eq!(
             function.where_predicates[1].associated_types[0].ty,
-            Type::Named("T".into(), Vec::new())
+            Type::Named("t".into(), Vec::new())
         );
     }
 
@@ -9148,7 +9140,7 @@ mod tests {
             panic!("expected a generic function");
         };
         let binding = &function.where_predicates[0].associated_types[0];
-        assert_eq!(binding.name, "Item");
+        assert_eq!(binding.name, "item");
         assert_eq!(binding.compile_groups.len(), 2);
         assert!(binding.compile_groups[0][0].kind.is_access());
         assert_eq!(binding.compile_groups[1][0].kind, Sort::Region);
@@ -9156,8 +9148,8 @@ mod tests {
             binding.ty,
             Type::Borrow {
                 mutable: false,
-                access: Some("A".into()),
-                region: Some("R".into()),
+                access: Some("a".into()),
+                region: Some("r".into()),
                 pointee: Box::new(Type::I32),
             }
         );
@@ -9217,7 +9209,7 @@ mod tests {
                 mutable: false,
                 access: None,
                 region: None,
-                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+                pointee: Box::new(Type::Named("self".into(), Vec::new())),
             }
         );
         assert!(inspect.groups[1].is_empty());
@@ -9263,10 +9255,10 @@ mod tests {
         let Item::TypeAlias(family) = &program.items[0] else {
             panic!("expected type-family alias");
         };
-        assert_eq!(family.compile_groups[0][0].name, "T");
+        assert_eq!(family.compile_groups[0][0].name, "t");
         assert_eq!(
             family.target,
-            Type::Named("Box".into(), vec![Type::Named("T".into(), Vec::new())])
+            Type::Named("box".into(), vec![Type::Named("t".into(), Vec::new())])
         );
 
         let Item::TypeAlias(constructor) = &program.items[1] else {
@@ -9276,7 +9268,7 @@ mod tests {
         assert_eq!(
             constructor.target,
             Type::Named(
-                "Box".into(),
+                "box".into(),
                 vec![Type::Named("Element".into(), Vec::new())]
             )
         );
@@ -9292,7 +9284,7 @@ mod tests {
         let program = parse(
             "let Use(F: (Element: type): type)(move value: F(i32)): F(i32) = { value }\n\
              let Curried(F: (Element: type)(Length: usize): type)(): i32 = { 0 }\n\
-             let Effects(E: (Error: type): effect)(move action: (): i32 with(E(bool))): i32 with(E(bool)) = { action() }\n\
+             let Effects(E: (Error: type): effect)(move action: (): i32 with(E(Bool))): i32 with(E(Bool)) = { action() }\n\
              let Functor = trait(Self: (Value: type): type) {\n\
                let map(E: effects, A: type, B: type)(move self: Self(A))(move transform: (A): B with(E)): Self(B) with(E)\n\
              }\n\
@@ -9313,7 +9305,7 @@ mod tests {
         );
         assert_eq!(
             function.groups[0][0].ty,
-            Type::Named("F".into(), vec![Type::I32])
+            Type::Named("f".into(), vec![Type::I32])
         );
 
         let Item::Function(curried) = &program.items[1] else {
@@ -9337,7 +9329,7 @@ mod tests {
         );
         assert_eq!(
             effects.effects.custom,
-            vec![Type::Named("E".into(), vec![Type::Bool])]
+            vec![Type::Named("e".into(), vec![Type::Bool])]
         );
 
         let Item::Trait(trait_def) = &program.items[3] else {
@@ -9357,7 +9349,7 @@ mod tests {
         assert_eq!(applicative.where_predicates.len(), 1);
         assert_eq!(
             applicative.where_predicates[0].subject,
-            Type::Named("Self".into(), Vec::new())
+            Type::Named("self".into(), Vec::new())
         );
         assert_eq!(
             applicative.where_predicates[0].trait_ref,
@@ -9368,7 +9360,7 @@ mod tests {
     #[test]
     fn parses_labeled_type_arguments_without_reordering() {
         let program = parse(
-            "let consume(value: Pair(V: bool, K: i32)): Result(E: bool)(T: i32) = { value }\n",
+            "let consume(value: Pair(V: Bool, K: i32)): Result(E: Bool)(T: i32) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -9393,14 +9385,14 @@ mod tests {
         assert_eq!(
             function.return_type,
             Some(Type::NamedArgs(
-                "Result".into(),
+                "result".into(),
                 vec![
                     TypeArg {
-                        label: Some("E".into()),
+                        label: Some("e".into()),
                         ty: Type::Bool,
                     },
                     TypeArg {
-                        label: Some("T".into()),
+                        label: Some("t".into()),
                         ty: Type::I32,
                     },
                 ],
@@ -9463,9 +9455,9 @@ mod tests {
             binding.value_source.as_deref(),
             Some(&crate::ast::SourceSpan {
                 line: 2,
-                column: 20,
+                column: 22,
                 end_line: 2,
-                end_column: 24,
+                end_column: 26,
             })
         );
         assert!(matches!(
@@ -9496,8 +9488,9 @@ mod tests {
 
     #[test]
     fn parses_contextual_async_and_await_as_language_expressions() {
-        let program = parse("let make(): i32 = {\n  let future = async { await next() }\n  0\n}\n")
-            .expect("async expressions must parse");
+        let program =
+            parse("let make(): i32 = {\n  let future = async { await next() }\n  0\n}\n")
+                .expect("async expressions must parse");
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };

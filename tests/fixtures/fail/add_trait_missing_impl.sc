@@ -1,6 +1,6 @@
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
 let main(): i32 = {
-  let answer = Number { value: 40 } + Number { value: 2 }
+  let answer = number { value: 40 } + number { value: 2 }
   answer.value
 }

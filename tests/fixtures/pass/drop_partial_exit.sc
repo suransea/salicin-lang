@@ -1,14 +1,14 @@
-let Resource = struct { value: i32 }
-let Wrapper = struct { resource: Resource, value: i32 }
+let resource = struct { value: i32 }
+let wrapper = struct { resource: resource, value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.value
   }
 }
 
 let escape(): i32 = {
-  let wrapper = Wrapper { resource: Resource { value: 0 }, value: return(42) }
+  let wrapper = wrapper { resource: resource { value: 0 }, value: return(42) }
   0
 }
 

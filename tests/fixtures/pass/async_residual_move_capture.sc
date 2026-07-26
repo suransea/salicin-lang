@@ -1,34 +1,34 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Resource = struct {
+let resource = struct {
   value: i32,
-  drops: Ptr(mut)(i32)
+  drops: ptr(mut)(i32)
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let request(): i32 with(Ask) = {
-  Ask.ask()
+let request(): i32 with(ask) = {
+  ask.ask()
 }
 
-let consume(move resource: Resource): i32 = {
+let consume(move resource: resource): i32 = {
   resource.value
 }
 
-let poll_once(E: effects, F: type, T: type)
-  (future: borrow(mut)(F)): Poll(T) with(E)
-where F: Future(E, Output = T) = {
+let poll_once(comptime e: effects, comptime f: type, comptime t: type)
+  (future: borrow(mut)(f)): poll(t) with(e)
+where f: future(e, output = t) = {
   future.poll()
 }
 
@@ -39,15 +39,15 @@ let main(): i32 = {
   unsafe {
     *drops = 0
   }
-  let resource = Resource { value: 2, drops: drops }
+  let resource = resource { value: 2, drops: drops }
   let mut future = async {
     consume(resource) + request()
   }
-  let result: i32 = Ask.handle ask { (resume) -> resume(40) } action {
-      let polled: Poll(i32) = poll_once(future)
+  let result: i32 = ask.handle ask { (resume) -> resume(40) } action {
+      let polled: poll(i32) = poll_once(future)
       match polled
-        { Ready(value) -> value }
-        { Pending -> 0 }
+        { ready(value) -> value }
+        { pending -> 0 }
     }
   let drop_count = unsafe {
     *drops

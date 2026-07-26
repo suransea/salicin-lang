@@ -1,12 +1,12 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
 let main(): i32 = {
-  Ask.handle value { (resume) ->
+  ask.handle value { (resume) ->
       let escaped = resume
       42
     } action {
-      Ask.value()
+      ask.value()
     }
 }

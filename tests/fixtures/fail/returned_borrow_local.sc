@@ -1,4 +1,4 @@
-let bad(R: region)(seed: borrow(R)(i32)): borrow(R)(i32) = {
+let bad(comptime r: region)(seed: borrow(r)(i32)): borrow(r)(i32) = {
   let local = seed
   borrow(local)
 }

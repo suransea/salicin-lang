@@ -1,16 +1,16 @@
-let Marker = trait {}
-let Value = struct { value: i32 }
-extend Value: Copy {}
-extend Value: Marker() {}
+let marker = trait {}
+let value = struct { value: i32 }
+extend value: copyable {}
+extend value: marker() {}
 
-let duplicate(T: type)(copy value: T): T
-where T: Copy,
-  T: Marker, = {
+let duplicate(comptime t: type)(copy value: t): t
+where t: copyable,
+  t: marker, = {
   let first = value
   value
 }
 
-let main(): i32 = { duplicate(Value { value: 42 }).value }
+let main(): i32 = { duplicate(value { value: 42 }).value }
 
 test("where_copy_bound.sc") {
   main() == 42

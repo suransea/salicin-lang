@@ -1,63 +1,63 @@
 // Primitive pointer and layout contracts. The source declarations define the
 // public identities and signatures; the compiler supplies representation,
 // authority checks, and target-specific lowering after validating this module.
-let Index = core.ops.Index
+let index_operator = core.ops.index_operator
 
 /// Fixed-size array type with compile-time element type and length.
-pub let Array(T: type)
-  (L: usize): type = builtin()
+pub let array(comptime t: type)
+  (comptime l: usize): type = builtin()
 
 /// Dynamically sized contiguous sequence viewed through a borrow.
-pub let Slice(T: type): type = builtin()
+pub let slice(comptime t: type): type = builtin()
 
 /// Routes fixed-size array brackets through the source-defined indexing protocol.
-extend(T: type, L: usize) Array(T)(L): Index(i32) {
-  let Output = T
-  let index(A: access)
-    (self: borrow(A)(Self))
-    (key: i32): borrow(A)(T) = builtin()
+extend(comptime t: type, comptime l: usize) array(t)(l): index_operator(i32) {
+  let output = t
+  let index(comptime a: access)
+    (self: borrow(a)(self))
+    (key: i32): borrow(a)(t) = builtin()
 }
 
 /// Provides operations on a borrowed contiguous sequence.
-extend(T: type) Slice(T) {
+extend(comptime t: type) slice(t) {
   /// Returns the number of elements in this slice.
-  let len(A: access = shared)(self: borrow(A)(Self))(): u64 = {
+  let len(comptime a: access = shared)(self: borrow(a)(self))(): u64 = {
     unsafe {
       raw_slice_len(self)
     }
   }
 
   /// Borrows the element at `index`, trapping if `index` is out of bounds.
-  let at(A: access = shared)(self: borrow(A)(Self))(index: u64): borrow(A)(T) = {
+  let at(comptime a: access = shared)(self: borrow(a)(self))(index: u64): borrow(a)(t) = {
     unsafe {
-      raw_slice_at(A)(self, index)
+      raw_slice_at(a)(self, index)
     }
   }
 }
 
 /// Routes bracket access through the source-defined indexing protocol.
-extend(T: type) Slice(T): Index(u64) {
-  let Output = T
-  let index(A: access)
-    (self: borrow(A)(Self))
-    (key: u64): borrow(A)(T) = {
-    self.at(A)(key)
+extend(comptime t: type) slice(t): index_operator(u64) {
+  let output = t
+  let index(comptime a: access)
+    (self: borrow(a)(self))
+    (key: u64): borrow(a)(t) = {
+    self.at(a)(key)
   }
 }
 
 /// Raw pointer type with access `A` and pointee `T`.
-pub let Ptr(A: access = shared)
-  (T: type): type = builtin()
+pub let ptr(comptime a: access = shared)
+  (comptime t: type): type = builtin()
 
 /// Forms a raw pointer from a borrow with the same access.
-pub let Ptr(A: access = shared)
-  (T: type)
-  (value: borrow(A)(T)): Ptr(A)(T) = builtin()
+pub let ptr(comptime a: access = shared)
+  (comptime t: type)
+  (value: borrow(a)(t)): ptr(a)(t) = builtin()
 
 /// Provides operations shared by raw pointers at either access.
-extend(A: access, T: type) Ptr(A)(T) {
+extend(comptime a: access, comptime t: type) ptr(a)(t) {
   /// Returns the pointer `index` elements after this pointer.
-  let offset(self)(index: u64): Ptr(A)(T) with(core.unsafe.Unsafe) = {
+  let offset(self)(index: u64): ptr(a)(t) with(core.unsafe.unsafe_effect) = {
     unsafe {
       raw_offset(self, index)
     }
@@ -65,16 +65,16 @@ extend(A: access, T: type) Ptr(A)(T) {
 }
 
 /// Provides operations that require mutable raw-pointer access.
-extend(T: type) Ptr(mut)(T) {
+extend(comptime t: type) ptr(mut)(t) {
   /// Initializes storage that is currently uninitialized.
-  let init(self)(value: T): () with(core.unsafe.Unsafe) = {
+  let init(self)(value: t): () with(core.unsafe.unsafe_effect) = {
     unsafe {
       raw_init(self, value)
     }
   }
 
   /// Moves a value out and leaves the storage uninitialized.
-  let take(self)(): T with(core.unsafe.Unsafe) = {
+  let take(self)(): t with(core.unsafe.unsafe_effect) = {
     unsafe {
       raw_take(self)
     }
@@ -82,7 +82,7 @@ extend(T: type) Ptr(mut)(T) {
 }
 
 /// Returns the target size of `T` in bytes.
-pub let size_of(T: type): u64 = builtin()
+pub let size_of(comptime t: type): u64 = builtin()
 
 /// Returns the target alignment of `T` in bytes.
-pub let align_of(T: type): u64 = builtin()
+pub let align_of(comptime t: type): u64 = builtin()

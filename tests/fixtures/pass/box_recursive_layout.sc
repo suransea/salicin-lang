@@ -1,12 +1,12 @@
-let Option = std.Option
+let option = std.option
 
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Node = struct { value: i32, next: Option(Box(Node)) }
+let node = struct { value: i32, next: option(box(node)) }
 
 let main(): i32 = {
-  let tail = Node { value: 42, next: None }
-  let head = Box.new(tail)
+  let tail = node { value: 42, next: none }
+  let head = box.new(tail)
   42
 }
 

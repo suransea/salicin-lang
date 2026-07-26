@@ -1,109 +1,109 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Step = struct {
-  drops: Ptr(mut)(i32),
+let step = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
   drop_amount: i32,
 }
 
-extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend step: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + self.drop_amount
     }
   }
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
 let make_second(
-  drops: Ptr(mut)(i32),
-  calls: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
+  calls: ptr(mut)(i32),
   first: i32,
-): Step with(Ask) = {
+): step with(ask) = {
   unsafe {
     *calls = *calls + 1
   }
-  Step { drops: drops, polls: 0, value: first + Ask.ask(), drop_amount: 1 }
+  step { drops: drops, polls: 0, value: first + ask.ask(), drop_amount: 1 }
 }
 
-let abandon(calls: Ptr(mut)(i32)): i32 = {
+let abandon(calls: ptr(mut)(i32)): i32 = {
   unsafe {
     *calls = *calls + 1
   }
   42
 }
 
-let run_success(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
+let run_success(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
   let mut future = async {
-    let first = await Step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
+    let first = await step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
     let second = await make_second(drops, calls, first)
     second
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let first = future.poll()
       let second = future.poll()
       let third = future.poll()
       match first
-        { Pending -> match second
-          { Pending -> match third
-            { Ready(value) -> value }
-            { Pending -> 0 } }
-          { Ready(_) -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { pending -> match third
+            { ready(value) -> value }
+            { pending -> 0 } }
+          { ready(_) -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let run_cancelled(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (resume) -> resume(40) } action {
+let run_cancelled(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (resume) -> resume(40) } action {
       let mut future = async {
-        let first = await Step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
+        let first = await step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
         let second = await make_second(drops, calls, first)
         second
       }
       let first = future.poll()
       let second = future.poll()
       match first
-        { Pending -> match second
-          { Pending -> 42 }
-          { Ready(_) -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { pending -> 42 }
+          { ready(_) -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let run_abandoned(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (_) -> abandon(calls) } action {
+let run_abandoned(drops: ptr(mut)(i32), calls: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (_) -> abandon(calls) } action {
       let mut future = async {
-        let first = await Step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
+        let first = await step { drops: drops, polls: 0, value: 2, drop_amount: 10 }
         let second = await make_second(drops, calls, first)
         second
       }
       let first = future.poll()
       let second = future.poll()
       match first
-        { Pending -> match second
-          { Pending -> 0 }
-          { Ready(_) -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match second
+          { pending -> 0 }
+          { ready(_) -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 

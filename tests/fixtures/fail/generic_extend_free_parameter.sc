@@ -1,7 +1,7 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type, U: type) Cell(T) {
-  let invalid(self: borrow(Self))(): i32 = { 0 }
+extend(comptime t: type, comptime u: type) cell(t) {
+  let invalid(self: borrow(self))(): i32 = { 0 }
 }
 
 let main(): i32 = { 0 }

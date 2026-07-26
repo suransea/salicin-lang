@@ -1736,7 +1736,7 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
 pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
     match expression {
         Expr::Located { value, .. } => substitute_self_expression_target(value, target),
-        Expr::Name(name) if name == "Self" => *name = target.to_owned(),
+        Expr::Name(name) if name == "self" => *name = target.to_owned(),
         Expr::Type(_)
         | Expr::Unit
         | Expr::Integer(_)
@@ -1863,7 +1863,7 @@ fn substitute_self_pattern_target(pattern: &mut Pattern, target: &str) {
     let Pattern::Constructor { path, fields } = pattern else {
         return;
     };
-    if path.first().is_some_and(|segment| segment == "Self") {
+    if path.first().is_some_and(|segment| segment == "self") {
         path[0] = target.to_owned();
     }
     match fields {
@@ -1896,7 +1896,7 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
                         label: Some(label),
                         value,
                     }],
-                ) if matches!(base.as_ref(), Expr::Name(name) if name == "Self")
+                ) if matches!(base.as_ref(), Expr::Name(name) if name == "self")
                     && label == "self" =>
                 {
                     Some(Expr::Member(Box::new(value.clone()), member.clone()))
@@ -2241,7 +2241,7 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
         Type::Borrow { .. } | Type::Tuple(_) | Type::Function { .. } => Expr::Type(source.clone()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Call(
-                Box::new(Expr::Name("Array".to_owned())),
+                Box::new(Expr::Name("array".to_owned())),
                 vec![CallArg {
                     label: None,
                     value: source_type_expression(element),

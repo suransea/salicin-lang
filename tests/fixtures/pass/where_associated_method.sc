@@ -1,23 +1,23 @@
-let Produce = trait {
-  let Item: type
-  let produce(self: borrow(Self))(): Item
+let produce = trait {
+  let item: type
+  let produce(self: borrow(self))(): item
 }
 
-let Value = struct { value: i32 }
+let value = struct { value: i32 }
 
-extend Value: Produce {
-  let Item = i32
-  let produce(self: borrow(Self))(): i32 = { self.value }
+extend value: produce {
+  let item = i32
+  let produce(self: borrow(self))(): i32 = { self.value }
 }
 
-let produce(T: type)(value: borrow(T)): i32
-where T: Produce(Item = i32) = { value.produce() }
+let produce(comptime t: type)(value: borrow(t)): i32
+where t: produce(item = i32) = { value.produce() }
 
-let forward(T: type)(value: borrow(T)): i32
-where T: Produce(Item = i32) = { produce(value) }
+let forward(comptime t: type)(value: borrow(t)): i32
+where t: produce(item = i32) = { produce(value) }
 
 let main(): i32 = {
-  let value = Value { value: 42 }
+  let value = value { value: 42 }
   forward(value)
 }
 

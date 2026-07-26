@@ -1,29 +1,29 @@
-let Unsafe = std.unsafe.Unsafe
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let consume(move resource: Resource): () = { () }
+let consume(move resource: resource): () = { () }
 
-let relocate(T: type)(move value: T): T
-where T: Move = {
+let relocate(comptime t: type)(move value: t): t
+where t: movable = {
   value
 }
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+let allocate(): ptr(mut)(i32) with(unsafe_effect) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+let release(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
@@ -35,7 +35,7 @@ let main(): i32 = {
     *counter = 0
 
     do {
-      let resource = Resource { counter: counter }
+      let resource = resource { counter: counter }
       let future = async {
         consume(resource)
       }

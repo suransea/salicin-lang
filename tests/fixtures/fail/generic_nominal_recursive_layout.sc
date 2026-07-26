@@ -1,3 +1,3 @@
-let Invalid(T: type) = struct { next: Invalid(T) }
+let invalid(comptime t: type) = struct { next: invalid(t) }
 
 let main(): i32 = { 42 }

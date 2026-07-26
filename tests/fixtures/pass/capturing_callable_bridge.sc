@@ -1,23 +1,23 @@
-let Unsafe = std.unsafe.Unsafe
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
-let Resource = struct {
-  counter: Ptr(mut)(i32),
+let resource = struct {
+  counter: ptr(mut)(i32),
   value: i32,
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let consume(move resource: Resource): i32 = { resource.value }
+let consume(move resource: resource): i32 = { resource.value }
 
 let ignore(move action: (): i32): i32 = { 29 }
 
@@ -28,7 +28,7 @@ let repeat(move action: (): ()): () = {
   action()
 }
 
-let effect_once(E: effects)(move action: (): i32 with(E)): i32 with(E) = {
+let effect_once(comptime e: effects)(move action: (): i32 with(e)): i32 with(e) = {
   action()
 }
 
@@ -38,10 +38,10 @@ let main(): i32 = {
   }
   unsafe { *counter = 0 }
 
-  let abandoned = Resource { counter: counter, value: 100 }
+  let abandoned = resource { counter: counter, value: 100 }
   let ignored = ignore({ consume(abandoned) })
 
-  let consumed = Resource { counter: counter, value: 5 }
+  let consumed = resource { counter: counter, value: 5 }
   let invoked = once({ consume(consumed) })
 
   let mut calls = 0
@@ -51,15 +51,15 @@ let main(): i32 = {
   })
 
   let captured = 0
-  let effect_resource = Resource { counter: counter, value: 1 }
-  let effectful = Ask.handle value { (resume) -> resume(3) } action {
-      effect_once(Ask)({
-        Ask.value() + captured + consume(effect_resource) - 1
+  let effect_resource = resource { counter: counter, value: 1 }
+  let effectful = ask.handle value { (resume) -> resume(3) } action {
+      effect_once(ask)({
+        ask.value() + captured + consume(effect_resource) - 1
       })
     }
 
   let unsafe_effect = unsafe {
-    effect_once(Unsafe)({ *counter - *counter })
+    effect_once(unsafe_effect)({ *counter - *counter })
   }
   let drops = unsafe { *counter }
   unsafe {

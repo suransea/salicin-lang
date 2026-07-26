@@ -1,17 +1,17 @@
-let Result = std.Result
-let String = std.string.String
-let Vec = std.vec.Vec
+let result = std.result
+let string = std.string.string
+let vec = std.vec.vec
 
-let valid(move bytes: Vec(u8), expected_length: u64): bool = {
-  match String.from_utf8(bytes)
-    { Ok(text) -> text.len_bytes() == expected_length }
-    { Err(_) -> false }
+let valid(move bytes: vec(u8), expected_length: u64): bool = {
+  match string.from_utf8(bytes)
+    { ok(text) -> text.len_bytes() == expected_length }
+    { err(_) -> false }
 }
 
-let invalid(move bytes: Vec(u8), expected_prefix: u64, expected_length: u64): bool = {
-  match String.from_utf8(bytes)
-    { Ok(_) -> false }
-    { Err(error) -> do {
+let invalid(move bytes: vec(u8), expected_prefix: u64, expected_length: u64): bool = {
+  match string.from_utf8(bytes)
+    { ok(_) -> false }
+    { err(error) -> do {
         let prefix_matches = error.valid_up_to() == expected_prefix
         let recovered = error.into_bytes()
         prefix_matches && recovered.len() == expected_length
@@ -19,29 +19,29 @@ let invalid(move bytes: Vec(u8), expected_prefix: u64, expected_length: u64): bo
     }
 }
 
-let ascii(): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let ascii(): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(65)
   bytes
 }
 
-let two_byte(): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let two_byte(): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(194)
   bytes.push(162)
   bytes
 }
 
-let three_byte(): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let three_byte(): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(226)
   bytes.push(130)
   bytes.push(172)
   bytes
 }
 
-let four_byte(): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let four_byte(): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(240)
   bytes.push(159)
   bytes.push(152)
@@ -49,23 +49,23 @@ let four_byte(): Vec(u8) = {
   bytes
 }
 
-let invalid_pair(first: u8, second: u8): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let invalid_pair(first: u8, second: u8): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(first)
   bytes.push(second)
   bytes
 }
 
-let invalid_three(first: u8, second: u8, third: u8): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let invalid_three(first: u8, second: u8, third: u8): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(first)
   bytes.push(second)
   bytes.push(third)
   bytes
 }
 
-let invalid_four(first: u8, second: u8, third: u8, fourth: u8): Vec(u8) = {
-  let mut bytes = Vec(u8).new()
+let invalid_four(first: u8, second: u8, third: u8, fourth: u8): vec(u8) = {
+  let mut bytes = vec(u8).new()
   bytes.push(first)
   bytes.push(second)
   bytes.push(third)
@@ -73,12 +73,12 @@ let invalid_four(first: u8, second: u8, third: u8, fourth: u8): Vec(u8) = {
   bytes
 }
 
-let make_ascii(value: u8): String = {
-  let mut bytes = Vec(u8).new()
+let make_ascii(value: u8): string = {
+  let mut bytes = vec(u8).new()
   bytes.push(value)
-  match String.from_utf8(bytes)
-    { Ok(text) -> text }
-    { Err(_) -> String.new() }
+  match string.from_utf8(bytes)
+    { ok(text) -> text }
+    { err(_) -> string.new() }
 }
 
 let main(): i32 = {

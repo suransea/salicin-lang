@@ -13,12 +13,12 @@ pub let mut = access.mut
 pub let shared = access.shared
 
 /// Type constructor for a borrow with access `A`, region `R`, and pointee `T`.
-pub let borrow(A: access = shared)
-  (R: region)
-  (T: type): type = builtin()
+pub let borrow(comptime a: access = shared)
+  (comptime r: region)
+  (comptime t: type): type = builtin()
 
 /// Creates or reborrows a borrow of an addressable pointee.
-pub let borrow(A: access = shared)
-  (R: region)
-  (T: type)
-  (value: T): borrow(A)(R)(T) = builtin()
+pub let borrow(comptime a: access = shared)
+  (comptime r: region)
+  (comptime t: type)
+  (value: t): borrow(a)(r)(t) = builtin()

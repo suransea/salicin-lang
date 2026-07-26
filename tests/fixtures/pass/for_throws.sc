@@ -1,50 +1,50 @@
-let Option = std.Option
-let Result = std.Result
-let Throws = std.error.Throws
-let Iterator = std.iter.Iterator
-let IntoIterator = std.iter.IntoIterator
-let OwnedItem = std.iter.OwnedItem
+let option = std.option
+let result = std.result
+let throws = std.error.throws
+let iterator = std.iter.iterator
+let into_iterator = std.iter.into_iterator
+let owned_item = std.iter.owned_item
 
-let Counter = struct { current: i32, end: i32 }
+let counter = struct { current: i32, end: i32 }
 
-extend Counter: Iterator {
-  let Item = OwnedItem(i32)
+extend counter: iterator {
+  let item = owned_item(i32)
 
-  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
     if self.current < self.end {
       let value = self.current
       self.current = self.current + 1
-      Some(value)
+      some(value)
     } else {
-      None
+      none
     }
   }
 }
 
-extend Counter: IntoIterator {
-  let IntoIter = Counter
+extend counter: into_iterator {
+  let into_iter = counter
 
-  let into_iter(move self)(): Counter = {
+  let into_iter(move self)(): counter = {
     self
   }
 }
 
-let check(value: i32): () with(Throws(bool)) = {
+let check(value: i32): () with(throws(bool)) = {
   if value < 0 { throw(true) } else { () }
 }
 
-let visit(start: i32): i32 with(Throws(bool)) = {
-  for Counter { current: start, end: 4 } { value ->
+let visit(start: i32): i32 with(throws(bool)) = {
+  for counter { current: start, end: 4 } { value ->
     check(value)
   }
   42
 }
 
 let main(): i32 = {
-  let success: Result(bool)(i32) = try {
+  let success: result(bool)(i32) = try {
     visit(0)
   }
-  let failure: Result(bool)(i32) = try {
+  let failure: result(bool)(i32) = try {
     visit(-1)
   }
   (success ?? 0) + (failure ?? 0)

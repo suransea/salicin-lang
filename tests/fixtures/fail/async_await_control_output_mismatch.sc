@@ -1,35 +1,35 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
+let poll = std.async.poll
+let future = std.async.future
 
-let Number = struct {}
-let Flag = struct {}
+let number = struct {}
+let flag = struct {}
 
-extend Number: Future(()) {
-  let Output = i32
+extend number: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
-    Poll(i32).Ready(42)
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
+    poll(i32).ready(42)
   }
 }
 
-extend Flag: Future(()) {
-  let Output = bool
+extend flag: future(()) {
+  let output = bool
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = {
-    Poll(bool).Ready(true)
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(bool) = {
+    poll(bool).ready(true)
   }
 }
 
 let main(): i32 = {
   let future = async {
     if true {
-      await Number {}
+      await number {}
     } else {
-      await Flag {}
+      await flag {}
     }
   }
   0

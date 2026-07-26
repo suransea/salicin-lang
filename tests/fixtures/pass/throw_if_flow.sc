@@ -1,7 +1,7 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
-let choose(flag: bool): i32 with(Throws(bool)) = {
+let choose(flag: bool): i32 with(throws(bool)) = {
   if flag {
     throw(true)
   } else {
@@ -10,8 +10,8 @@ let choose(flag: bool): i32 with(Throws(bool)) = {
 }
 
 let main(): i32 = {
-  let first: Result(bool)(i32) = try { choose(false) }
-  let second: Result(bool)(i32) = try { choose(true) }
+  let first: result(bool)(i32) = try { choose(false) }
+  let second: result(bool)(i32) = try { choose(true) }
   (first ?? 0) + (second ?? 0)
 }
 

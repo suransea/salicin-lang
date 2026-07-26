@@ -1036,7 +1036,7 @@ pub(super) fn source_type_is_never(source: &Type) -> bool {
     matches!(
         source,
         Type::Named(name, arguments)
-            if arguments.is_empty() && name.rsplit("::").next() == Some("Never")
+            if arguments.is_empty() && name.rsplit("::").next() == Some("never")
     )
 }
 

@@ -1,8 +1,8 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 let defer = std.control.defer
 
-let fail(counter: borrow(mut)(i32)): i32 with(Throws(bool)) = {
+let fail(counter: borrow(mut)(i32)): i32 with(throws(bool)) = {
   defer {
       counter = counter + 1
     }
@@ -11,12 +11,12 @@ let fail(counter: borrow(mut)(i32)): i32 with(Throws(bool)) = {
 
 let main(): i32 = {
   let mut counter = 0
-  let result: Result(bool)(i32) = try {
+  let result: result(bool)(i32) = try {
     fail(counter)
   }
   match result
-    { Ok(_) -> 0 }
-    { Err(error) -> if error && counter == 1 { 42 } else { 0 } }
+    { ok(_) -> 0 }
+    { err(error) -> if error && counter == 1 { 42 } else { 0 } }
 }
 
 test("defer_throw.sc") {

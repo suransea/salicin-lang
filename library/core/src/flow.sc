@@ -1,43 +1,43 @@
 /// Trait used by `?.` to transform successful container payloads.
-pub let Chain = trait {
+pub let chain_operator = trait {
   /// Payload type read from the successful case.
-  let Item: type
+  let item: type
   /// Type constructor used to rebuild the container with a new payload.
-  let Rebind(Value: type): type
+  let rebind(comptime value: type): type
 
   /// Applies `transform` to the successful payload or propagates the residual case.
-  let chain(E: effects, U: type)
+  let chain(comptime e: effects, comptime u: type)
     (self)
-    (transform: (Item): U with(E)): Rebind(U) with(E)
+    (transform: (item): u with(e)): rebind(u) with(e)
 }
 
 /// Trait used by `??` to extract a value or evaluate a fallback.
-pub let Coalesce = trait {
+pub let coalesce_operator = trait {
   /// Payload type produced by coalescing.
-  let Item: type
+  let item: type
 
   /// Returns the successful payload or evaluates `fallback`.
-  let coalesce(E: effects)
+  let coalesce(comptime e: effects)
     (self)
-    (fallback: (): Item with(E)): Item with(E)
+    (fallback: (): item with(e)): item with(e)
 }
 
 /// Trait used by postfix `!!` to assert success and extract a payload.
-pub let Unwrap = trait {
+pub let unwrap_operator = trait {
   /// Payload type produced by unwrapping.
-  let Output: type
+  let output: type
 
   /// Returns the successful payload or terminates when no payload is present.
-  let unwrap(move self): Output
+  let unwrap(move self): output
 }
 
 /// Trait used by postfix `!` to turn a stored failure into `Throws`.
-pub let Raise = trait {
+pub let raise_operator = trait {
   /// Successful payload type.
-  let Output: type
+  let output: type
   /// Error type introduced into the effect row.
-  let Error: type
+  let error: type
 
   /// Returns the successful payload or raises the stored error.
-  let raise(move self): Output with(core.error.Throws(Error))
+  let raise(move self): output with(core.error.throws(error))
 }

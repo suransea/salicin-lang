@@ -1,3 +1,3 @@
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-let main(): i32 = { Boxed { value: 42 }?.value ?? 0 }
+let main(): i32 = { boxed { value: 42 }?.value ?? 0 }

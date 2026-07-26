@@ -1,11 +1,11 @@
-let A = struct { value: i32 }
+let a = struct { value: i32 }
 
-extend A {
-  let value_of(self: borrow(Self))(): i32 = { self.value }
+extend a {
+  let value_of(self: borrow(self))(): i32 = { self.value }
 }
 
-extend A {
-  let value_of(self: borrow(Self))(): i32 = { self.value }
+extend a {
+  let value_of(self: borrow(self))(): i32 = { self.value }
 }
 
 let main(): i32 = { 0 }

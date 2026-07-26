@@ -1,31 +1,31 @@
-let Check = effect {
+let check = effect {
   let accept(): bool
 }
 
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let Event = enum {
-  Value( value: Resource, field1: i32 ),
-  Empty,
+let event = enum {
+  value( value: resource, field1: i32 ),
+  empty,
 }
 
-let consume(move resource: Resource, value: i32): i32 = { value }
+let consume(move resource: resource, value: i32): i32 = { value }
 
-let evaluate(counter: Ptr(mut)(i32), accepted: bool): i32 = {
-  Check.handle accept { (resume) -> resume(accepted) } action {
-      let event = Event.Value( value: Resource { counter: counter }, field1: 20 )
+let evaluate(counter: ptr(mut)(i32), accepted: bool): i32 = {
+  check.handle accept { (resume) -> resume(accepted) } action {
+      let event = event.value( value: resource { counter: counter }, field1: 20 )
       match event
-        { Event.Value( value: resource, field1: value ) if Check.accept() && value > 0 -> consume(resource, value) }
-        { Event.Value( value: resource, field1: value ) -> consume(resource, value) }
-        { Event.Empty -> 0 }
+        { event.value( value: resource, field1: value ) if check.accept() && value > 0 -> consume(resource, value) }
+        { event.value( value: resource, field1: value ) -> consume(resource, value) }
+        { event.empty -> 0 }
     }
 }
 

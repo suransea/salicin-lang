@@ -1,15 +1,15 @@
-let Result = std.Result
+let result = std.result
 
-let Throws = std.error.Throws
-let Unsafe = std.unsafe.Unsafe
+let throws = std.error.throws
+let unsafe_effect = std.unsafe.unsafe_effect
 
-let read(fail: bool): i32 with(Throws(bool), Unsafe) = {
+let read(fail: bool): i32 with(throws(bool), unsafe_effect) = {
   if fail { throw(true) }
   42
 }
 
 let main(): i32 = {
-  let result: Result(bool)(i32) = try {
+  let result: result(bool)(i32) = try {
     unsafe { read(false) }
   }
   result ?? 0

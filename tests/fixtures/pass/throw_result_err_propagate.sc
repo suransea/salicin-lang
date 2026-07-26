@@ -1,14 +1,14 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
-let fail(): i32 with(Throws(bool)) = {
+let fail(): i32 with(throws(bool)) = {
   throw(true)
 }
 
-let forward(): i32 with(Throws(bool)) = { fail() }
+let forward(): i32 with(throws(bool)) = { fail() }
 
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { forward() }
+  let result: result(bool)(i32) = try { forward() }
   result ?? 42
 }
 

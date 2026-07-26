@@ -1,7 +1,7 @@
-let Measure = trait {
-  let measure(self: borrow(Self))(): i32
+let measure = trait {
+  let measure(self: borrow(self))(): i32
 }
 
-let read(T: type)(value: borrow(T)): i32 = { value.measure() }
+let read(comptime t: type)(value: borrow(t)): i32 = { value.measure() }
 
 let main(): i32 = { 0 }

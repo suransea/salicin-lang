@@ -890,7 +890,7 @@ pub(super) fn substitute_self_type(ty: &mut Type, target: &str) {
             }
             substitute_self_type(result, target);
         }
-        Type::Named(name, arguments) if name == "Self" && arguments.is_empty() => {
+        Type::Named(name, arguments) if name == "self" && arguments.is_empty() => {
             *ty = Type::Named(target.to_owned(), Vec::new());
         }
         Type::Named(_, arguments) => {

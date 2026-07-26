@@ -1,7 +1,7 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
 let main(): i32 = {
-  let values = [Resource { value: 42 }]
+  let values = [resource { value: 42 }]
   let index = 0
   values[index].value
 }

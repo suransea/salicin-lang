@@ -1,6 +1,6 @@
-let Slice = std.Slice
+let slice = std.slice
 
-let invalid(): borrow(Slice(i32)) = {
+let invalid(): borrow(slice(i32)) = {
   let values = [20, 22]
   borrow(values)
 }

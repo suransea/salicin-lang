@@ -1,17 +1,17 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend resource {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let main(): i32 = { Resource { value: 42 }.read() }
+let main(): i32 = { resource { value: 42 }.read() }
 
 test("inherent_temporary_resource_receiver.sc") {
   main() == 42

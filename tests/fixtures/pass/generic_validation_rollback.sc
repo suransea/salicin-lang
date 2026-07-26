@@ -1,8 +1,8 @@
-let identity(T: type)(move value: T): T = { value }
+let identity(comptime t: type)(move value: t): t = { value }
 
 let helper(value: i32) = { identity(i32)(value) }
 
-let preserve(T: type)(move value: T): T = {
+let preserve(comptime t: type)(move value: t): t = {
   helper(0)
   value
 }

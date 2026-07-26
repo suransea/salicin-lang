@@ -1,8 +1,8 @@
-let Resource = struct { counter: Ptr(mut)(i32) }
-let Batch = struct { values: Array(Resource)(2) }
+let resource = struct { counter: ptr(mut)(i32) }
+let batch = struct { values: array(resource)(2) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
@@ -17,7 +17,7 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let batch = Batch { values: [Resource { counter: counter }, Resource { counter: counter }] }
+    let batch = batch { values: [resource { counter: counter }, resource { counter: counter }] }
   }
   let drops = unsafe {
     *counter

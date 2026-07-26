@@ -1391,7 +1391,7 @@ impl Analyzer {
                     }
                     Sort::String => {
                         self.error(
-                            "string arguments are currently restricted to compiler-owned syntax",
+                            "`String` arguments are currently restricted to compiler-owned syntax",
                         );
                         return None;
                     }

@@ -1,35 +1,35 @@
-let Abort = effect {
+let abort = effect {
   let choose(): bool
   let stop(): i32
 }
 
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let consume(move resource: Resource): i32 = { 0 }
+let consume(move resource: resource): i32 = { 0 }
 
 let main(): i32 = {
   let counter = unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result = Abort.handle choose { (resume) -> resume(false) } stop { (resume) -> 39 } action {
-      let left_resource = Resource { counter: counter }
-      let middle_resource = Resource { counter: counter }
-      let right_resource = Resource { counter: counter }
-      let left: (): i32 with(Abort) = { () -> Abort.stop() + consume(left_resource) }
-      let middle: (): i32 with(Abort) = { () -> Abort.stop() + consume(middle_resource) }
-      let right: (): i32 with(Abort) = { () -> Abort.stop() + consume(right_resource) }
-      let first: (): i32 with(Abort) = if true { left } else { middle }
-      let second: (): i32 with(Abort) = if false { middle } else { right }
-      let combined: (): i32 with(Abort) = if Abort.choose() { first } else { second }
+  let result = abort.handle choose { (resume) -> resume(false) } stop { (resume) -> 39 } action {
+      let left_resource = resource { counter: counter }
+      let middle_resource = resource { counter: counter }
+      let right_resource = resource { counter: counter }
+      let left: (): i32 with(abort) = { () -> abort.stop() + consume(left_resource) }
+      let middle: (): i32 with(abort) = { () -> abort.stop() + consume(middle_resource) }
+      let right: (): i32 with(abort) = { () -> abort.stop() + consume(right_resource) }
+      let first: (): i32 with(abort) = if true { left } else { middle }
+      let second: (): i32 with(abort) = if false { middle } else { right }
+      let combined: (): i32 with(abort) = if abort.choose() { first } else { second }
       combined()
     }
   let drops = unsafe { *counter }

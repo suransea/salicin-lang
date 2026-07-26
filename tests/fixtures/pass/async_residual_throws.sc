@@ -1,22 +1,22 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Result = std.Result
-let Throws = std.error.Throws
+let future = std.async.future
+let poll = std.async.poll
+let result = std.result
+let throws = std.error.throws
 
-let Resource = struct {
+let resource = struct {
   value: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let choose(fail: bool, value: i32): i32 with(Throws(bool)) = {
+let choose(fail: bool, value: i32): i32 with(throws(bool)) = {
   if fail {
     throw(true)
   } else {
@@ -24,13 +24,13 @@ let choose(fail: bool, value: i32): i32 with(Throws(bool)) = {
   }
 }
 
-let consume_or_throw(move resource: Resource): i32 with(Throws(bool)) = {
+let consume_or_throw(move resource: resource): i32 with(throws(bool)) = {
   choose(true, resource.value)
 }
 
-let poll_once(E: effects, F: type, T: type)
-  (future: borrow(mut)(F)): Poll(T) with(E)
-where F: Future(E, Output = T) = {
+let poll_once(comptime e: effects, comptime f: type, comptime t: type)
+  (future: borrow(mut)(f)): poll(t) with(e)
+where f: future(e, output = t) = {
   future.poll()
 }
 
@@ -39,14 +39,14 @@ let main(): i32 = {
   let mut success = async {
     choose(false, offset)
   }
-  let success_result: Result(bool)(Poll(i32)) = try {
+  let success_result: result(bool)(poll(i32)) = try {
     success.poll()
   }
   let success_value = match success_result
-    { Ok(polled) -> match polled
-      { Ready(value) -> value }
-      { Pending -> 0 } }
-    { Err(_) -> 0 }
+    { ok(polled) -> match polled
+      { ready(value) -> value }
+      { pending -> 0 } }
+    { err(_) -> 0 }
 
   let drops = unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
@@ -54,16 +54,16 @@ let main(): i32 = {
   unsafe {
     *drops = 0
   }
-  let resource = Resource { value: 2, drops: drops }
+  let resource = resource { value: 2, drops: drops }
   let mut failure = async {
     consume_or_throw(resource)
   }
-  let failure_result: Result(bool)(Poll(i32)) = try {
+  let failure_result: result(bool)(poll(i32)) = try {
     failure.poll()
   }
   let failed = match failure_result
-    { Ok(_) -> false }
-    { Err(error) -> error }
+    { ok(_) -> false }
+    { err(error) -> error }
   let drop_count = unsafe {
     *drops
   }

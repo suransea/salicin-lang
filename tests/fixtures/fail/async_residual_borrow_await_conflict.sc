@@ -1,26 +1,26 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Step = struct {
+let step = struct {
   value: i32,
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
-    Poll(i32).Ready(self.value)
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
+    poll(i32).ready(self.value)
   }
 }
 
-let make_step(): Step with(Ask) = {
-  Step { value: Ask.ask() }
+let make_step(): step with(ask) = {
+  step { value: ask.ask() }
 }
 
 let program(value: borrow(mut)(i32)): i32 = {

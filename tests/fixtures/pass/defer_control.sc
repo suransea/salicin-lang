@@ -1,19 +1,19 @@
-let Unsafe = std.unsafe.Unsafe
+let unsafe_effect = std.unsafe.unsafe_effect
 let defer = std.control.defer
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+let allocate(): ptr(mut)(i32) with(unsafe_effect) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+let release(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
 }
 
-let set(counter: Ptr(mut)(i32))(expected: i32, next: i32): () with(Unsafe) = {
+let set(counter: ptr(mut)(i32))(expected: i32, next: i32): () with(unsafe_effect) = {
   unsafe {
     if *counter == expected {
       *counter = next
@@ -23,13 +23,13 @@ let set(counter: Ptr(mut)(i32))(expected: i32, next: i32): () with(Unsafe) = {
   }
 }
 
-let increment(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+let increment(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
   unsafe {
     *counter = *counter + 1
   }
 }
 
-let return_with_defer(counter: Ptr(mut)(i32)): i32 with(Unsafe) = {
+let return_with_defer(counter: ptr(mut)(i32)): i32 with(unsafe_effect) = {
   defer {
       unsafe {
         increment(counter)

@@ -1,11 +1,11 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { () }
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = { () }
 }
 
 let main(): i32 = {
-  let values: Array(Resource)(1) = [Resource { value: 42 }]
+  let values: array(resource)(1) = [resource { value: 42 }]
   for values { value -> () }
   42
 }

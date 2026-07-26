@@ -1,8 +1,8 @@
-let Result = std.Result
+let result = std.result
 
 let main(): i32 = {
-  let outer = Result(bool)(Result(bool)(i32)).Err(false)
-  let inner = outer ?? Result(bool)(i32).Ok(42)
+  let outer = result(bool)(result(bool)(i32)).err(false)
+  let inner = outer ?? result(bool)(i32).ok(42)
   inner ?? 0
 }
 

@@ -1,21 +1,21 @@
-let Inner = enum {
-  Value( value: i32 ),
-  Empty,
+let inner = enum {
+  value( value: i32 ),
+  empty,
 }
 
-let Outer = enum {
-  Wrapped(Inner),
-  Empty,
+let outer = enum {
+  wrapped(inner),
+  empty,
 }
 
-let read(value: Outer): i32 = { match value
-    { Outer.Wrapped(inner) -> match inner
-      { Inner.Value( value: number ) -> number }
-      { Inner.Empty -> 0 } }
-    { Outer.Empty -> 0 }
+let read(value: outer): i32 = { match value
+    { outer.wrapped(inner) -> match inner
+      { inner.value( value: number ) -> number }
+      { inner.empty -> 0 } }
+    { outer.empty -> 0 }
 }
 
-let main(): i32 = { read(Outer.Wrapped(Inner.Value( value: 42 ))) }
+let main(): i32 = { read(outer.wrapped(inner.value( value: 42 ))) }
 
 test("nested_match.sc") {
   main() == 42

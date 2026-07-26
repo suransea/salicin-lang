@@ -6,10 +6,15 @@ subset.
 
 ## Unreleased
 
+- Standardized source type names as `PascalCase`: `Bool`, `i8` through
+  `i128`, `isize`, `u8` through `u128`, and `usize`. Unified
+  compile-time length and metadata sorts with their runtime-facing spellings,
+  so binders now use `L: usize` and `S: String`; functions, values, modules,
+  and ordinary sorts retain `snake_case`.
 - Made the private foreign/test syntax contracts reflect their erased inputs:
   `foreign(ABI: abi)` now receives `c` from the finite `abi = sort { c }`, and
-  `test(name: string)(body)` receives its UTF-8 registration name through the
-  compiler-owned metadata `string` sort.
+  `test(Name: String)(body)` receives its UTF-8 registration name through the
+  compiler-owned metadata `String` sort.
 - Moved `access` from a closed runtime enum to the finite compile-time sort
   `sort { shared mut }`, with prelude aliases `mut = access.mut` and
   `shared = access.shared`. Split the former combined effect classifier into
@@ -20,7 +25,7 @@ subset.
   boundaries and every parameter Sort, and trait constructor matching checks
   that complete signature instead of flattened arity.
 - Added typed `StaticValue`, trait `Constraint`/`Goal`, and projection-equation
-  IR boundaries. Ordinary pure `usize`/`bool` functions can now run under
+  IR boundaries. Ordinary pure `usize`/`Bool` functions can now run under
   bounded CTFE in dependent `Array(T)(expression)` lengths after generic
   substitution; mutation, borrowing, runtime effects, invalid arithmetic, and
   repeated nonterminating calls are rejected.

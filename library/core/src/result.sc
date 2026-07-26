@@ -1,107 +1,107 @@
 /// Represents either a successful value or an error payload.
-pub let Result(E: type)
-  (T: type) = enum {
+pub let result(comptime e: type)
+  (comptime t: type) = enum {
   /// Contains the successful value.
-  Ok(T),
+  ok(t),
   /// Contains the error value.
-  Err(E),
+  err(e),
 }
 
 /// Provides `?.` chaining for `Result`.
-extend(Error: type, T: type) Result(Error)(T): core.flow.Chain {
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain_operator {
   /// The success payload type.
-  let Item = T
+  let item = t
   /// Rebuilds `Result(Error)` around a transformed success type.
-  let Rebind = Result(Error)
+  let rebind = result(error)
 
   /// Applies `transform` to `Ok` and propagates `Err`.
-  let chain(E: effects, U: type)
+  let chain(comptime e: effects, comptime u: type)
     (self)
-    (transform: (T): U with(E)): Result(Error)(U) with(E) = {
+    (transform: (t): u with(e)): result(error)(u) with(e) = {
     match self
-      { Ok(value) -> Result.Ok(transform(value)) }
-      { Err(error) -> Result.Err(error) }
+      { ok(value) -> result.ok(transform(value)) }
+      { err(error) -> result.err(error) }
   }
 }
 
 /// Provides `??` fallback evaluation for `Result`.
-extend(Error: type, T: type) Result(Error)(T): core.flow.Coalesce {
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coalesce_operator {
   /// The success payload type returned by coalescing.
-  let Item = T
+  let item = t
 
   /// Extracts `Ok` or evaluates `fallback` for `Err`.
-  let coalesce(E: effects)
+  let coalesce(comptime e: effects)
     (self)
-    (fallback: (): T with(E)): T with(E) = {
+    (fallback: (): t with(e)): t with(e) = {
     match self
-      { Ok(value) -> value }
-      { Err(_) -> fallback() }
+      { ok(value) -> value }
+      { err(_) -> fallback() }
   }
 }
 
 /// Provides postfix `!` extraction for `Result`.
-extend(Error: type, T: type) Result(Error)(T): core.flow.Unwrap {
-  let Output = T
+extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwrap_operator {
+  let output = t
 
-  let unwrap(move self): T = {
+  let unwrap(move self): t = {
     match self
-      { Ok(value) -> value }
-      { Err(_) -> unsafe { raw_trap() } }
+      { ok(value) -> value }
+      { err(_) -> unsafe { raw_trap() } }
   }
 }
 
 /// Provides postfix `!` effect raising for `Result`.
-extend(E: type, T: type) Result(E)(T): core.flow.Raise {
-  let Output = T
-  let Error = E
+extend(comptime e: type, comptime t: type) result(e)(t): core.flow.raise_operator {
+  let output = t
+  let error = e
 
-  let raise(move self): T with(core.error.Throws(E)) = {
+  let raise(move self): t with(core.error.throws(e)) = {
     match self
-      { Ok(value) -> value }
-      { Err(error) -> core.error.Throws(E).raise(error) }
+      { ok(value) -> value }
+      { err(error) -> core.error.throws(e).raise(error) }
   }
 }
 
 /// Implements `Functor` for `Result(Error)`.
-extend(Error: type) Result(Error): core.functional.Functor {
+extend(comptime error: type) result(error): core.functional.functor {
   /// Maps `Ok` through `transform` and preserves `Err`.
-  let map(E: effects, A: type, B: type)
-    (self: Result(Error)(A))
-    (transform: (A): B with(E)): Result(Error)(B) with(E) = {
+  let map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: result(error)(a))
+    (transform: (a): b with(e)): result(error)(b) with(e) = {
     match self
-      { Ok(value) -> Result.Ok(transform(value)) }
-      { Err(error) -> Result.Err(error) }
+      { ok(value) -> result.ok(transform(value)) }
+      { err(error) -> result.err(error) }
   }
 }
 
 /// Implements `Applicative` for `Result(Error)`.
-extend(Error: type) Result(Error): core.functional.Applicative {
+extend(comptime error: type) result(error): core.functional.applicative {
   /// Wraps `value` in `Ok`.
-  let pure(A: type)
-    (value: A): Result(Error)(A) = {
-    Result.Ok(value)
+  let pure(comptime a: type)
+    (value: a): result(error)(a) = {
+    result.ok(value)
   }
 
   /// Applies an `Ok` function to an `Ok` value and propagates the first `Err`.
-  let apply(E: effects, A: type, B: type)
-    (self: Result(Error)((A): B with(E)))
-    (value: Result(Error)(A)): Result(Error)(B) with(E) = {
+  let apply(comptime e: effects, comptime a: type, comptime b: type)
+    (self: result(error)((a): b with(e)))
+    (value: result(error)(a)): result(error)(b) with(e) = {
     match self
-      { Ok(transform) -> match value
-        { Ok(value) -> Result.Ok(transform(value)) }
-        { Err(error) -> Result.Err(error) } }
-      { Err(error) -> Result.Err(error) }
+      { ok(transform) -> match value
+        { ok(value) -> result.ok(transform(value)) }
+        { err(error) -> result.err(error) } }
+      { err(error) -> result.err(error) }
   }
 }
 
 /// Implements `Monad` for `Result(Error)`.
-extend(Error: type) Result(Error): core.functional.Monad {
+extend(comptime error: type) result(error): core.functional.monad {
   /// Runs `next` for `Ok` and propagates `Err`.
-  let flat_map(E: effects, A: type, B: type)
-    (self: Result(Error)(A))
-    (next: (A): Result(Error)(B) with(E)): Result(Error)(B) with(E) = {
+  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: result(error)(a))
+    (next: (a): result(error)(b) with(e)): result(error)(b) with(e) = {
     match self
-      { Ok(value) -> next(value) }
-      { Err(error) -> Result.Err(error) }
+      { ok(value) -> next(value) }
+      { err(error) -> result.err(error) }
   }
 }

@@ -1,13 +1,13 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.value
   }
 }
 
 let main(): i32 = {
-  let value = Resource { value: 0 }
+  let value = resource { value: 0 }
   0
 }
 

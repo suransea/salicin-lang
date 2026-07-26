@@ -1,9 +1,9 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
 let main(): i32 = {
-  let boxed = Box.new(Resource { value: 42 })
+  let boxed = box.new(resource { value: 42 })
   let reference = boxed.as_ref()
   let value = boxed.into_inner()
   reference.value + value.value

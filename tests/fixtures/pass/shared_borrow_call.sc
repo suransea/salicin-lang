@@ -1,9 +1,9 @@
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-let read(boxed: borrow(Boxed)): i32 = { boxed.value }
+let read(boxed: borrow(boxed)): i32 = { boxed.value }
 
 let main(): i32 = {
-  let boxed = Boxed { value: 42 }
+  let boxed = boxed { value: 42 }
   let snapshot = read(boxed)
   snapshot + boxed.value - 42
 }

@@ -1,9 +1,9 @@
-let Abort = effect {
-  let stop(value: i32): Never
+let abort = effect {
+  let stop(value: i32): never
 }
 
 let main(): i32 = {
-  Abort.handle stop { (value, resume) -> resume(value) } action {
-      Abort.stop(42)
+  abort.handle stop { (value, resume) -> resume(value) } action {
+      abort.stop(42)
     }
 }

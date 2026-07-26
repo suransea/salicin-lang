@@ -1,17 +1,17 @@
-let Index = std.ops.Index
+let index_operator = std.ops.index_operator
 
-let Bag = struct { value: i32 }
-extend Bag: Index(i32) {
-  let Output = i32
-  let index(A: access)
-    (self: borrow(A)(Self))
-    (key: i32): borrow(A)(i32) = {
-    borrow(A)(self.value)
+let bag = struct { value: i32 }
+extend bag: index_operator(i32) {
+  let output = i32
+  let index(comptime a: access)
+    (self: borrow(a)(self))
+    (key: i32): borrow(a)(i32) = {
+    borrow(a)(self.value)
   }
 }
 
 let main(): i32 = {
-  let mut bag = Bag { value: 1 }
+  let mut bag = bag { value: 1 }
   let item = borrow(bag[0])
   bag[0] = 42
   item

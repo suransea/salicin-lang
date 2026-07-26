@@ -1,14 +1,14 @@
-let IntoIterator = std.iter.IntoIterator
+let into_iterator = std.iter.into_iterator
 
-let Iterable = struct {}
-let Iter = struct {}
+let iterable = struct {}
+let iter = struct {}
 
-extend Iterable: IntoIterator {
-  let IntoIter = Iter
-  let into_iter(move self)(): Iter = { Iter {} }}
+extend iterable: into_iterator {
+  let into_iter = iter
+  let into_iter(move self)(): iter = { iter {} }}
 
 let main(): i32 = {
-  for Iterable {} { value ->
+  for iterable {} { value ->
     value
   }
   0

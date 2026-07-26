@@ -1,13 +1,13 @@
-let Result = std.Result
+let result = std.result
 
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-extend Boxed {
-  let checked(move self)(): Result(bool)(i32) = { Result(bool)(i32).Ok(self.value) }
+extend boxed {
+  let checked(move self)(): result(bool)(i32) = { result(bool)(i32).ok(self.value) }
 }
 
 let main(): i32 = {
-  let flattened: Result(bool)(i32) =
-    Result(bool)(Boxed).Ok(Boxed { value: 42 })?.checked()
+  let flattened: result(bool)(i32) =
+    result(bool)(boxed).ok(boxed { value: 42 })?.checked()
   flattened ?? 0
 }

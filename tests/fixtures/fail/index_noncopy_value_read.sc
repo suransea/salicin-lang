@@ -1,21 +1,21 @@
-let Index = std.ops.Index
+let index_operator = std.ops.index_operator
 
-let Resource = struct { value: i32 }
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {}
+let resource = struct { value: i32 }
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {}
 }
 
-let Bag = struct { value: Resource }
-extend Bag: Index(i32) {
-  let Output = Resource
-  let index(A: access)
-    (self: borrow(A)(Self))
-    (key: i32): borrow(A)(Resource) = {
-    borrow(A)(self.value)
+let bag = struct { value: resource }
+extend bag: index_operator(i32) {
+  let output = resource
+  let index(comptime a: access)
+    (self: borrow(a)(self))
+    (key: i32): borrow(a)(resource) = {
+    borrow(a)(self.value)
   }
 }
 
-let main(): Resource = {
-  let bag = Bag { value: Resource { value: 42 } }
+let main(): resource = {
+  let bag = bag { value: resource { value: 42 } }
   bag[0]
 }

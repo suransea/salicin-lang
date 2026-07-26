@@ -1,30 +1,30 @@
-let Async = std.async.Async
-let Poll = std.async.Poll
-let Future = std.async.Future
+let async_effect = std.async.async_effect
+let poll = std.async.poll
+let future = std.async.future
 let await_source = std.async.await
 
-let Step = struct { ready: bool }
+let step = struct { ready: bool }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.ready {
-      Ready(42)
+      ready(42)
     } else {
       self.ready = true
-      Pending
+      pending
     }
   }
 }
 
 let main(): i32 = {
-  Async.handle
+  async_effect.handle
     suspend { (resume) -> resume(()) }
     action {
-      await_source(Step { ready: false })
+      await_source(step { ready: false })
     }
 }
 

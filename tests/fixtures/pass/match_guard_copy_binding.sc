@@ -1,21 +1,21 @@
-let Payload = struct { value: i32 }
+let payload = struct { value: i32 }
 
-extend Payload: Copy {}
+extend payload: copyable {}
 
-let Event = enum {
-  Value( value: Payload ),
-  Empty,
+let event = enum {
+  value( value: payload ),
+  empty,
 }
 
-let is_answer(payload: Payload): bool = { payload.value == 42 }
+let is_answer(payload: payload): bool = { payload.value == 42 }
 
-let classify(event: Event): i32 = { match event
-    { Event.Value( value: payload ) if is_answer(payload) -> payload.value }
-    { Event.Value( value: _ ) -> 0 }
-    { Event.Empty -> 0 }
+let classify(event: event): i32 = { match event
+    { event.value( value: payload ) if is_answer(payload) -> payload.value }
+    { event.value( value: _ ) -> 0 }
+    { event.empty -> 0 }
 }
 
-let main(): i32 = { classify(Event.Value( value: Payload { value: 42 } )) }
+let main(): i32 = { classify(event.value( value: payload { value: 42 } )) }
 
 test("match_guard_copy_binding.sc") {
   main() == 42

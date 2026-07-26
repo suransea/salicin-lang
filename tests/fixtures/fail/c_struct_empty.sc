@@ -1,3 +1,3 @@
-let Invalid = struct(c) {}
+let invalid = struct(c) {}
 
 let main(): i32 = { 0 }

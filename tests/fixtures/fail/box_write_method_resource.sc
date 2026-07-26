@@ -1,8 +1,8 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
 let main(): i32 = {
-  Box.new(Resource { value: 1 }).write(Resource { value: 2 })
+  box.new(resource { value: 1 }).write(resource { value: 2 })
   0
 }

@@ -1,21 +1,21 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
 let make_error(count: borrow(mut)(i32)): bool = {
   count = count + 1
   true
 }
 
-let fail(): i32 with(Throws(bool)) = {
+let fail(): i32 with(throws(bool)) = {
   let mut count = 0
   throw(make_error(count))
 }
 
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { fail() }
+  let result: result(bool)(i32) = try { fail() }
   match result
-    { Ok(_) -> 0 }
-    { Err(error) -> if error { 42 } else { 0 } }
+    { ok(_) -> 0 }
+    { err(error) -> if error { 42 } else { 0 } }
 }
 
 test("throw_error_once.sc") {

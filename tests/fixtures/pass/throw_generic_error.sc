@@ -1,12 +1,12 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
-let fail(E: type)(move error: E): i32 with(Throws(E)) = {
+let fail(comptime e: type)(move error: e): i32 with(throws(e)) = {
   throw(error)
 }
 
 let main(): i32 = {
-  let result: Result(bool)(i32) = try { fail(bool)(true) }
+  let result: result(bool)(i32) = try { fail(bool)(true) }
   result ?? 42
 }
 

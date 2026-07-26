@@ -1,30 +1,30 @@
-let Executor = std.async.Executor
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Spin = std.async.Spin
+let executor = std.async.executor
+let future = std.async.future
+let poll = std.async.poll
+let spin = std.async.spin
 
-let Step = struct {
+let step = struct {
   polled: bool
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polled {
-      Poll(i32).Ready(41)
+      poll(i32).ready(41)
     } else {
       self.polled = true
-      Poll(i32).Pending
+      poll(i32).pending
     }
   }
 }
 
 let main(): i32 = {
-  let mut executor = Spin {}
-  let pending = Step { polled: false }
+  let mut executor = spin {}
+  let pending = step { polled: false }
   let ready = async { 1 }
   let first: i32 = executor.run(pending)
   let second: i32 = executor.run(ready)

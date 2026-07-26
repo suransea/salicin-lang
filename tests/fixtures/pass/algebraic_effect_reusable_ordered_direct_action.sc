@@ -1,9 +1,9 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
 }
 
-let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
-  Ask.handle value { (resume) -> resume(20) } action {
+let run(seed: i32)(move action: (): i32 with(ask)): i32 = {
+  ask.handle value { (resume) -> resume(20) } action {
       action() + seed
     }
 }
@@ -17,7 +17,7 @@ let main(): i32 = {
   let mut order = 0
   run(prepare(order)) { () ->
       order = order * 2
-      Ask.value() + order
+      ask.value() + order
     }
 }
 

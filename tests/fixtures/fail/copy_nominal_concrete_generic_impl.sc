@@ -1,7 +1,7 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend Cell(i32): Copy {}
+extend cell(i32): copyable {}
 
-let read(copy cell: Cell(i64)): i64 = { cell.value }
+let read(copy cell: cell(i64)): i64 = { cell.value }
 
 let main(): i32 = { 42 }

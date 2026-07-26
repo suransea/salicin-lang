@@ -30,7 +30,7 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if name == "Self" && !context.type_substitutions.contains_key("Self") {
+        if name == "self" && !context.type_substitutions.contains_key("self") {
             self.error("expression `Self` is only available inside an extend member");
             return error_expr();
         }

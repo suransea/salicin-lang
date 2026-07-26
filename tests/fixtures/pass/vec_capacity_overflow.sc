@@ -1,7 +1,7 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let values: Vec(i32) = Vec(i32).with_capacity(18446744073709551615)
+  let values: vec(i32) = vec(i32).with_capacity(18446744073709551615)
   values.len()
   0
 }

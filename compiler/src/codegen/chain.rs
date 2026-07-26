@@ -114,10 +114,10 @@ impl Analyzer {
             return None;
         };
         let implementation = self.trait_impls.get(key)?;
-        let item_ty = implementation.associated_types.get("Item")?;
+        let item_ty = implementation.associated_types.get("item")?;
         let item_source = implementation
             .associated_type_sources
-            .get("Item")
+            .get("item")
             .cloned()
             .or_else(|| self.source_type_for_ty(item_ty))?;
         let output_ty = self.probe_chain_access_ty(item_ty, member, groups, origin)?;
@@ -126,7 +126,7 @@ impl Analyzer {
         }
         let output_source = self.source_type_for_ty(&output_ty)?;
         let Type::Named(rebind, arguments) =
-            implementation.associated_type_sources.get("Rebind")?
+            implementation.associated_type_sources.get("rebind")?
         else {
             return None;
         };

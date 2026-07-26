@@ -1,174 +1,174 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let Choice = enum {
-  UseFirst(i32),
-  UseSecond(i32),
+let choice = enum {
+  use_first(i32),
+  use_second(i32),
 }
 
-let First = struct {
-  drops: Ptr(mut)(i32),
+let first = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
 }
 
-let Second = struct {
-  drops: Ptr(mut)(i32),
+let second = struct {
+  drops: ptr(mut)(i32),
   polls: i32,
   value: i32,
 }
 
-let Retained = struct {
-  drops: Ptr(mut)(i32),
+let retained = struct {
+  drops: ptr(mut)(i32),
   offset: i32,
 }
 
-extend First: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend first: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 10
     }
   }
 }
 
-extend Second: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend second: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-extend Retained: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend retained: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 100
     }
   }
 }
 
-extend First: Future(()) {
-  let Output = i32
+extend first: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-extend Second: Future(()) {
-  let Output = i32
+extend second: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let run(drops: Ptr(mut)(i32), first: bool): i32 = {
+let run(drops: ptr(mut)(i32), first: bool): i32 = {
   let mut future = async {
     if first {
-      await First { drops: drops, polls: 0, value: Ask.ask() }
+      await first { drops: drops, polls: 0, value: ask.ask() }
     } else {
-      await Second { drops: drops, polls: 0, value: Ask.ask() }
+      await second { drops: drops, polls: 0, value: ask.ask() }
     }
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let cancel(drops: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (resume) -> resume(40) } action {
+let cancel(drops: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (resume) -> resume(40) } action {
       let mut future = async {
         if false {
-          await First { drops: drops, polls: 0, value: Ask.ask() }
+          await first { drops: drops, polls: 0, value: ask.ask() }
         } else {
-          await Second { drops: drops, polls: 0, value: Ask.ask() }
+          await second { drops: drops, polls: 0, value: ask.ask() }
         }
       }
       match future.poll()
-        { Pending -> 42 }
-        { Ready(_) -> 0 }
+        { pending -> 42 }
+        { ready(_) -> 0 }
     }
 }
 
-let run_match(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
+let run_match(drops: ptr(mut)(i32), move choice: choice): i32 = {
   let mut future = async {
     match choice
-      { UseFirst(offset) ->
-        await First { drops: drops, polls: 0, value: Ask.ask() + offset } }
-      { UseSecond(offset) ->
-        await Second { drops: drops, polls: 0, value: Ask.ask() + offset } }
+      { use_first(offset) ->
+        await first { drops: drops, polls: 0, value: ask.ask() + offset } }
+      { use_second(offset) ->
+        await second { drops: drops, polls: 0, value: ask.ask() + offset } }
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let run_wrapped(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
+let run_wrapped(drops: ptr(mut)(i32), move choice: choice): i32 = {
   let mut future = async {
-    let retained = Retained { drops: drops, offset: 2 }
+    let retained = retained { drops: drops, offset: 2 }
     let value = await match choice
-      { UseFirst(_) ->
-        First { drops: drops, polls: 0, value: Ask.ask() } }
-      { UseSecond(_) ->
-        Second { drops: drops, polls: 0, value: Ask.ask() } }
+      { use_first(_) ->
+        first { drops: drops, polls: 0, value: ask.ask() } }
+      { use_second(_) ->
+        second { drops: drops, polls: 0, value: ask.ask() } }
     value + retained.offset
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
+  ask.handle ask { (resume) -> resume(40) } action {
       let pending = future.poll()
       let ready = future.poll()
       match pending
-        { Pending -> match ready
-          { Ready(value) -> value }
-          { Pending -> 0 } }
-        { Ready(_) -> 0 }
+        { pending -> match ready
+          { ready(value) -> value }
+          { pending -> 0 } }
+        { ready(_) -> 0 }
     }
 }
 
-let cancel_wrapped(drops: Ptr(mut)(i32)): i32 = {
-  Ask.handle ask { (resume) -> resume(40) } action {
+let cancel_wrapped(drops: ptr(mut)(i32)): i32 = {
+  ask.handle ask { (resume) -> resume(40) } action {
       let mut future = async {
-        let retained = Retained { drops: drops, offset: 2 }
+        let retained = retained { drops: drops, offset: 2 }
         let value = await if false {
-          First { drops: drops, polls: 0, value: Ask.ask() }
+          first { drops: drops, polls: 0, value: ask.ask() }
         } else {
-          Second { drops: drops, polls: 0, value: Ask.ask() }
+          second { drops: drops, polls: 0, value: ask.ask() }
         }
         value + retained.offset
       }
       match future.poll()
-        { Pending -> 42 }
-        { Ready(_) -> 0 }
+        { pending -> 42 }
+        { ready(_) -> 0 }
     }
 }
 
@@ -182,10 +182,10 @@ let main(): i32 = {
 
   let first = run(drops, true)
   let second = run(drops, false)
-  let matched_first = run_match(drops, Choice.UseFirst(2))
-  let matched_second = run_match(drops, Choice.UseSecond(2))
-  let wrapped_first = run_wrapped(drops, Choice.UseFirst(0))
-  let wrapped_second = run_wrapped(drops, Choice.UseSecond(0))
+  let matched_first = run_match(drops, choice.use_first(2))
+  let matched_second = run_match(drops, choice.use_second(2))
+  let wrapped_first = run_wrapped(drops, choice.use_first(0))
+  let wrapped_second = run_wrapped(drops, choice.use_second(0))
   let wrapped_cancelled = cancel_wrapped(drops)
   let cancelled = cancel(drops)
   let drop_count = unsafe {

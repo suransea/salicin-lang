@@ -1,13 +1,13 @@
-let Option = std.Option
+let option = std.option
 
-let choose(value: Option(i32)): i32 = {
+let choose(value: option(i32)): i32 = {
   match value
-    { Some(found) -> found }
-    { None -> 2 }
+    { some(found) -> found }
+    { none -> 2 }
 }
 
 let main(): i32 = {
-  choose(Some(40)) + choose(None)
+  choose(some(40)) + choose(none)
 }
 
 test("if_let.sc") {

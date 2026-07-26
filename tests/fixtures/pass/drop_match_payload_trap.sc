@@ -1,21 +1,21 @@
-let Resource = struct { value: i32 }
-let Choice = enum { Pair(Resource, Resource), None }
+let resource = struct { value: i32 }
+let choice = enum { pair(resource, resource), none }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.value
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
-let main(): i32 = { match Choice.Pair(Resource { value: 1 }, Resource { value: 0 })
-    { Pair(left, _) -> do {
+let main(): i32 = { match choice.pair(resource { value: 1 }, resource { value: 0 })
+    { pair(left, _) -> do {
         consume(left)
         0
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
 test("drop_match_payload_trap.sc") {

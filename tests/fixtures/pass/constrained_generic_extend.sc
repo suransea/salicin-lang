@@ -1,19 +1,19 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T)
-where T: Copy {
-  let new(copy value: T): Cell(T) = { Cell { value: value } }
-  let duplicate(self: borrow(Self))(): T = {
+extend(comptime t: type) cell(t)
+where t: copyable {
+  let new(copy value: t): cell(t) = { cell { value: value } }
+  let duplicate(self: borrow(self))(): t = {
     let first = self.value
     self.value
   }
 }
 
-let read_twice(T: type)(cell: borrow(Cell(T))): T
-where T: Copy = { cell.duplicate() }
+let read_twice(comptime t: type)(cell: borrow(cell(t))): t
+where t: copyable = { cell.duplicate() }
 
 let main(): i32 = {
-  let cell = Cell.new(42)
+  let cell = cell.new(42)
   read_twice(cell)
 }
 

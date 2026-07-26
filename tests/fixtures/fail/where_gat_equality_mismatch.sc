@@ -1,18 +1,18 @@
-let View(T: type)(R: region): type = borrow(R)(T)
+let view(comptime t: type)(comptime r: region): type = borrow(r)(t)
 
-let Lend = trait {
-  let Item(R: region): type
+let lend = trait {
+  let item(comptime r: region): type
 }
 
-let Cell = struct { value: i32 }
+let cell = struct { value: i32 }
 
-extend Cell: Lend {
-  let Item = View(i32)
+extend cell: lend {
+  let item = view(i32)
 }
 
-let require_i64(T: type)(move value: T): ()
-where T: Lend(Item(R: region) = borrow(R)(i64)) = {}
+let require_i64(comptime t: type)(move value: t): ()
+where t: lend(item(comptime r: region) = borrow(r)(i64)) = {}
 
 let main(): () = {
-  require_i64(Cell { value: 42 })
+  require_i64(cell { value: 42 })
 }

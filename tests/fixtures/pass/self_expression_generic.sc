@@ -1,21 +1,21 @@
-let Rewrap = trait {
-  let rewrap(move self)(): Self
+let rewrap = trait {
+  let rewrap(move self)(): self
 }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let wrap(move value: T): Self = { Self { value: value } }
-  let replace(move self)(move value: T): Self = { Self { value: value } }
+extend(comptime t: type) cell(t) {
+  let wrap(move value: t): self = { self { value: value } }
+  let replace(move self)(move value: t): self = { self { value: value } }
 }
 
-extend(T: type) Cell(T): Rewrap {
-  let rewrap(move self)(): Self = { Self { value: self.value } }
+extend(comptime t: type) cell(t): rewrap {
+  let rewrap(move self)(): self = { self { value: self.value } }
 }
 
 let main(): i32 = {
-  let first = Cell.wrap(20).value
-  let cell = Cell.wrap(0)
+  let first = cell.wrap(20).value
+  let cell = cell.wrap(0)
   let second = cell.replace(22).rewrap().value
   first + second
 }

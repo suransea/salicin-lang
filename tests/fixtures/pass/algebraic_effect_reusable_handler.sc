@@ -1,17 +1,17 @@
-let Ask = effect {
+let ask = effect {
   let value(): i32
   let stop(): i32
 }
 
-let run(action: (i32): i32 with(Ask))(input: i32): i32 = {
-  Ask.handle value { (resume) -> resume(10) } stop { (resume) -> 40 } action {
+let run(action: (i32): i32 with(ask))(input: i32): i32 = {
+  ask.handle value { (resume) -> resume(10) } stop { (resume) -> 40 } action {
       action(input)
     }
 }
 
-let left(input: i32): i32 with(Ask) = { Ask.value() + input }
-let right(input: i32): i32 with(Ask) = { Ask.value() * 2 + input }
-let abort(input: i32): i32 with(Ask) = { Ask.stop() + input }
+let left(input: i32): i32 with(ask) = { ask.value() + input }
+let right(input: i32): i32 with(ask) = { ask.value() * 2 + input }
+let abort(input: i32): i32 with(ask) = { ask.stop() + input }
 let select(order: borrow(mut)(i32)): bool = {
   order = order * 10 + 1
   false

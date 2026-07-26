@@ -434,7 +434,8 @@ mod tests {
 
     #[test]
     fn preserves_expression_newlines_and_parenthesis_free_calls() {
-        let source = "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\napply\n42\n}\n";
+        let source =
+            "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\napply\n42\n}\n";
         let expected =
             "let apply(value: i32): i32 = { value }\nlet main(): i32 = {\n  apply\n  42\n}\n";
         assert_eq!(format_source(source).expect("format calls"), expected);

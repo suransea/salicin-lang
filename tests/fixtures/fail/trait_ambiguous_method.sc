@@ -1,22 +1,22 @@
-let LeftAnswer = trait {
-  let answer(self: borrow(Self))(): i32
+let left_answer = trait {
+  let answer(self: borrow(self))(): i32
 }
 
-let RightAnswer = trait {
-  let answer(self: borrow(Self))(): i32
+let right_answer = trait {
+  let answer(self: borrow(self))(): i32
 }
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number: LeftAnswer {
-  let answer(self: borrow(Self))(): i32 = { self.value }
+extend number: left_answer {
+  let answer(self: borrow(self))(): i32 = { self.value }
 }
 
-extend Number: RightAnswer {
-  let answer(self: borrow(Self))(): i32 = { self.value }
+extend number: right_answer {
+  let answer(self: borrow(self))(): i32 = { self.value }
 }
 
 let main(): i32 = {
-  let number = Number { value: 42 }
+  let number = number { value: 42 }
   number.answer()
 }

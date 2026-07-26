@@ -1,57 +1,57 @@
-let Resource = struct { value: i32 }
-let Choice = enum { Pair(Resource, Resource), None }
+let resource = struct { value: i32 }
+let choice = enum { pair(resource, resource), none }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }
 }
 
-let consume(move value: Resource): () = { () }
+let consume(move value: resource): () = { () }
 
-let guard_false(move choice: Choice): i32 = { match choice
-    { Pair(left, _) if left.value == 0 -> do {
+let guard_false(move choice: choice): i32 = { match choice
+    { pair(left, _) if left.value == 0 -> do {
         consume(left)
         0
       }
     }
-    { Pair(left, _) -> do {
+    { pair(left, _) -> do {
         consume(left)
         21
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
-let guard_true(move choice: Choice): i32 = { match choice
-    { Pair(left, _) if left.value == 1 -> do {
+let guard_true(move choice: choice): i32 = { match choice
+    { pair(left, _) if left.value == 1 -> do {
         consume(left)
         21
       }
     }
-    { Pair(left, _) -> do {
+    { pair(left, _) -> do {
         consume(left)
         0
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
-let guard_return(move choice: Choice): i32 = { match choice
-    { Pair(left, _) if return(42) -> 0 }
-    { Pair(left, _) -> do {
+let guard_return(move choice: choice): i32 = { match choice
+    { pair(left, _) if return(42) -> 0 }
+    { pair(left, _) -> do {
         consume(left)
         0
       }
     }
-    { None -> 0 }
+    { none -> 0 }
 }
 
 let main(): i32 = {
-  let first = guard_false(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
-  let second = guard_true(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
-  let third = guard_return(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
+  let first = guard_false(choice.pair(resource { value: 1 }, resource { value: 1 }))
+  let second = guard_true(choice.pair(resource { value: 1 }, resource { value: 1 }))
+  let third = guard_return(choice.pair(resource { value: 1 }, resource { value: 1 }))
   first + second + third - 42
 }
 

@@ -1,15 +1,15 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
   }
 }
 
 let main(): i32 = {
-  let boxed = Box.new(Resource { value: 1 })
+  let boxed = box.new(resource { value: 1 })
   42
 }
 

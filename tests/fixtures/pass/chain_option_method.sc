@@ -1,12 +1,12 @@
-let Option = std.Option
+let option = std.option
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number {
+extend number {
   let take(move self)(): i32 = { self.value }
 }
 
-let main(): i32 = { Option(Number).Some(Number { value: 42 })?.take() ?? 0 }
+let main(): i32 = { option(number).some(number { value: 42 })?.take() ?? 0 }
 
 test("chain_option_method.sc") {
   main() == 42

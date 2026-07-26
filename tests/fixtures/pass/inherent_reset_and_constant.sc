@@ -1,7 +1,7 @@
-let Counter = struct { value: i32 }
+let counter = struct { value: i32 }
 
-extend Counter {
-  let reset(self: borrow(mut)(Self))(): () = {
+extend counter {
+  let reset(self: borrow(mut)(self))(): () = {
     self.value = 0
   }
 
@@ -9,9 +9,9 @@ extend Counter {
 }
 
 let main(): i32 = {
-  let mut counter = Counter { value: 41 }
+  let mut counter = counter { value: 41 }
   counter.reset()
-  counter.value + Counter.answer
+  counter.value + counter.answer
 }
 
 test("inherent_reset_and_constant.sc") {

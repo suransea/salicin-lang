@@ -1,88 +1,88 @@
 /// Protocol for stateful producers of sequential values.
-pub let Iterator = trait {
+pub let iterator = trait {
   /// Element type yielded while the iterator is borrowed for `R`.
-  let Item(R: region): type
+  let item(comptime r: region): type
   /// Advances the iterator and returns the next element, if any.
-  let next(R: region)(self: borrow(mut)(R)(Self))
-    (): core.Option(Item(R))
+  let next(comptime r: region)(self: borrow(mut)(r)(self))
+    (): core.option(item(r))
 }
 
 /// Protocol for values that can be converted into an iterator.
-pub let IntoIterator = trait {
+pub let into_iterator = trait {
   /// Iterator type produced from `Self`.
-  let IntoIter: type
+  let into_iter: type
   /// Consumes `self` and returns an iterator over its values.
   let into_iter(move self)
-    (): IntoIter
+    (): into_iter
 }
 
-let Array = core.memory.Array
-let Slice = core.memory.Slice
+let array = core.memory.array
+let slice = core.memory.slice
 
 /// Constant item family for iterators that yield owned values.
-pub let OwnedItem(T: type)(R: region): type = T
+pub let owned_item(comptime t: type)(comptime r: region): type = t
 
 /// Access-preserving item family for iterators that yield element borrows.
-pub let BorrowedItem(A: access, T: type)(R: region): type = borrow(A)(R)(T)
+pub let borrowed_item(comptime a: access, comptime t: type)(comptime r: region): type = borrow(a)(r)(t)
 
 /// Owning iterator over a fixed-size array of copyable values.
-pub let ArrayIntoIter(T: type)
-  (L: usize) = struct {
-  values: Array(T)(L),
+pub let array_into_iter(comptime t: type)
+  (comptime l: usize) = struct {
+  values: array(t)(l),
   next_index: i32,
 }
 
-extend(T: type, L: usize) ArrayIntoIter(T)(L): Iterator
-where T: core.marker.Copy {
-  let Item = OwnedItem(T)
-  let next(R: region)(self: borrow(mut)(R)(Self))(): core.Option(T) = {
-    if self.next_index == L {
-      core.Option(T).None
+extend(comptime t: type, comptime l: usize) array_into_iter(t)(l): iterator
+where t: core.marker.copyable {
+  let item = owned_item(t)
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(t) = {
+    if self.next_index == l {
+      core.option(t).none
     } else {
       let value = self.values[self.next_index]
       self.next_index = self.next_index + 1
-      core.Option(T).Some(value)
+      core.option(t).some(value)
     }
   }
 }
 
-extend(T: type, L: usize) Array(T)(L): IntoIterator
-where T: core.marker.Copy {
-  let IntoIter = ArrayIntoIter(T)(L)
-  let into_iter(move self)(): ArrayIntoIter(T)(L) = {
-    ArrayIntoIter(T)(L) { values: self, next_index: 0 }
+extend(comptime t: type, comptime l: usize) array(t)(l): into_iterator
+where t: core.marker.copyable {
+  let into_iter = array_into_iter(t)(l)
+  let into_iter(move self)(): array_into_iter(t)(l) = {
+    array_into_iter(t)(l) { values: self, next_index: 0 }
   }
 }
 
 /// Access-preserving iterator over a borrowed slice.
-pub let SliceIter(A: access)(T: type) = struct {
-  values: borrow(A)(Slice(T)),
+pub let slice_iter(comptime a: access)(comptime t: type) = struct {
+  values: borrow(a)(slice(t)),
   next_index: u64,
 }
 
-extend(A: access, T: type) SliceIter(A)(T): Iterator {
-  let Item = BorrowedItem(A, T)
-  let next(R: region)(self: borrow(mut)(R)(Self))(): core.Option(Item(R)) = {
+extend(comptime a: access, comptime t: type) slice_iter(a)(t): iterator {
+  let item = borrowed_item(a, t)
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(item(r)) = {
     if self.next_index == unsafe { raw_slice_len(self.values) } {
-      None
+      none
     } else {
       let index = self.next_index
       self.next_index = self.next_index + 1
-      Some(unsafe {
-        raw_slice_at(A)(self.values, index)
+      some(unsafe {
+        raw_slice_at(a)(self.values, index)
       })
     }
   }
 }
 
-extend(A: access, T: type) SliceIter(A)(T): IntoIterator {
-  let IntoIter = SliceIter(A)(T)
-  let into_iter(move self)(): SliceIter(A)(T) = { self }
+extend(comptime a: access, comptime t: type) slice_iter(a)(t): into_iterator {
+  let into_iter = slice_iter(a)(t)
+  let into_iter(move self)(): slice_iter(a)(t) = { self }
 }
 
-extend(T: type) Slice(T) {
+extend(comptime t: type) slice(t) {
   /// Iterates over borrowed values while retaining source access.
-  let iter(A: access)(self: borrow(A)(Self))(): SliceIter(A)(T) = {
-    SliceIter(A)(T) { values: self, next_index: 0 }
+  let iter(comptime a: access)(self: borrow(a)(self))(): slice_iter(a)(t) = {
+    slice_iter(a)(t) { values: self, next_index: 0 }
   }
 }

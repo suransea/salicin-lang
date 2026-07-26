@@ -1,70 +1,70 @@
-let Poll = std.async.Poll
-let Future = std.async.Future
+let poll = std.async.poll
+let future = std.async.future
 
-let LeftStep = struct {
+let left_step = struct {
   polled: bool,
-  remaining: Ptr(mut)(i32)
+  remaining: ptr(mut)(i32)
 }
 
-let RightStep = struct {
+let right_step = struct {
   polled: bool,
-  remaining: Ptr(mut)(i32)
+  remaining: ptr(mut)(i32)
 }
 
-extend LeftStep: Future(()) {
-  let Output = bool
+extend left_step: future(()) {
+  let output = bool
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(bool) = {
     if self.polled {
       let done = unsafe {
         *self.remaining = *self.remaining - 1
         *self.remaining == 0
       }
-      Poll(bool).Ready(done)
+      poll(bool).ready(done)
     } else {
       self.polled = true
-      Poll(bool).Pending
+      poll(bool).pending
     }
   }
 }
 
-extend RightStep: Future(()) {
-  let Output = bool
+extend right_step: future(()) {
+  let output = bool
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(bool) = {
     if self.polled {
       let done = unsafe {
         *self.remaining = *self.remaining - 1
         *self.remaining == 0
       }
-      Poll(bool).Ready(done)
+      poll(bool).ready(done)
     } else {
       self.polled = true
-      Poll(bool).Pending
+      poll(bool).pending
     }
   }
 }
 
-let left(remaining: Ptr(mut)(i32)): LeftStep = {
-  LeftStep { polled: false, remaining: remaining }
+let left(remaining: ptr(mut)(i32)): left_step = {
+  left_step { polled: false, remaining: remaining }
 }
 
-let right(remaining: Ptr(mut)(i32)): RightStep = {
-  RightStep { polled: false, remaining: remaining }
+let right(remaining: ptr(mut)(i32)): right_step = {
+  right_step { polled: false, remaining: remaining }
 }
 
-let Choice = enum {
-  Left,
-  Right
+let choice = enum {
+  left,
+  right
 }
 
 let main(): i32 = {
   let mut remaining = 3
-  let remaining_ptr = Ptr(mut)(borrow(mut)(remaining))
+  let remaining_ptr = ptr(mut)(borrow(mut)(remaining))
   let mut future = async {
     loop {
       let done = if unsafe { *remaining_ptr % 2 == 0 } {
@@ -81,27 +81,27 @@ let main(): i32 = {
   }
 
   let first = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let second = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let third = match future.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let fourth = match future.poll()
-    { Pending -> 0 }
-    { Ready(_) -> 18 }
+    { pending -> 0 }
+    { ready(_) -> 18 }
   let conditional = first + second + third + fourth
 
   let mut matched_remaining = 2
-  let matched_ptr = Ptr(mut)(borrow(mut)(matched_remaining))
+  let matched_ptr = ptr(mut)(borrow(mut)(matched_remaining))
   let mut matched = async {
     loop {
-      let choice = if unsafe { *matched_ptr == 2 } { Choice.Left } else { Choice.Right }
+      let choice = if unsafe { *matched_ptr == 2 } { choice.left } else { choice.right }
       let done = match choice
-        { Left -> await left(matched_ptr) }
-        { Right -> await right(matched_ptr) }
+        { left -> await left(matched_ptr) }
+        { right -> await right(matched_ptr) }
       if done {
         break()
       } else {
@@ -110,14 +110,14 @@ let main(): i32 = {
     }
   }
   let matched_first = match matched.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let matched_second = match matched.poll()
-    { Pending -> 1 }
-    { Ready(_) -> 0 }
+    { pending -> 1 }
+    { ready(_) -> 0 }
   let matched_third = match matched.poll()
-    { Pending -> 0 }
-    { Ready(_) -> 19 }
+    { pending -> 0 }
+    { ready(_) -> 19 }
 
   conditional + matched_first + matched_second + matched_third
 }

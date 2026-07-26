@@ -1,13 +1,13 @@
-let Slice = std.Slice
+let slice = std.slice
 
 let write(target: borrow(mut)(i32))(value: i32): () = {
   target = value
 }
 
 let main(): i32 = {
-  let mut values: Array(i32)(3) = [9, 10, 20]
+  let mut values: array(i32)(3) = [9, 10, 20]
   do {
-    let slice: borrow(mut)(Slice(i32)) = borrow(mut)(values)
+    let slice: borrow(mut)(slice(i32)) = borrow(mut)(values)
     let mut iterator = slice.iter(mut)()
     do {
       let item = iterator.next()!!

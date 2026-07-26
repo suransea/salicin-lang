@@ -1,7 +1,7 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let mut values = Vec.new(i32)()
+  let mut values = vec.new(i32)()
   values.push(10)
   values.push(11)
   values.push(21)

@@ -348,7 +348,7 @@ mod tests {
         assert!(compilation.ir.contains("define i32 @main()"));
 
         let no_tests =
-            compile_test_source("let helper(): bool = { true }\n").expect_err("tests are required");
+            compile_test_source("let helper(): Bool = { true }\n").expect_err("tests are required");
         assert!(no_tests
             .iter()
             .any(|diagnostic| diagnostic.contains("contains no test declarations")));
@@ -358,7 +358,7 @@ mod tests {
         assert!(
             wrong_result
                 .iter()
-                .any(|diagnostic| diagnostic.contains("where `bool` is expected")),
+                .any(|diagnostic| diagnostic.contains("where `Bool` is expected")),
             "{wrong_result:?}"
         );
 
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn closed_types_can_parameterize_compile_time_functions() {
         let source = "let optimization = enum { size, speed }\n\
-                      let select_bool(B: bool)(value: i32): i32 = { value }\n\
+                      let select_bool(B: Bool)(value: i32): i32 = { value }\n\
                       let select_optimization(O: optimization)(value: i32): i32 = { value }\n\
                       let main(): i32 = {\n\
                         select_bool(true)(20) +\n\
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn closed_compile_time_parameters_use_declared_defaults() {
-        let source = "let select(B: bool = false)(value: i32): i32 = { value }\n\
+        let source = "let select(B: Bool = false)(value: i32): i32 = { value }\n\
                       let main(): i32 = { select(42) }\n";
         compile_source(source).expect("closed compile-time defaults should be normalized by type");
     }
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn parameter_modifiers_are_type_checked_after_instantiation() {
-        let source = "let decorate(B: bool)(B value: i32): i32 = { value }\n\
+        let source = "let decorate(B: Bool)(B value: i32): i32 = { value }\n\
                       let main(): i32 = { decorate(true)(42) }\n";
         let errors = compile_source(source).unwrap_err();
         assert!(errors.iter().any(|error| {
@@ -509,7 +509,7 @@ mod tests {
                 "let Missing = struct { value: i32 }\n\
                 let main(): i32 = { Missing { value: 42 } + Missing { value: 0 } }\n",
                 2,
-                21,
+                23,
                 "no matching `Add` implementation",
             ),
             (
@@ -517,7 +517,7 @@ mod tests {
                 "let identity(T: type)(value: T): T = { value }\n\
                 let main(): i32 = { identity() }\n",
                 2,
-                21,
+                23,
                 "argument",
             ),
             (
@@ -525,7 +525,7 @@ mod tests {
                 "let Ask = effect { let value(): i32 }\n\
                 let main(): i32 = { Ask.value() }\n",
                 2,
-                21,
+                23,
                 "requires custom effect",
             ),
             (
@@ -535,16 +535,16 @@ mod tests {
                   value\n\
                 }\n",
                 2,
-                18,
-                "expected `i32`, found `bool`",
+                20,
+                "expected `i32`, found `Bool`",
             ),
             (
                 "trailing closure call",
-                "let choose()(move action: (): bool): bool = { action() }\n\
+                "let choose()(move action: (): Bool): Bool = { action() }\n\
                  let main(): i32 = { choose() { true } }\n",
                 2,
-                21,
-                "expected `i32`, found `bool`",
+                23,
+                "expected `i32`, found `Bool`",
             ),
         ];
 
@@ -688,7 +688,7 @@ mod tests {
         let imported_order = format!(
             "use std.ops.{{PartialOrd, PartialOrdering}}\n{missing_order}"
         )
-        .replace("std.ops.PartialOrdering", "PartialOrdering")
+        .replace("std.ops.PartialOrdering", "partial_ordering")
         .replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { if Number { value: 1 } <= Number { value: 2 } { 42 } else { 0 } }",
@@ -750,7 +750,7 @@ mod tests {
                         }\n\
                       }\n\
                       let main(): i32 = {\n\
-                        let mut cell = Cell.make(i32)(bool)(20)(true)\n\
+                        let mut cell = Cell.make(i32)(Bool)(20)(true)\n\
                         let before = do {\n\
                           let reference = cell.view()\n\
                           reference\n\

@@ -1,10 +1,10 @@
-let Option = std.Option
+let option = std.option
 
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-let make(count: borrow(mut)(i32)): Option(Boxed) = {
+let make(count: borrow(mut)(i32)): option(boxed) = {
   count = count + 1
-  Option(Boxed).Some(Boxed { value: 42 })
+  option(boxed).some(boxed { value: 42 })
 }
 
 let main(): i32 = {

@@ -1,11 +1,11 @@
-let Option = std.Option
+let option = std.option
 
-let Inner = struct { answer: i32 }
-let Middle = struct { inner: Inner }
-let Outer = struct { middle: Middle }
+let inner = struct { answer: i32 }
+let middle = struct { inner: inner }
+let outer = struct { middle: middle }
 
 let main(): i32 = {
-  Option(Outer).Some(Outer { middle: Middle { inner: Inner { answer: 42 } } })?.middle?.inner?.answer ?? 0
+  option(outer).some(outer { middle: middle { inner: inner { answer: 42 } } })?.middle?.inner?.answer ?? 0
 }
 
 test("chain_consecutive_fields.sc") {

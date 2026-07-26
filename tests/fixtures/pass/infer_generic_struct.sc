@@ -1,6 +1,6 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-let main(): i32 = { Cell { value: 42 }.value }
+let main(): i32 = { cell { value: 42 }.value }
 
 test("infer_generic_struct.sc") {
   main() == 42

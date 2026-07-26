@@ -1,42 +1,42 @@
-let Point = struct { raw: i32 }
+let point = struct { raw: i32 }
 
-extend Point {
-  let origin: Self = Self { raw: 40 }
-  let new(value: i32): Self = { Self { raw: value } }
-  let shifted(move self)(delta: i32): Self = { Self { raw: self.raw + delta } }
-  let read(self: borrow(Self))(): i32 = { self.raw }
-  let read(value: Self): i32 = { Self.read(self: value)() }
+extend point {
+  let origin: self = self { raw: 40 }
+  let new(value: i32): self = { self { raw: value } }
+  let shifted(move self)(delta: i32): self = { self { raw: self.raw + delta } }
+  let read(self: borrow(self))(): i32 = { self.raw }
+  let read(value: self): i32 = { self.read(self: value)() }
 }
 
-let Choice = enum { Some(i32), None }
+let choice = enum { some(i32), none }
 
-extend Choice {
+extend choice {
   let unwrap(move self)(): i32 = { match self
-      { Self.Some(value) -> value }
-      { Self.None -> 0 }
+      { self.some(value) -> value }
+      { self.none -> 0 }
   }
 }
 
-let Rebuild = trait {
-  let rebuild(move self)(): Self
-  let read(self: borrow(Self))(): i32
-  let twice(self: borrow(Self))(): i32 = { Self.read(self: self)() + Self.read(self: self)() }
+let rebuild = trait {
+  let rebuild(move self)(): self
+  let read(self: borrow(self))(): i32
+  let twice(self: borrow(self))(): i32 = { self.read(self: self)() + self.read(self: self)() }
 }
 
-let Wrapper = struct { raw: i32 }
+let wrapper = struct { raw: i32 }
 
-extend Wrapper: Rebuild {
-  let rebuild(move self)(): Self = { Self { raw: self.raw } }
-  let read(self: borrow(Self))(): i32 = { self.raw }
+extend wrapper: rebuild {
+  let rebuild(move self)(): self = { self { raw: self.raw } }
+  let read(self: borrow(self))(): i32 = { self.raw }
 }
 
 let main(): i32 = {
-  let shifted = Point.new(40).shifted(2)
-  let point = Point.read(shifted)
-  let choice = Choice.Some(42).unwrap()
-  let wrapper = Wrapper { raw: 42 }.rebuild().raw
-  let default = Wrapper { raw: 21 }.twice()
-  let origin = Point.origin.raw
+  let shifted = point.new(40).shifted(2)
+  let point = point.read(shifted)
+  let choice = choice.some(42).unwrap()
+  let wrapper = wrapper { raw: 42 }.rebuild().raw
+  let default = wrapper { raw: 21 }.twice()
+  let origin = point.origin.raw
   point + choice + wrapper + default + origin - 166
 }
 

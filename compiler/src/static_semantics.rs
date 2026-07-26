@@ -166,7 +166,7 @@ mod tests {
         };
         assert_eq!(
             StaticValue::TypeConstructor {
-                name: "Array".into(),
+                name: "array".into(),
                 sort: constructor_sort.clone(),
             }
             .sort(),
@@ -177,10 +177,10 @@ mod tests {
     #[test]
     fn where_predicates_lower_to_trait_constraints_with_projection_equations() {
         let predicate = WherePredicate {
-            subject: Type::Named("T".into(), Vec::new()),
-            trait_ref: Type::Named("Iterator".into(), Vec::new()),
+            subject: Type::Named("t".into(), Vec::new()),
+            trait_ref: Type::Named("iterator".into(), Vec::new()),
             associated_types: vec![AssociatedTypeBinding {
-                name: "Item".into(),
+                name: "item".into(),
                 compile_groups: Vec::new(),
                 ty: Type::I32,
             }],
@@ -191,9 +191,9 @@ mod tests {
                 subject: Type::Named(subject, _),
                 trait_ref: Type::Named(trait_name, _),
                 projections,
-            } if subject == "T"
-                && trait_name == "Iterator"
-                && projections[0].name == "Item"
+            } if subject == "t"
+                && trait_name == "iterator"
+                && projections[0].name == "item"
                 && projections[0].value == Type::I32
         ));
     }

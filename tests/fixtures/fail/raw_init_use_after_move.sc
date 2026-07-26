@@ -1,10 +1,10 @@
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
 let main(): i32 = {
   let pointer = unsafe {
-    raw_alloc(Resource)(size_of(Resource), align_of(Resource))
+    raw_alloc(resource)(size_of(resource), align_of(resource))
   }
-  let resource = Resource { value: 42 }
+  let resource = resource { value: 42 }
   unsafe {
     raw_init(pointer, resource)
   }

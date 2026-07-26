@@ -1,6 +1,6 @@
-let A = struct { value: i32 }
+let a = struct { value: i32 }
 
-extend A: Foo {
+extend a: foo {
   let answer = 42
 }
 

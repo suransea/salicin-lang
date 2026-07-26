@@ -1,27 +1,27 @@
-let Step = effect {
+let step = effect {
   let delta(): i32
 }
 
-let State = struct {
+let state = struct {
   value: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend state: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let update(state: borrow(mut)(State)): () with(Step) = {
-  let delta = Step.delta()
+let update(state: borrow(mut)(state)): () with(step) = {
+  let delta = step.delta()
   state.value = state.value + delta
 }
 
-let program(drops: Ptr(mut)(i32)): i32 with(Step) = {
-  let mut state = State { value: 40, drops: drops }
+let program(drops: ptr(mut)(i32)): i32 with(step) = {
+  let mut state = state { value: 40, drops: drops }
   update(state)
   update(state)
   state.value
@@ -33,12 +33,12 @@ let main(): i32 = {
   }
   unsafe { *drops = 0 }
 
-  let resumed = Step.handle delta { (resume) ->
+  let resumed = step.handle delta { (resume) ->
       resume(1)
     } action {
       program(drops)
     }
-  let abandoned = Step.handle delta { (_) ->
+  let abandoned = step.handle delta { (_) ->
       40
     } action {
       program(drops)

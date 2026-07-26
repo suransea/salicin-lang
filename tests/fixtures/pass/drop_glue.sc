@@ -1,18 +1,18 @@
-let Resource = struct { value: i32 }
-let Wrapper = struct { resource: Resource }
-let Choice = enum {
-  Some(Wrapper),
-  None,
+let resource = struct { value: i32 }
+let wrapper = struct { resource: resource }
+let choice = enum {
+  some(wrapper),
+  none,
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     self.value = 0
   }
 }
 
 let main(): i32 = {
-  let value = Choice.Some(Wrapper { resource: Resource { value: 42 } })
+  let value = choice.some(wrapper { resource: resource { value: 42 } })
   42
 }
 

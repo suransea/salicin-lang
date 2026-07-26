@@ -1,14 +1,14 @@
-let Option = std.Option
-let Result = std.Result
+let option = std.option
+let result = std.result
 
 let main(): i32 = {
-  let inner = Result(bool)(i32).Ok(42)
-  let outer = Option(Result(bool)(i32)).Some(inner)
+  let inner = result(bool)(i32).ok(42)
+  let outer = option(result(bool)(i32)).some(inner)
   match outer
-    { Some(result) -> match result
-      { Ok(value) -> value }
-      { Err(_) -> 0 } }
-    { None -> 0 }
+    { some(result) -> match result
+      { ok(value) -> value }
+      { err(_) -> 0 } }
+    { none -> 0 }
 }
 
 test("core_nested_option_result.sc") {

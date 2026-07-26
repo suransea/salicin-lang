@@ -17,10 +17,10 @@ not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
 `let foreign(ABI: abi): Never = builtin()` and
-`let test(name: string)(move body: (): bool): () = builtin()`. These are canonical syntax
+`let test(Name: String)(move body: (): Bool): () = builtin()`. These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
 `abi` sort selected by `foreign(c, ...)`; registration names inhabit the compiler-owned
-`string` sort. ABI/link and registration-name metadata is erased before runtime lowering.
+`String` sort. ABI/link and registration-name metadata is erased before runtime lowering.
 
 ## Modules
 
@@ -77,7 +77,7 @@ extend Number: Add(Number) {
 }
 ```
 
-`Eq(Rhs)` borrows both operands and returns `bool`; `!=` invokes the same method exactly once and
+`Eq(Rhs)` borrows both operands and returns `Bool`; `!=` invokes the same method exactly once and
 negates its result:
 
 ```sc fragment
@@ -85,7 +85,7 @@ let Eq = std.ops.Eq
 
 extend Number: Eq(Number) {
   let eq(self: borrow(Self))
-    (rhs: borrow(Number)): bool = { self.value == rhs.value }
+    (rhs: borrow(Number)): Bool = { self.value == rhs.value }
 }
 ```
 
@@ -105,7 +105,7 @@ extend Number: PartialOrd(Number) {
 
 `Neg` and `Not` use automatic passing for their operand and define an associated `Output` type. Consequently an
 overloaded `!` may return a non-boolean result; only the built-in boolean operation is fixed to
-`bool`. The boolean implementation is ordinary source control flow, and signed
+`Bool`. The boolean implementation is ordinary source control flow, and signed
 integer negation is defined as subtraction from zero. Generic code can state
 the same output relationship in a normal where predicate.
 
@@ -209,14 +209,14 @@ pub let region: sort
 pub let effect: sort
 pub let effects: sort
 pub let parameters: sort
-pub let string: sort
+pub let String: sort
 pub let abi = sort {
   c
 }
 ```
 
 `effect` classifies one nominal effect identity; `effects` classifies a normalized zero-or-more
-effect row. `string` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
+effect row. `String` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
 calling-convention sort whose first supported value is `c`.
 
 `core.borrow` owns the finite access sort and its unqualified aliases:
@@ -340,7 +340,7 @@ pub let do(E: effects, T: type)
   (move action: (): T with(E)): T with(E)
 pub let do(E: effects)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))
-  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
+  (move while: (): Bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
   loop {
     core.control.Continue.handle
       next { () }
@@ -357,10 +357,10 @@ pub let unsafe(E: effects, T: type)
 pub let loop(E: effects, T: type)
   (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
 pub let while(E: effects)
-  (move condition: (): bool with(E))
+  (move condition: (): Bool with(E))
   (move do: (): () with(E)): () with(E)
 pub let if(E: effects, T: type)
-  (condition: bool)
+  (condition: Bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E) = {
   match condition
@@ -511,11 +511,11 @@ each partially applied `core.Result(Error)` constructor:
 let Result = std.Result
 let Monad = std.functional.Monad
 
-let next(value: i32): Result(bool)(i32) = {
-  Result(bool)(i32).Ok(value + 1)
+let next(value: i32): Result(Bool)(i32) = {
+  Result(Bool)(i32).Ok(value + 1)
 }
 
-let value = Result(bool)(i32).Ok(41).flat_map(next)
+let value = Result(Bool)(i32).Ok(41).flat_map(next)
 ```
 
 Curried constructors may be used as constructor trait implementation targets, which is how

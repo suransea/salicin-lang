@@ -1,5 +1,5 @@
-let Box = std.boxed.Box
+let box = std.boxed.box
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-let main(): i32 = { Box.new(Resource { value: 42 }).read().value }
+let main(): i32 = { box.new(resource { value: 42 }).read().value }

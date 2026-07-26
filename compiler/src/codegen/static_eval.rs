@@ -24,7 +24,7 @@ impl Analyzer {
         ) {
             Ok(Scalar::USize(value)) => Some(value),
             Ok(Scalar::Bool(_)) => {
-                self.error("compile-time array length evaluated to `bool`, expected `usize`");
+                self.error("compile-time array length evaluated to `Bool`, expected `usize`");
                 None
             }
             Err(message) => {
@@ -173,14 +173,14 @@ impl Analyzer {
             );
             if !compatible {
                 return Err(format!(
-                    "CTFE argument for `{}.{}` does not match its `usize`/`bool` parameter type",
+                    "CTFE argument for `{}.{}` does not match its `usize`/`Bool` parameter type",
                     function.name, parameter.name
                 ));
             }
         }
         if !matches!(function.return_type, Some(Type::USize | Type::Bool)) {
             return Err(format!(
-                "CTFE function `{}` must explicitly return `usize` or `bool`",
+                "CTFE function `{}` must explicitly return `usize` or `Bool`",
                 function.name
             ));
         }
@@ -273,7 +273,7 @@ impl Analyzer {
                 let Scalar::Bool(condition) =
                     self.evaluate_static_body(condition, locals, fuel, active_calls)?
                 else {
-                    return Err("CTFE `if` condition must be `bool`".to_owned());
+                    return Err("CTFE `if` condition must be `Bool`".to_owned());
                 };
                 if condition {
                     self.evaluate_static_body(then_branch, locals, fuel, active_calls)
@@ -299,7 +299,7 @@ impl Analyzer {
                             active_calls,
                         )?
                         else {
-                            return Err("CTFE match guard must be `bool`".to_owned());
+                            return Err("CTFE match guard must be `Bool`".to_owned());
                         };
                         if !guard {
                             continue;
@@ -341,7 +341,7 @@ impl Analyzer {
             | (Pattern::Bool(_), Scalar::USize(_))
             | (Pattern::Tuple(_), _)
             | (Pattern::Constructor { .. }, _) => {
-                Err("pattern is outside the `usize`/`bool` CTFE subset".to_owned())
+                Err("pattern is outside the `usize`/`Bool` CTFE subset".to_owned())
             }
         }
     }

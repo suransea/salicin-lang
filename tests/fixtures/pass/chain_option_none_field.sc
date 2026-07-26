@@ -1,8 +1,8 @@
-let Option = std.Option
+let option = std.option
 
-let Boxed = struct { value: i32 }
+let boxed = struct { value: i32 }
 
-let main(): i32 = { Option(Boxed).None?.value ?? 42 }
+let main(): i32 = { option(boxed).none?.value ?? 42 }
 
 test("chain_option_none_field.sc") {
   main() == 42

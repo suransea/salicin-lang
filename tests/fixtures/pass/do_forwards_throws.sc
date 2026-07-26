@@ -1,9 +1,9 @@
-let Result = std.Result
-let Throws = std.error.Throws
+let result = std.result
+let throws = std.error.throws
 
-let reject(): i32 with(Throws(bool)) = { throw(true) }
+let reject(): i32 with(throws(bool)) = { throw(true) }
 
-let choose(flag: bool): i32 with(Throws(bool)) = {
+let choose(flag: bool): i32 with(throws(bool)) = {
   do {
     if flag { return(reject()) }
     42
@@ -11,8 +11,8 @@ let choose(flag: bool): i32 with(Throws(bool)) = {
 }
 
 let main(): i32 = {
-  let success: Result(bool)(i32) = try { choose(false) }
-  let failure: Result(bool)(i32) = try { choose(true) }
+  let success: result(bool)(i32) = try { choose(false) }
+  let failure: result(bool)(i32) = try { choose(true) }
   (success ?? 0) + (failure ?? 0)
 }
 

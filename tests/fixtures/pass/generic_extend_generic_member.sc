@@ -1,11 +1,11 @@
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let identity(U: type)(self: borrow(Self))(move value: U): U = { value }
+extend(comptime t: type) cell(t) {
+  let identity(comptime u: type)(self: borrow(self))(move value: u): u = { value }
 }
 
 let main(): i32 = {
-  let cell = Cell { value: 0 }
+  let cell = cell { value: 0 }
   cell.identity(i32)(42)
 }
 

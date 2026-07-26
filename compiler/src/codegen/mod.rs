@@ -623,7 +623,11 @@ impl Analyzer {
                         continue;
                     }
                     let parameter_modifier_intrinsic = origin.package == PackageId::CORE.0
-                        && [LangItemKind::CopyParameters, LangItemKind::MoveParameters]
+                        && [
+                            LangItemKind::CopyParameters,
+                            LangItemKind::MoveParameters,
+                            LangItemKind::ComptimeParameters,
+                        ]
                             .into_iter()
                             .any(|kind| self.is_lang_item_name(&source_name, kind))
                         && function.compile_groups.as_slice().iter().flatten().count() == 1
@@ -802,7 +806,7 @@ impl Analyzer {
                     }
                     for derive in &definition.derives {
                         match derive.as_str() {
-                            "Copy" => {
+                            "copyable" => {
                                 if let Some(extension) = self.derived_copy_extension(definition) {
                                     extensions.push((extension, origin.clone()));
                                 }
@@ -1360,7 +1364,7 @@ impl Analyzer {
                 let method = operator_trait.method();
                 let shape = match operator_trait.lang_item {
                     LangItemKind::Eq => format!(
-                        "let Eq(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): bool }}"
+                        "let Eq(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): Bool }}"
                     ),
                     LangItemKind::PartialOrd => format!(
                         "let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
@@ -1396,7 +1400,7 @@ impl Analyzer {
             ));
             valid = false;
         }
-        if definition.self_parameter.name != "Self" {
+        if definition.self_parameter.name != "self" {
             self.error(format!(
                 "trait `{}` self sort parameter must be named `Self`",
                 definition.name
@@ -1422,7 +1426,7 @@ impl Analyzer {
             .collect::<Vec<_>>();
         let mut compile_parameter_names = HashSet::new();
         for parameter in &compile_parameters {
-            if parameter.name == "Self" {
+            if parameter.name == "self" {
                 self.error(format!(
                     "trait `{}` cannot declare reserved type parameter `Self`",
                     definition.name
@@ -1483,7 +1487,7 @@ impl Analyzer {
                         valid = false;
                         continue;
                     }
-                    if name == "Self" || compile_parameter_names.contains(&name) {
+                    if name == "self" || compile_parameter_names.contains(&name) {
                         self.error(format!(
                             "associated type `{}.{name}` conflicts with a trait type parameter",
                             definition.name
@@ -1624,7 +1628,7 @@ impl Analyzer {
                 .iter()
                 .map(|parameter| (parameter.name.clone(), parameter.kind.clone()))
                 .collect::<HashMap<_, _>>();
-            compile_parameter_sorts.insert("Self".to_owned(), schema.self_parameter.kind.clone());
+            compile_parameter_sorts.insert("self".to_owned(), schema.self_parameter.kind.clone());
             compile_parameter_sorts.extend(
                 schema
                     .associated_types
@@ -1766,7 +1770,7 @@ impl Analyzer {
             associated_types,
         };
         let mut self_substitution = HashMap::new();
-        self_substitution.insert("Self".to_owned(), Type::Named(self_parameter, Vec::new()));
+        self_substitution.insert("self".to_owned(), Type::Named(self_parameter, Vec::new()));
         for method_name in &schema.method_order {
             let method = &schema.methods[method_name];
             if method.body.is_none() {
@@ -2063,7 +2067,7 @@ impl Analyzer {
                     }
                     Sort::String => {
                         self.error(format!(
-                            "string parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                            "`String` parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
@@ -3292,7 +3296,7 @@ impl Analyzer {
                 .is_some_and(|access| access.origin.package != origin.package)
         {
             let target = self.diagnostic_type_name(&target);
-            let trait_name = if is_copy { "Copy" } else { "Drop" };
+            let trait_name = if is_copy { "copyable" } else { "droppable" };
             self.error(format!(
                 "`{trait_name}` for `{target}` must be implemented in the package that defines the type"
             ));
@@ -3341,7 +3345,7 @@ impl Analyzer {
             ));
             return;
         }
-        substitutions.insert("Self".to_owned(), target_source);
+        substitutions.insert("self".to_owned(), target_source);
 
         let mut raw_associated = HashMap::new();
         let mut supplied_methods = HashMap::new();
@@ -3873,7 +3877,7 @@ impl Analyzer {
 
         let mut substitutions = HashMap::new();
         substitutions.insert(
-            "Self".to_owned(),
+            "self".to_owned(),
             Type::Named(key.target.name.clone(), Vec::new()),
         );
         for (parameter, argument) in schema.compile_parameters.iter().zip(trait_argument_sources) {
@@ -4157,7 +4161,7 @@ impl Analyzer {
 
                     let mut self_substitution = HashMap::new();
                     self_substitution
-                        .insert("Self".to_owned(), Type::Named(target.clone(), Vec::new()));
+                        .insert("self".to_owned(), Type::Named(target.clone(), Vec::new()));
                     substitute_function_types(&mut function, &self_substitution);
                     if let Some(body) = &mut function.body {
                         substitute_self_expression_target(body, &target);
@@ -4393,7 +4397,7 @@ impl Analyzer {
         }
         let mut declared = HashSet::new();
         for parameter in &parameters {
-            if parameter.name == "Self" || !declared.insert(parameter.name.clone()) {
+            if parameter.name == "self" || !declared.insert(parameter.name.clone()) {
                 self.error(format!(
                     "invalid or duplicate generic extend parameter `{}`",
                     parameter.name
@@ -4514,7 +4518,7 @@ impl Analyzer {
             .get(target_template)
             .map(|access| access.origin.package);
         if (is_copy || is_drop) && target_package != Some(origin.package) {
-            let trait_name = if is_copy { "Copy" } else { "Drop" };
+            let trait_name = if is_copy { "copyable" } else { "droppable" };
             self.error(format!(
                 "generic `{trait_name}` for `{target_template}` must be implemented in the package that defines the type"
             ));
@@ -4627,7 +4631,7 @@ impl Analyzer {
         let mut declared = HashSet::new();
         for parameter in &parameters {
             if parameter.kind != Sort::Type
-                || parameter.name == "Self"
+                || parameter.name == "self"
                 || !declared.insert(parameter.name.clone())
             {
                 self.error(format!(
@@ -4761,7 +4765,7 @@ impl Analyzer {
         }
 
         let mut substitutions = HashMap::new();
-        substitutions.insert("Self".to_owned(), target.self_constructor.clone());
+        substitutions.insert("self".to_owned(), target.self_constructor.clone());
         for (parameter, argument) in schema.compile_parameters.iter().zip(trait_argument_sources) {
             substitutions.insert(parameter.name.clone(), argument);
         }
@@ -5033,7 +5037,7 @@ impl Analyzer {
             .zip(trait_arguments)
             .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
             .collect::<HashMap<_, _>>();
-        expected_substitutions.insert("Self".to_owned(), extension.target.clone());
+        expected_substitutions.insert("self".to_owned(), extension.target.clone());
         for parameter in extension.compile_groups.iter().flatten() {
             match &parameter.kind {
                 Sort::USize => {
@@ -5279,7 +5283,7 @@ impl Analyzer {
             return;
         }
         let mut self_substitution = HashMap::new();
-        self_substitution.insert("Self".to_owned(), extension.target.clone());
+        self_substitution.insert("self".to_owned(), extension.target.clone());
         let target_access = self.nominal_access_or_internal(target_template);
         let validation_access = Self::intersect_access_boundaries(access, &target_access, origin);
         for member in &extension.members {
@@ -5418,7 +5422,7 @@ impl Analyzer {
         }
         let mut declared = HashSet::new();
         for parameter in &parameters {
-            if parameter.name == "Self" || !declared.insert(parameter.name.clone()) {
+            if parameter.name == "self" || !declared.insert(parameter.name.clone()) {
                 self.error(format!(
                     "invalid or duplicate generic extend parameter `{}`",
                     parameter.name
@@ -5663,7 +5667,7 @@ impl Analyzer {
             where_predicates.extend(generic.where_predicates.clone());
             generic.where_predicates = where_predicates;
             let mut self_substitution = HashMap::new();
-            self_substitution.insert("Self".to_owned(), extension.target.clone());
+            self_substitution.insert("self".to_owned(), extension.target.clone());
             substitute_function_types(&mut generic, &self_substitution);
             if let Some(body) = &mut generic.body {
                 substitute_self_expression_target(body, target_template);
@@ -6137,7 +6141,7 @@ impl Analyzer {
                 };
                 substitute_function_types(function, &substitutions);
                 let mut self_substitution = HashMap::new();
-                self_substitution.insert("Self".to_owned(), pointer_source.clone());
+                self_substitution.insert("self".to_owned(), pointer_source.clone());
                 substitute_function_types(function, &self_substitution);
             }
             self.register_builtin_extension_methods(
@@ -6193,7 +6197,7 @@ impl Analyzer {
                 };
                 substitute_function_types(function, &substitutions);
                 let mut self_substitution = HashMap::new();
-                self_substitution.insert("Self".to_owned(), slice_source.clone());
+                self_substitution.insert("self".to_owned(), slice_source.clone());
                 substitute_function_types(function, &self_substitution);
             }
             self.register_builtin_extension_methods(
@@ -6226,7 +6230,7 @@ impl Analyzer {
                     ExtendMember::Function(function) => {
                         substitute_function_types(function, &substitutions);
                         let mut self_substitution = HashMap::new();
-                        self_substitution.insert("Self".to_owned(), slice_source.clone());
+                        self_substitution.insert("self".to_owned(), slice_source.clone());
                         substitute_function_types(function, &self_substitution);
                     }
                 }
@@ -6973,7 +6977,7 @@ impl Analyzer {
             }
 
             let mut substitutions = HashMap::new();
-            substitutions.insert("Self".to_owned(), predicate.subject.clone());
+            substitutions.insert("self".to_owned(), predicate.subject.clone());
             for (parameter, argument) in schema.compile_parameters.iter().zip(source_arguments) {
                 substitutions.insert(parameter.name.clone(), argument.clone());
             }
@@ -7310,7 +7314,7 @@ impl Analyzer {
         key: &TraitImplKey,
     ) -> Option<Vec<crate::ast::WherePredicate>> {
         let mut substitutions = HashMap::new();
-        substitutions.insert("Self".to_owned(), self.source_type_for_ty(&key.self_ty)?);
+        substitutions.insert("self".to_owned(), self.source_type_for_ty(&key.self_ty)?);
         for (parameter, argument) in schema
             .compile_parameters
             .iter()
@@ -7338,7 +7342,7 @@ impl Analyzer {
     ) -> Option<Vec<crate::ast::WherePredicate>> {
         let mut substitutions = HashMap::new();
         substitutions.insert(
-            "Self".to_owned(),
+            "self".to_owned(),
             Type::Named(key.target.name.clone(), Vec::new()),
         );
         for (parameter, argument) in schema
@@ -8325,6 +8329,11 @@ impl Analyzer {
                 result: function.result.clone(),
             }));
         }
+        if self.empty_struct_candidate(name, &groups, context) {
+            let constructor = calls::empty_trailing_closure_constructor(expression)
+                .expect("empty struct candidate has an empty trailing closure");
+            return self.probe_struct_literal_ty(constructor, &[], expected, context);
+        }
         if let Some(candidates) = self.function_overloads.get(name) {
             if !groups
                 .iter()
@@ -8691,7 +8700,7 @@ impl Analyzer {
                 } else if context.has_type_parameter(name) {
                     self.error(format!("type parameter `{name}` cannot be used as a value"));
                     error_expr()
-                } else if name == "Self" {
+                } else if name == "self" {
                     self.error("expression `Self` is only available inside an extend member");
                     error_expr()
                 } else if self.globals.contains_key(name) {

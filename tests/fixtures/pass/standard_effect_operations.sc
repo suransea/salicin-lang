@@ -1,54 +1,54 @@
-let Result = std.Result
+let result = std.result
 
-let Throws = std.error.Throws
-let Async = std.async.Async
+let throws = std.error.throws
+let async_effect = std.async.async_effect
 
-let fail_with_answer(): Never with(Throws(i32)) = {
-  Throws(i32).raise(42)
+let fail_with_answer(): never with(throws(i32)) = {
+  throws(i32).raise(42)
 }
 
-let fail_with_throw_sugar(): Never with(Throws(i32)) = {
+let fail_with_throw_sugar(): never with(throws(i32)) = {
   throw(42)
 }
 
-let choose_with_throw_sugar(fail: bool): i32 with(Throws(i32)) = {
+let choose_with_throw_sugar(fail: bool): i32 with(throws(i32)) = {
   if fail { throw(42) } else { 1 }
 }
 
 let handled_throw(): i32 = {
-  Throws(i32).handle raise { (error) -> error } action {
+  throws(i32).handle raise { (error) -> error } action {
       fail_with_answer()
     }
 }
 
 let handled_throw_sugar_function(): i32 = {
-  Throws(i32).handle raise { (error) -> error } action {
+  throws(i32).handle raise { (error) -> error } action {
       fail_with_throw_sugar()
     }
 }
 
 let handled_throw_sugar_action(): i32 = {
-  Throws(i32).handle raise { (error) -> error } action {
+  throws(i32).handle raise { (error) -> error } action {
       throw(42)
     }
 }
 
 let tried_throw_sugar_function(): i32 = {
-  let result: Result(i32)(i32) = try {
+  let result: result(i32)(i32) = try {
     fail_with_throw_sugar()
   }
   match result
-    { Ok(value) -> value }
-    { Err(error) -> error }
+    { ok(value) -> value }
+    { err(error) -> error }
 }
 
 let tried_throw_sugar_action(): i32 = {
-  let result: Result(i32)(i32) = try {
+  let result: result(i32)(i32) = try {
     throw(42)
   }
   match result
-    { Ok(value) -> value }
-    { Err(error) -> error }
+    { ok(value) -> value }
+    { err(error) -> error }
 }
 
 let inferred_try_from_throw_sugar_function(): i32 = {
@@ -56,17 +56,17 @@ let inferred_try_from_throw_sugar_function(): i32 = {
     choose_with_throw_sugar(true)
   }
   match result
-    { Ok(value) -> value }
-    { Err(error) -> error }
+    { ok(value) -> value }
+    { err(error) -> error }
 }
 
 let handled_async(): i32 = {
   let mut seen = 0
-  let value = Async.handle suspend { (resume) ->
+  let value = async_effect.handle suspend { (resume) ->
       seen = 1;
       resume(())
     } action {
-      Async.suspend();
+      async_effect.suspend();
       1
     }
   value + seen + 40

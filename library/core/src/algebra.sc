@@ -2,14 +2,14 @@
 // constructor sorts. Law documentation lives in the standard library docs; the
 // compiler does not attempt to prove associativity or identity laws.
 /// Types with an associative binary combination operation.
-pub let Semigroup = trait {
+pub let semigroup = trait {
   /// Combines two values into one value of the same type.
-  let combine(left: Self, right: Self): Self
+  let combine(left: self, right: self): self
 }
 
 /// Semigroups that also provide an identity element.
-pub let Monoid = trait
-where Self: Semigroup {
+pub let monoid = trait
+where self: semigroup {
   /// Returns the identity element for `combine`.
-  let empty(): Self
+  let empty(): self
 }

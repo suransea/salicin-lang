@@ -1,5 +1,5 @@
 let main(): i32 = {
-  let empty: Array(i32)(0) = []
+  let empty: array(i32)(0) = []
   42
 }
 

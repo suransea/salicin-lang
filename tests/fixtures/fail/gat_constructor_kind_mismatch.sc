@@ -1,13 +1,13 @@
-let Wrong(T: type): type = T
+let wrong(comptime t: type): type = t
 
-let Lend = trait {
-  let Item(A: access): type
+let lend = trait {
+  let item(comptime a: access): type
 }
 
-let Cell = struct { value: i32 }
+let cell = struct { value: i32 }
 
-extend Cell: Lend {
-  let Item = Wrong
+extend cell: lend {
+  let item = wrong
 }
 
 let main(): i32 = { 0 }

@@ -1,33 +1,33 @@
-let Result = std.Result
-let Throws = std.error.Throws
-let Raise = std.flow.Raise
+let result = std.result
+let throws = std.error.throws
+let raise_operator = std.flow.raise_operator
 
-let Stored = enum {
-  Value(i32),
-  Failure(bool),
+let stored = enum {
+  value(i32),
+  failure(bool),
 }
 
-extend Stored: Raise {
-  let Output = i32
-  let Error = bool
+extend stored: raise_operator {
+  let output = i32
+  let error = bool
 
-  let raise(move self): i32 with(Throws(bool)) = {
+  let raise(move self): i32 with(throws(bool)) = {
     match self
-      { Value(value) -> value }
-      { Failure(error) -> throw(error) }
+      { value(value) -> value }
+      { failure(error) -> throw(error) }
   }
 }
 
-let extract(move stored: Stored): i32 with(Throws(bool)) = {
+let extract(move stored: stored): i32 with(throws(bool)) = {
   stored!
 }
 
-let extract_direct(move stored: Stored): i32 with(Throws(bool)) = {
+let extract_direct(move stored: stored): i32 with(throws(bool)) = {
   stored.raise()
 }
 
-let extract_local(): i32 with(Throws(bool)) = {
-  let stored: Stored = Stored.Value(42)
+let extract_local(): i32 with(throws(bool)) = {
+  let stored: stored = stored.value(42)
   stored.raise()
 }
 
@@ -36,7 +36,7 @@ let main(): i32 = {
     extract_local()
   }!!
   let failure = try {
-    extract(Stored.Failure(false))
+    extract(stored.failure(false))
   } ?? 0
   success + failure
 }

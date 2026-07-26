@@ -59,7 +59,11 @@ Implemented lexical and declaration features include:
 - canonical private `builtin`, `foreign`, and `test` syntax declarations plus
   identity-validated passing and control-exit contracts;
 - explicit erased inputs for those syntax declarations: `foreign(ABI: abi)` selects the finite
-  `abi.c` value and `test(name: string)(body)` receives compiler-owned UTF-8 metadata.
+  `abi.c` value and `test(Name: String)(body)` receives compiler-owned UTF-8 metadata.
+
+Built-in and nominal types, together with traits, use `PascalCase`. Functions, values, modules,
+and ordinary sorts use `snake_case`; dual-use `usize` and `String` keep their type spelling in
+compile-parameter positions.
 
 An abstract sort is distinct from a defined empty sort. Bare `let Name = sort` and the former
 top-level `= type` forms are rejected. Primitive integer types use declarations such as
@@ -75,7 +79,8 @@ Implemented type-system features include:
 - all fixed-width signed and unsigned integers plus pointer-width `isize` and `usize`;
 - tuples, arrays, borrows, raw pointers, function types, structs, and enums;
 - transparent type aliases and partially applied type constructors;
-- compile-time `type`, `usize`, `region`, `effect`, `access`, closed-value, constructor, and
+- compile-time `type`, `usize`, `String`, `region`, `effect`, `effects`, `access`,
+  closed-value, constructor, and
   parameter-schema arguments;
 - source-level compile-time diagnostics that identify binder, sort, owner, and parameter group;
 - curried compile-time and runtime parameter groups;
@@ -93,7 +98,7 @@ Generic associated constructors preserve parameter sorts and groups in trait dec
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-Ordinary pure `usize`/`bool` functions can be evaluated in dependent array-length expressions.
+Ordinary pure `usize`/`Bool` functions can be evaluated in dependent array-length expressions.
 The static expression IR excludes runtime-only operations, substitutes generic `usize` values
 before evaluation, checks arithmetic, and diagnoses nontermination through a bounded evaluator.
 
@@ -288,7 +293,7 @@ validated ASCII link names, every Salicin integer width, raw pointers, and
 Unit results. Foreign calls require `unsafe`. `struct(c)` layout is verified
 against host Clang through nested, array, integer, and pointer fields; C reads
 and writes those records behind raw pointers. By-value aggregates, arrays,
-bool, borrows, and typed function pointers remain rejected. A frozen Salicin
+Bool, borrows, and typed function pointers remain rejected. A frozen Salicin
 Registry transport, a frozen ABI, and a precompiled distribution format are
 not implemented.
 

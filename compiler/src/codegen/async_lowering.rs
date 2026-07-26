@@ -343,7 +343,7 @@ impl Analyzer {
                 return lowered;
             };
             if closure.result != Ty::Bool {
-                self.error("a recurring async `while` condition must produce `bool`");
+                self.error("a recurring async `while` condition must produce `Bool`");
                 return super::lower::error_expr();
             }
             if closure
@@ -901,7 +901,7 @@ impl Analyzer {
             .expect("trait method candidate has an implementation");
         let output = implementation
             .associated_types
-            .get("Output")
+            .get("output")
             .cloned()
             .expect("validated Future implementation has Output");
         let poll_function = implementation
@@ -1079,8 +1079,8 @@ impl Analyzer {
             trait_key.clone(),
             TraitImplInfo {
                 key: trait_key,
-                associated_types: HashMap::from([("Output".to_owned(), output.clone())]),
-                associated_type_sources: HashMap::from([("Output".to_owned(), output_source)]),
+                associated_types: HashMap::from([("output".to_owned(), output.clone())]),
+                associated_type_sources: HashMap::from([("output".to_owned(), output_source)]),
                 methods: HashMap::from([("poll".to_owned(), poll_function.clone())]),
                 access,
             },
@@ -1188,7 +1188,7 @@ impl Analyzer {
                 name: name.clone(),
                 variants: vec![
                     VariantLayout {
-                        name: "Continue".to_owned(),
+                        name: "continue_effect".to_owned(),
                         fields: vec![FieldLayout {
                             name: "carry".to_owned(),
                             ty: carry.clone(),
@@ -1198,7 +1198,7 @@ impl Analyzer {
                         named: false,
                     },
                     VariantLayout {
-                        name: "Break".to_owned(),
+                        name: "break_effect".to_owned(),
                         fields: vec![FieldLayout {
                             name: "output".to_owned(),
                             ty: output.clone(),
@@ -1346,8 +1346,8 @@ impl Analyzer {
             trait_key.clone(),
             TraitImplInfo {
                 key: trait_key,
-                associated_types: HashMap::from([("Output".to_owned(), future.output.clone())]),
-                associated_type_sources: HashMap::from([("Output".to_owned(), output_source)]),
+                associated_types: HashMap::from([("output".to_owned(), future.output.clone())]),
+                associated_type_sources: HashMap::from([("output".to_owned(), output_source)]),
                 methods: HashMap::from([("poll".to_owned(), poll_function.clone())]),
                 access: self.nominal_accesses[name].clone(),
             },

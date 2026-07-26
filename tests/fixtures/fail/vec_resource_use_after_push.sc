@@ -1,13 +1,13 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
-let Resource = struct { value: i32 }
+let resource = struct { value: i32 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {}}
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {}}
 
 let main(): i32 = {
-  let mut values: Vec(Resource) = Vec(Resource).new()
-  let resource = Resource { value: 42 }
+  let mut values: vec(resource) = vec(resource).new()
+  let resource = resource { value: 42 }
   values.push(resource)
   resource.value
 }

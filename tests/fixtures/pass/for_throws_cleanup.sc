@@ -1,51 +1,51 @@
-let Option = std.Option
-let Result = std.Result
-let Throws = std.error.Throws
-let Iterator = std.iter.Iterator
-let IntoIterator = std.iter.IntoIterator
-let OwnedItem = std.iter.OwnedItem
+let option = std.option
+let result = std.result
+let throws = std.error.throws
+let iterator = std.iter.iterator
+let into_iterator = std.iter.into_iterator
+let owned_item = std.iter.owned_item
 
-let Counter = struct {
+let counter = struct {
   current: i32,
   end: i32,
-  drops: Ptr(mut)(i32),
+  drops: ptr(mut)(i32),
 }
 
-extend Counter: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend counter: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-extend Counter: Iterator {
-  let Item = OwnedItem(i32)
+extend counter: iterator {
+  let item = owned_item(i32)
 
-  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
+  let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
     if self.current < self.end {
       let value = self.current
       self.current = self.current + 1
-      Some(value)
+      some(value)
     } else {
-      None
+      none
     }
   }
 }
 
-extend Counter: IntoIterator {
-  let IntoIter = Counter
+extend counter: into_iterator {
+  let into_iter = counter
 
-  let into_iter(move self)(): Counter = {
+  let into_iter(move self)(): counter = {
     self
   }
 }
 
-let check(value: i32): () with(Throws(bool)) = {
+let check(value: i32): () with(throws(bool)) = {
   if value < 0 { throw(true) } else { () }
 }
 
-let visit(move counter: Counter): i32 with(Throws(bool)) = {
+let visit(move counter: counter): i32 with(throws(bool)) = {
   for counter { value ->
     check(value)
   }
@@ -58,11 +58,11 @@ let main(): i32 = {
   }
   unsafe { *drops = 0 }
 
-  let success: Result(bool)(i32) = try {
-    visit(Counter { current: 0, end: 2, drops: drops })
+  let success: result(bool)(i32) = try {
+    visit(counter { current: 0, end: 2, drops: drops })
   }
-  let failure: Result(bool)(i32) = try {
-    visit(Counter { current: -1, end: 2, drops: drops })
+  let failure: result(bool)(i32) = try {
+    visit(counter { current: -1, end: 2, drops: drops })
   }
   let drop_count = unsafe { *drops }
 

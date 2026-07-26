@@ -1,8 +1,8 @@
-let String = std.string.String
-let Vec = std.vec.Vec
+let string = std.string.string
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let text = String { bytes: Vec(u8).new() }
+  let text = string { bytes: vec(u8).new() }
   let length = text.len_bytes()
   0
 }

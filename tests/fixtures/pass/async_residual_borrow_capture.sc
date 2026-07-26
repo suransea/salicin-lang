@@ -1,17 +1,17 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
+let future = std.async.future
+let poll = std.async.poll
 
-let Ask = effect {
+let ask = effect {
   let ask(): i32
 }
 
-let request(): i32 with(Ask) = {
-  Ask.ask()
+let request(): i32 with(ask) = {
+  ask.ask()
 }
 
-let poll_once(E: effects, F: type, T: type)
-  (future: borrow(mut)(F)): Poll(T) with(E)
-where F: Future(E, Output = T) = {
+let poll_once(comptime e: effects, comptime f: type, comptime t: type)
+  (future: borrow(mut)(f)): poll(t) with(e)
+where f: future(e, output = t) = {
   future.poll()
 }
 
@@ -19,11 +19,11 @@ let program(offset: borrow(i32)): i32 = {
   let mut future = async {
     request() + offset
   }
-  Ask.handle ask { (resume) -> resume(40) } action {
-      let polled: Poll(i32) = poll_once(future)
+  ask.handle ask { (resume) -> resume(40) } action {
+      let polled: poll(i32) = poll_once(future)
       match polled
-        { Ready(value) -> value }
-        { Pending -> 0 }
+        { ready(value) -> value }
+        { pending -> 0 }
     }
 }
 

@@ -11,7 +11,3 @@ pub let effects: sort
 pub let parameters: sort
 /// Sort of compiler-consumed UTF-8 metadata strings.
 pub let string: sort
-/// Calling conventions accepted by foreign declarations.
-pub let abi = sort {
-  c
-}

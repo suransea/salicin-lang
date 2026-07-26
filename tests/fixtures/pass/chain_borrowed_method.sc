@@ -1,12 +1,12 @@
-let Option = std.Option
+let option = std.option
 
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number {
-  let read(self: borrow(Self))(): i32 = { self.value }
+extend number {
+  let read(self: borrow(self))(): i32 = { self.value }
 }
 
-let main(): i32 = { Option(Number).Some(Number { value: 42 })?.read() ?? 0 }
+let main(): i32 = { option(number).some(number { value: 42 })?.read() ?? 0 }
 
 test("chain_borrowed_method.sc") {
   main() == 42

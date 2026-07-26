@@ -1,10 +1,10 @@
-let Number = struct { value: i32 }
+let number = struct { value: i32 }
 
-extend Number {
-  let make(value: i32): Number = { Number { value: value } }
+extend number {
+  let make(value: i32): number = { number { value: value } }
 }
 
 let main(): i32 = {
-  let make = Number.make
+  let make = number.make
   make(42).value
 }

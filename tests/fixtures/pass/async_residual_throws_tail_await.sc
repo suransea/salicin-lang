@@ -1,42 +1,42 @@
-let Future = std.async.Future
-let Poll = std.async.Poll
-let Result = std.Result
-let Throws = std.error.Throws
+let future = std.async.future
+let poll = std.async.poll
+let result = std.result
+let throws = std.error.throws
 
-let Resource = struct {
-  drops: Ptr(mut)(i32),
+let resource = struct {
+  drops: ptr(mut)(i32),
 }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
     }
   }
 }
 
-let Step = struct {
+let step = struct {
   polls: i32,
   value: i32,
-  resource: Resource,
+  resource: resource,
 }
 
-extend Step: Future(()) {
-  let Output = i32
+extend step: future(()) {
+  let output = i32
 
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))
-    (): Poll(i32) = {
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))
+    (): poll(i32) = {
     if self.polls == 0 {
       self.polls = 1
-      Poll(i32).Pending
+      poll(i32).pending
     } else {
-      Poll(i32).Ready(self.value)
+      poll(i32).ready(self.value)
     }
   }
 }
 
-let choose(fail: bool): i32 with(Throws(bool)) = {
+let choose(fail: bool): i32 with(throws(bool)) = {
   if fail {
     throw true
   } else {
@@ -44,48 +44,48 @@ let choose(fail: bool): i32 with(Throws(bool)) = {
   }
 }
 
-let make_step(move resource: Resource, fail: bool): Step with(Throws(bool)) = {
-  Step { polls: 0, value: choose(fail), resource: resource }
+let make_step(move resource: resource, fail: bool): step with(throws(bool)) = {
+  step { polls: 0, value: choose(fail), resource: resource }
 }
 
-let run_success(drops: Ptr(mut)(i32)): i32 = {
-  let result: Result(bool)(i32) = try {
-    let resource = Resource { drops: drops }
+let run_success(drops: ptr(mut)(i32)): i32 = {
+  let result: result(bool)(i32) = try {
+    let resource = resource { drops: drops }
     let mut future = async {
       await make_step(resource, false)
     }
     let first = future.poll()
     let second = future.poll()
     match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
+      { pending -> match second
+        { ready(value) -> value }
+        { pending -> 0 } }
+      { ready(_) -> 0 }
   }
 
   match result
-    { Ok(value) -> if value == 40 { 42 } else { 0 } }
-    { Err(_) -> 0 }
+    { ok(value) -> if value == 40 { 42 } else { 0 } }
+    { err(_) -> 0 }
 }
 
-let run_failure(drops: Ptr(mut)(i32)): i32 = {
-  let result: Result(bool)(i32) = try {
-    let resource = Resource { drops: drops }
+let run_failure(drops: ptr(mut)(i32)): i32 = {
+  let result: result(bool)(i32) = try {
+    let resource = resource { drops: drops }
     let mut future = async {
       await make_step(resource, true)
     }
     let first = future.poll()
     let second = future.poll()
     match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
+      { pending -> match second
+        { ready(value) -> value }
+        { pending -> 0 } }
+      { ready(_) -> 0 }
   }
 
   match result
-    { Ok(_) -> 0 }
-    { Err(error) -> if error { 42 } else { 0 } }
+    { ok(_) -> 0 }
+    { err(error) -> if error { 42 } else { 0 } }
 }
 
 let main(): i32 = {

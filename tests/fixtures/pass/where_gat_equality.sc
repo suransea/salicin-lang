@@ -1,26 +1,26 @@
-let Identity(T: type): type = T
+let identity(comptime t: type): type = t
 
-let Factory = trait {
-  let Item(T: type): type
+let factory = trait {
+  let item(comptime t: type): type
 
-  let make(self: borrow(Self))(value: i32): Item(i32)
+  let make(self: borrow(self))(value: i32): item(i32)
 }
 
-let Cell = struct {}
+let cell = struct {}
 
-extend Cell: Factory {
-  let Item = Identity
+extend cell: factory {
+  let item = identity
 
-  let make(self: borrow(Self))(value: i32): i32 = { value }
+  let make(self: borrow(self))(value: i32): i32 = { value }
 }
 
-let make_i32(T: type)(value: borrow(T)): i32
-where T: Factory(Item(U: type) = U) = {
+let make_i32(comptime t: type)(value: borrow(t)): i32
+where t: factory(item(comptime u: type) = u) = {
   value.make(42)
 }
 
 let main(): i32 = {
-  let cell = Cell {}
+  let cell = cell {}
   make_i32(cell)
 }
 

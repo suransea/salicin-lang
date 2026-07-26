@@ -48,7 +48,7 @@ impl Analyzer {
             ));
             return None;
         }
-        if group[0].label.as_deref().is_some_and(|label| label != "T") {
+        if group[0].label.as_deref().is_some_and(|label| label != "t") {
             self.error(format!(
                 "unknown compile-time parameter `{}` in `{owner}`; expected `T`",
                 group[0].label.as_deref().unwrap_or_default()
@@ -807,7 +807,7 @@ impl Analyzer {
                     [CallArg {
                         label,
                         value: Expr::Name(name),
-                    }] if label.as_deref().is_none_or(|label| label == "A")
+                    }] if label.as_deref().is_none_or(|label| label == "a")
                         && access_mutability(name).is_some() =>
                     {
                         access_mutability(name)
@@ -817,7 +817,7 @@ impl Analyzer {
                 if let Some(mutable) = access {
                     (mutable, None, *runtime)
                 } else {
-                    let Some(pointee) = self.explicit_raw_pointee("Ptr", first, context) else {
+                    let Some(pointee) = self.explicit_raw_pointee("ptr", first, context) else {
                         return error_expr();
                     };
                     (false, Some(pointee), *runtime)
@@ -836,11 +836,11 @@ impl Analyzer {
                     self.error("`Ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 };
-                if label.as_deref().is_some_and(|label| label != "A") {
+                if label.as_deref().is_some_and(|label| label != "a") {
                     self.error("`Ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 }
-                let Some(pointee) = self.explicit_raw_pointee("Ptr", pointee, context) else {
+                let Some(pointee) = self.explicit_raw_pointee("ptr", pointee, context) else {
                     return error_expr();
                 };
                 (mutable, Some(pointee), *runtime)

@@ -1,4 +1,4 @@
-let invalid(T: type)(value: T): T = {
+let invalid(comptime t: type)(value: t): t = {
   let first = value
   value
 }

@@ -1,22 +1,22 @@
-let Abort = effect {
+let abort = effect {
   let stop(): i32
 }
 
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let consume(move resource: Resource): i32 = { 0 }
+let consume(move resource: resource): i32 = { 0 }
 
-let program(counter: Ptr(mut)(i32)): i32 with(Abort) = {
-  let resource = Resource { counter: counter }
-  let value = Abort.stop()
+let program(counter: ptr(mut)(i32)): i32 with(abort) = {
+  let resource = resource { counter: counter }
+  let value = abort.stop()
   value + consume(resource)
 }
 
@@ -25,7 +25,7 @@ let main(): i32 = {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result = Abort.handle stop { (resume) -> 41 } action {
+  let result = abort.handle stop { (resume) -> 41 } action {
       program(counter)
     }
   let drops = unsafe { *counter }

@@ -1,26 +1,26 @@
-let Neg = std.ops.Neg
-let Not = std.ops.Not
+let neg_operator = std.ops.neg_operator
+let not_operator = std.ops.not_operator
 
-let Number = struct { value: i32 }
-let Flag = struct { value: bool }
+let number = struct { value: i32 }
+let flag = struct { value: bool }
 
-extend Number: Neg {
-  let Output = i32
+extend number: neg_operator {
+  let output = i32
   let neg(self)(): i32 = { -self.value }}
 
-extend Flag: Not {
-  let Output = i32
+extend flag: not_operator {
+  let output = i32
   let not(self)(): i32 = {
     if self.value { 0 } else { 42 }
   }
 }
 
-let negate(T: type)(move value: T): T where T: Neg(Output = T) = { -value }
-let invert(T: type)(move value: T): T where T: Not(Output = T) = { !value }
+let negate(comptime t: type)(move value: t): t where t: neg_operator(output = t) = { -value }
+let invert(comptime t: type)(move value: t): t where t: not_operator(output = t) = { !value }
 
 let main(): i32 = {
   if invert(false) {
-    !Flag { value: false } + -Number { value: 0 } + negate(0)
+    !flag { value: false } + -number { value: 0 } + negate(0)
   } else {
     0
   }

@@ -1,12 +1,12 @@
-let Number = enum {
-  Value( value: i32 ),
-  Empty,
+let number = enum {
+  value( value: i32 ),
+  empty,
 }
 
-let classify(value: Number): i32 = { match value
-    { Number.Value( value: true ) -> 42 }
-    { Number.Value( value: _ ) -> 0 }
-    { Number.Empty -> 0 }
+let classify(value: number): i32 = { match value
+    { number.value( value: true ) -> 42 }
+    { number.value( value: _ ) -> 0 }
+    { number.empty -> 0 }
 }
 
-let main(): i32 = { classify(Number.Value( value: 42 )) }
+let main(): i32 = { classify(number.value( value: 42 )) }

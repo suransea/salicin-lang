@@ -1,7 +1,7 @@
-let Vec = std.vec.Vec
+let vec = std.vec.vec
 
 let main(): i32 = {
-  let values: Vec(i32) = Vec(i32).new()
+  let values: vec(i32) = vec(i32).new()
   values.read(0)
 }
 

@@ -1,17 +1,17 @@
 /// One-shot value passed to a handler clause for resuming suspended work.
-pub let Continuation(Input: type, Output: type): type = builtin()
+pub let continuation(comptime input: type, comptime output: type): type = builtin()
 
 /// Owned, erased action that may perform a handled algebraic effect.
-pub let EffectCallable(Input: type, Output: type, Answer: type): type = builtin()
+pub let effect_callable(comptime input: type, comptime output: type, comptime answer: type): type = builtin()
 
 /// Protocol anchor for compiler-derived effect handlers.
 /// Every source `effect` declaration automatically satisfies this trait; the
 /// operation clauses and `handle` member are synthesized from that operation set.
-pub let Handle = trait(Self: effect) {
+pub let handle = trait(comptime self: effect) {
   /// Clause parameter schema synthesized from the operations of `Self`.
-  let Clauses(Value: type, Answer: type): parameters
+  let clauses(comptime value: type, comptime answer: type): parameters
   /// Handles `Self` around `action`, leaving `Rest` as the residual effect row.
-  let handle(Value: type, Answer: type, Rest: effects)
-    ...Clauses(Value, Answer)
-    (move action: (): Value with(Self, Rest)): Answer with(Rest)
+  let handle(comptime value: type, comptime answer: type, comptime rest: effects)
+    ...clauses(value, answer)
+    (move action: (): value with(self, rest)): answer with(rest)
 }

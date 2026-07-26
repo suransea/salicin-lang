@@ -1,18 +1,18 @@
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let Cell(T: type) = struct { value: T }
+let cell(comptime t: type) = struct { value: t }
 
-extend(T: type) Cell(T) {
-  let new(move value: T): Cell(T) = { Cell { value: value } }
-  let take(move self)(): T = { self.value }
+extend(comptime t: type) cell(t) {
+  let new(move value: t): cell(t) = { cell { value: value } }
+  let take(move self)(): t = { self.value }
 }
 
 let main(): i32 = {
@@ -23,7 +23,7 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let cell = Cell.new(Resource { counter: counter })
+    let cell = cell.new(resource { counter: counter })
     let resource = cell.take()
   }
   let drops = unsafe {

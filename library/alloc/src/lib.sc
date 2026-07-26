@@ -1,4 +1,4 @@
-pub let Box = alloc.boxed.Box
-pub let Vec = alloc.vec.Vec
-pub let String = alloc.string.String
-pub let FromUtf8Error = alloc.string.FromUtf8Error
+pub let box = alloc.boxed.box
+pub let vec = alloc.vec.vec
+pub let string = alloc.string.string
+pub let from_utf8_error = alloc.string.from_utf8_error

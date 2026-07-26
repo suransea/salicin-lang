@@ -1,22 +1,22 @@
-let Mark = enum {
-  Value( value: i32 ),
-  Empty,
+let mark = enum {
+  value( value: i32 ),
+  empty,
 }
 
-extend Mark: Copy {}
+extend mark: copyable {}
 
-let Pixel = struct { value: i32 }
+let pixel = struct { value: i32 }
 
-extend Pixel: Copy {}
+extend pixel: copyable {}
 
-let score(mark: Mark): i32 = { match mark
-    { Mark.Value( value: value ) -> value }
-    { Mark.Empty -> 0 }
+let score(mark: mark): i32 = { match mark
+    { mark.value( value: value ) -> value }
+    { mark.empty -> 0 }
 }
 
 let main(): i32 = {
-  let mark = Mark.Value( value: 10 )
-  let pixels: Array(Pixel)(2) = [Pixel { value: 20 }, Pixel { value: 2 }]
+  let mark = mark.value( value: 10 )
+  let pixels: array(pixel)(2) = [pixel { value: 20 }, pixel { value: 2 }]
   score(mark) + score(mark) + pixels[0].value + pixels[1].value
 }
 

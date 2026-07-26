@@ -1,14 +1,14 @@
-let Maybe(T: type) = enum {
-  Some(T),
-  None,
+let maybe(comptime t: type) = enum {
+  some(t),
+  none,
 }
 
-let unwrap(move value: Maybe(i32)): i32 = { match value
-    { Some(item) -> item }
-    { None -> 0 }
+let unwrap(move value: maybe(i32)): i32 = { match value
+    { some(item) -> item }
+    { none -> 0 }
 }
 
-let main(): i32 = { unwrap(Maybe(i32).Some(42)) }
+let main(): i32 = { unwrap(maybe(i32).some(42)) }
 
 test("generic_enum_match.sc") {
   main() == 42

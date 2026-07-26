@@ -1,29 +1,29 @@
-let Abort = effect {
+let abort = effect {
   let stop(): i32
 }
 
-let Resource = struct { counter: Ptr(mut)(i32) }
+let resource = struct { counter: ptr(mut)(i32) }
 
-extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = {
+extend resource: droppable {
+  let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
     }
   }
 }
 
-let consume(move resource: Resource): i32 = { 0 }
+let consume(move resource: resource): i32 = { 0 }
 
-let run(move action: (): i32 with(Abort)): i32 = {
-  Abort.handle stop { (resume) -> 41 } action {
+let run(move action: (): i32 with(abort)): i32 = {
+  abort.handle stop { (resume) -> 41 } action {
       action()
     }
 }
 
-let execute(counter: Ptr(mut)(i32)): i32 = {
-  let resource = Resource { counter: counter }
-  let action: (): i32 with(Abort) = { () ->
-    Abort.stop() + consume(resource)
+let execute(counter: ptr(mut)(i32)): i32 = {
+  let resource = resource { counter: counter }
+  let action: (): i32 with(abort) = { () ->
+    abort.stop() + consume(resource)
   }
   let alias = action
   let padding = 0

@@ -1,8 +1,8 @@
-let Slice = std.Slice
+let slice = std.slice
 
 let main(): i32 = {
   let values = [1, 2]
-  let slice: borrow(Slice(i32)) = borrow(values)
+  let slice: borrow(slice(i32)) = borrow(values)
   slice[2]
 }
 

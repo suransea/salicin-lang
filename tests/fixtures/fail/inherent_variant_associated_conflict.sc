@@ -1,9 +1,9 @@
-let Choice = enum {
-  Answer,
+let choice = enum {
+  answer,
 }
 
-extend Choice {
-  let Answer = 42
+extend choice {
+  let answer = 42
 }
 
 let main(): i32 = { 0 }

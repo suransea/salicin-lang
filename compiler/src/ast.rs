@@ -167,7 +167,7 @@ pub struct TraitDef {
 
 pub fn default_trait_self_parameter() -> CompileParam {
     CompileParam {
-        name: "Self".to_owned(),
+        name: "self".to_owned(),
         kind: Sort::Type,
         default: None,
     }
