@@ -1,6 +1,12 @@
 // Private bootstrap marker for declarations whose definitions are supplied by
 // the compiler. Semantic validation gives each use its declaration annotation.
-let builtin(): Never = builtin()
+let builtin() = builtin()
+
+// Private syntax contracts. `foreign(c, ...)` supplies ABI metadata to a
+// declaration, while `test("name") { ... }` supplies compile-time runner
+// metadata around a pure boolean action.
+let foreign(): Never = builtin()
+let test(move body: (): bool): () = builtin()
 
 pub let Never = core.never.Never
 pub let Move = core.marker.Move

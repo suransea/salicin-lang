@@ -64,7 +64,9 @@ test_registration =
 
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
-identifier outside this top-level form.
+identifier outside this top-level form. The edition-owned
+`let test(move body: (): bool): () = builtin()` declaration validates the
+body contract; the string is compile-time runner metadata.
 
 ### 2.1 Let Declarations
 
@@ -305,10 +307,18 @@ builtin_definition =
 ```
 
 The core-private bootstrap has the exact shape
-`let builtin(): Never = builtin()`. Every other marker must match a known
+`let builtin() = builtin()`. It is the sole compiler definition that omits a
+result annotation; validation assigns its uninhabited bootstrap result.
+Every other marker must match a known
 compiler-owned edition contract and is removed before code generation.
 Trait requirements, effect operations, and user opaque types remain
 bodyless declarations rather than builtin definitions.
+
+The root `core` module also contains the private declarations
+`let foreign(): Never = builtin()` and
+`let test(move body: (): bool): () = builtin()`. They authorize the
+`foreign(c, ...)` initializer and top-level test registration respectively;
+ABI/link and test-name strings remain syntax metadata.
 
 ## 3. Types
 

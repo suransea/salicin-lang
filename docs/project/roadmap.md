@@ -56,9 +56,10 @@ The completed representation and ABI milestone established three orthogonal sour
 - each compiler-owned core declaration uses a complete core-private `builtin()` initializer,
   including compiler-defined types and type constructors.
 
-The bootstrap declaration is `let builtin(): Never = builtin()`. Semantic analysis treats its use
-as a declaration-definition marker typed by the declaration annotation, not as ordinary runtime
-`Never` coercion. Every marker except that bootstrap must be resolved before code generation.
+The bootstrap declaration is `let builtin() = builtin()`. Semantic analysis treats its use
+as a declaration-definition marker rather than ordinary runtime recursion; edition validation
+assigns its uninhabited result. Every marker except that bootstrap must be resolved before code
+generation.
 Trait requirements remain bodyless; user opaque types are a separate design problem.
 
 This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not

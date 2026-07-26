@@ -56,6 +56,8 @@ Implemented lexical and declaration features include:
 - ordinary closed enums usable as compile-time value types;
 - explicit core-private `builtin()` initializers for compiler-owned
   functions, types, type constructors, and extension methods.
+- canonical private `builtin`, `foreign`, and `test` syntax declarations plus
+  identity-validated passing and control-exit contracts.
 
 An abstract domain is distinct from a defined empty domain. Bare `let Name = domain` and the former
 top-level `= type` forms are rejected. Primitive integer types use declarations such as

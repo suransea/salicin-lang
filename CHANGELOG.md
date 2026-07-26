@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Unified passing modifiers, control-exit effects/functions, and lexical
+  `defer` under the edition lang-item registry instead of special-name
+  exceptions. Added canonical private declarations for `foreign(c, ...)` and
+  `test("name") { ... }`, and changed the unique compiler-definition bootstrap
+  to the self-recursive `let builtin() = builtin()` contract.
+
 ## 0.208.0 - 2026-07-26
 
 - Added schema-1 SHA-256 incremental input fingerprints and the read-only

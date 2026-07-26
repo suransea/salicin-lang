@@ -126,7 +126,9 @@ test("arithmetic") {
 
 `test` is contextual in this position. The form registers the body with the
 test target during compilation; it is not an ordinary runtime call and does
-not introduce a source-visible declaration. The name must be a non-empty
+not introduce a user binding. The form is authorized by the private edition
+contract `let test(move body: (): bool): () = builtin()`; the string remains
+compile-time runner metadata rather than a runtime argument. The name must be a non-empty
 string literal and is used in diagnostics. Registrations are private to their
 source package and cannot have visibility or attributes.
 
@@ -171,12 +173,13 @@ complete initializer `builtin()`. The bootstrap declaration is private and
 has the unique exact shape:
 
 ```sc fragment
-let builtin(): Never = builtin()
+let builtin() = builtin()
 ```
 
-The initializer marks the containing declaration; it is not an ordinary call
-whose `Never` result is coerced to the annotation. Semantic analysis obtains
-the definition's kind or type from that annotation, validates the complete
+This unique self-recursive spelling bootstraps the compiler-definition marker;
+it is not an ordinary call and edition validation assigns its uninhabited
+`Never` result. Semantic analysis obtains each other definition's kind or type
+from its annotation, validates the complete
 edition-owned signature, and resolves the marker before code generation.
 Compiler-owned types and type constructors use the same form:
 
@@ -191,6 +194,17 @@ and globals cannot use it. Unknown core markers are invalid. Trait
 requirements, effect operations, and user opaque types are genuinely
 abstract and remain bodyless; they do not receive builtin default
 implementations.
+
+The same private root module declares the other syntax-owned contracts:
+
+```sc fragment
+let foreign(): Never = builtin()
+let test(move body: (): bool): () = builtin()
+```
+
+`foreign(c, ...)` supplies statically validated ABI metadata to its containing
+function declaration; `test("name") { ... }` supplies compile-time runner
+metadata and a pure boolean body. Neither metadata payload is a runtime value.
 
 ## 4. Types and Compile-Time Parameters
 

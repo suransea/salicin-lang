@@ -150,6 +150,9 @@ pub let Raise = trait {
 /// `core` bundle.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum LangItemKind {
+    Builtin,
+    Foreign,
+    Test,
     Option,
     Result,
     Never,
@@ -212,6 +215,8 @@ pub enum LangItemKind {
     AccessType,
     EffectDomain,
     ParametersDomain,
+    CopyParameters,
+    MoveParameters,
     BorrowTypeForm,
     BorrowValueForm,
     ArrayTypeForm,
@@ -223,7 +228,15 @@ pub enum LangItemKind {
     Continuation,
     EffectCallable,
     Handle,
+    BreakEffect,
+    ContinueEffect,
+    ReturnEffect,
     Attempt,
+    Break,
+    BreakUnit,
+    Continue,
+    Return,
+    ReturnUnit,
     Do,
     DoWhile,
     Try,
@@ -234,12 +247,16 @@ pub enum LangItemKind {
     If,
     Match,
     For,
+    Defer,
     Iterator,
     IntoIterator,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 86] = [
+    const ALL: [Self; 100] = [
+        Self::Builtin,
+        Self::Foreign,
+        Self::Test,
         Self::Option,
         Self::Result,
         Self::Never,
@@ -302,6 +319,8 @@ impl LangItemKind {
         Self::AccessType,
         Self::EffectDomain,
         Self::ParametersDomain,
+        Self::CopyParameters,
+        Self::MoveParameters,
         Self::BorrowTypeForm,
         Self::BorrowValueForm,
         Self::ArrayTypeForm,
@@ -313,7 +332,15 @@ impl LangItemKind {
         Self::Continuation,
         Self::EffectCallable,
         Self::Handle,
+        Self::BreakEffect,
+        Self::ContinueEffect,
+        Self::ReturnEffect,
         Self::Attempt,
+        Self::Break,
+        Self::BreakUnit,
+        Self::Continue,
+        Self::Return,
+        Self::ReturnUnit,
         Self::Do,
         Self::DoWhile,
         Self::Try,
@@ -324,12 +351,16 @@ impl LangItemKind {
         Self::If,
         Self::Match,
         Self::For,
+        Self::Defer,
         Self::Iterator,
         Self::IntoIterator,
     ];
 
     pub const fn source_name(self) -> &'static str {
         match self {
+            Self::Builtin => "builtin",
+            Self::Foreign => "foreign",
+            Self::Test => "test",
             Self::Option => "Option",
             Self::Result => "Result",
             Self::Never => "Never",
@@ -392,6 +423,8 @@ impl LangItemKind {
             Self::AccessType => "access",
             Self::EffectDomain => "effect",
             Self::ParametersDomain => "parameters",
+            Self::CopyParameters => "copy",
+            Self::MoveParameters => "move",
             Self::BorrowTypeForm => "borrow",
             Self::BorrowValueForm => "borrow",
             Self::ArrayTypeForm => "Array",
@@ -402,7 +435,13 @@ impl LangItemKind {
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
+            Self::BreakEffect => "Break",
+            Self::ContinueEffect => "Continue",
+            Self::ReturnEffect => "Return",
             Self::Attempt => "Attempt",
+            Self::Break | Self::BreakUnit => "break",
+            Self::Continue => "continue",
+            Self::Return | Self::ReturnUnit => "return",
             Self::Do => "do",
             Self::DoWhile => "do",
             Self::Try => "try",
@@ -413,6 +452,7 @@ impl LangItemKind {
             Self::If => "if",
             Self::Match => "match",
             Self::For => "for",
+            Self::Defer => "defer",
             Self::Iterator => "Iterator",
             Self::IntoIterator => "IntoIterator",
         }
@@ -426,7 +466,12 @@ impl LangItemKind {
             | Self::Poll
             | Self::PartialOrdering
             | Self::Attempt => "enum",
-            Self::UnsafeEffect | Self::ThrowsEffect | Self::AsyncEffect => "effect",
+            Self::UnsafeEffect
+            | Self::ThrowsEffect
+            | Self::AsyncEffect
+            | Self::BreakEffect
+            | Self::ContinueEffect
+            | Self::ReturnEffect => "effect",
             Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
                 "domain"
             }
@@ -449,10 +494,23 @@ impl LangItemKind {
             | Self::U64
             | Self::U128
             | Self::USize => "type form",
-            Self::BorrowValueForm | Self::PtrValueForm | Self::SizeOf | Self::AlignOf => "function",
+            Self::Builtin
+            | Self::Foreign
+            | Self::Test
+            | Self::CopyParameters
+            | Self::MoveParameters
+            | Self::BorrowValueForm
+            | Self::PtrValueForm
+            | Self::SizeOf
+            | Self::AlignOf => "function",
             Self::AsyncFunction | Self::AwaitFunction => "function",
             Self::Do
             | Self::DoWhile
+            | Self::Break
+            | Self::BreakUnit
+            | Self::Continue
+            | Self::Return
+            | Self::ReturnUnit
             | Self::Try
             | Self::Throw
             | Self::Unsafe
@@ -460,7 +518,8 @@ impl LangItemKind {
             | Self::While
             | Self::If
             | Self::Match
-            | Self::For => "function",
+            | Self::For
+            | Self::Defer => "function",
             Self::Handle
             | Self::Move
             | Self::Copy
@@ -517,7 +576,10 @@ impl LangItemKind {
             Self::BitXor => Some("bit_xor"),
             Self::Shl => Some("shl"),
             Self::Shr => Some("shr"),
-            Self::Option
+            Self::Builtin
+            | Self::Foreign
+            | Self::Test
+            | Self::Option
             | Self::Result
             | Self::Never
             | Self::Bool
@@ -565,6 +627,8 @@ impl LangItemKind {
             | Self::AccessType
             | Self::EffectDomain
             | Self::ParametersDomain
+            | Self::CopyParameters
+            | Self::MoveParameters
             | Self::BorrowTypeForm
             | Self::BorrowValueForm
             | Self::ArrayTypeForm
@@ -576,7 +640,15 @@ impl LangItemKind {
             | Self::Continuation
             | Self::EffectCallable
             | Self::Handle
+            | Self::BreakEffect
+            | Self::ContinueEffect
+            | Self::ReturnEffect
             | Self::Attempt
+            | Self::Break
+            | Self::BreakUnit
+            | Self::Continue
+            | Self::Return
+            | Self::ReturnUnit
             | Self::Do
             | Self::DoWhile
             | Self::Try
@@ -586,7 +658,8 @@ impl LangItemKind {
             | Self::While
             | Self::If
             | Self::Match
-            | Self::For => None,
+            | Self::For
+            | Self::Defer => None,
             Self::Iterator | Self::IntoIterator => None,
         }
     }
@@ -649,6 +722,7 @@ impl LangItem {
 /// compiler edition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LangItems {
+    additional: BTreeMap<LangItemKind, LangItem>,
     option: LangItem,
     result: LangItem,
     never: LangItem,
@@ -984,8 +1058,25 @@ impl LangItems {
         &self.into_iterator
     }
 
-    pub const fn get(&self, kind: LangItemKind) -> &LangItem {
+    pub fn get(&self, kind: LangItemKind) -> &LangItem {
         match kind {
+            LangItemKind::Builtin
+            | LangItemKind::Foreign
+            | LangItemKind::Test
+            | LangItemKind::CopyParameters
+            | LangItemKind::MoveParameters
+            | LangItemKind::BreakEffect
+            | LangItemKind::ContinueEffect
+            | LangItemKind::ReturnEffect
+            | LangItemKind::Break
+            | LangItemKind::BreakUnit
+            | LangItemKind::Continue
+            | LangItemKind::Return
+            | LangItemKind::ReturnUnit
+            | LangItemKind::Defer => self
+                .additional
+                .get(&kind)
+                .expect("every additional lang item is registered"),
             LangItemKind::Option => &self.option,
             LangItemKind::Result => &self.result,
             LangItemKind::Never => &self.never,
@@ -1118,7 +1209,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin(): Never = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\nlet foreign(): Never = builtin()\nlet test(move body: (): bool): () = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1288,6 +1379,11 @@ impl CoreBundle {
                 .expect("resolved core lang item remains named")
                 .to_owned();
         }
+        for lang_item in lang_items.additional.values_mut() {
+            lang_item.canonical_name = item_name(&program.items[lang_item.item_index])
+                .expect("resolved additional core lang item remains named")
+                .to_owned();
+        }
         Ok(Self {
             edition,
             program,
@@ -1447,34 +1543,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             ));
             continue;
         };
-        if name == "builtin" {
-            builtin_bootstraps.push(index);
-            validate_builtin_bootstrap(item, *visibility, &mut diagnostics);
-            continue;
-        }
         let candidates = LangItemKind::ALL
             .iter()
             .copied()
             .filter(|kind| kind.source_name() == name)
             .collect::<Vec<_>>();
-        if matches!(name, "copy" | "move") {
-            if *visibility != Visibility::Public {
-                diagnostics.push(format!(
-                    "parameter modifier `{name}` must be `pub`, found {} visibility",
-                    visibility_name(*visibility)
-                ));
-            }
-            match item {
-                Item::Function(function) => {
-                    validate_parameter_modifier(name, function, &mut diagnostics)
-                }
-                _ => diagnostics.push(format!(
-                    "parameter modifier `{name}` must be a function, found {}",
-                    item_kind(item)
-                )),
-            }
-            continue;
-        }
         let matching = candidates
             .iter()
             .copied()
@@ -1482,7 +1555,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             .collect::<Vec<_>>();
         let kind = match (candidates.as_slice(), matching.as_slice()) {
             ([], []) => {
-                if !is_allowed_non_lang_item(origin) && !is_control_support_item(name) {
+                if !is_allowed_non_lang_item(origin) && !is_core_support_item(name) {
                     diagnostics.push(format!(
                         "unexpected declaration `{name}` at item {}",
                         index + 1
@@ -1508,8 +1581,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
                 continue;
             }
         };
+        if kind == LangItemKind::Builtin {
+            builtin_bootstraps.push(index);
+        }
         if candidates.is_empty() {
-            if !is_allowed_non_lang_item(origin) && !is_control_support_item(name) {
+            if !is_allowed_non_lang_item(origin) && !is_core_support_item(name) {
                 diagnostics.push(format!(
                     "unexpected declaration `{name}` at item {}",
                     index + 1
@@ -1518,24 +1594,27 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             continue;
         }
         indices.entry(kind).or_default().push(index);
-        if *visibility != Visibility::Public {
-            diagnostics.push(format!(
-                "lang item `{kind}` must be `pub`, found {} visibility",
-                visibility_name(*visibility)
-            ));
+        let expected_visibility = if matches!(
+            kind,
+            LangItemKind::Builtin | LangItemKind::Foreign | LangItemKind::Test
+        ) {
+            Visibility::Private
+        } else {
+            Visibility::Public
+        };
+        if *visibility != expected_visibility {
+            if expected_visibility == Visibility::Public {
+                diagnostics.push(format!(
+                    "lang item `{kind}` must be `pub`, found {} visibility",
+                    visibility_name(*visibility),
+                ));
+            } else {
+                diagnostics.push(format!(
+                    "lang item `{kind}` must be private, found {} visibility",
+                    visibility_name(*visibility),
+                ));
+            }
         }
-    }
-
-    if builtin_bootstraps.is_empty() {
-        diagnostics.push(
-            "missing private compiler-definition bootstrap `let builtin(): Never = builtin()`"
-                .to_owned(),
-        );
-    } else if builtin_bootstraps.len() > 1 {
-        diagnostics.push(format!(
-            "duplicate compiler-definition bootstrap `builtin` appears {} times",
-            builtin_bootstraps.len()
-        ));
     }
 
     let mut resolved = BTreeMap::new();
@@ -1570,7 +1649,27 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
                 .to_owned(),
         }
     };
+    let additional = [
+        LangItemKind::Builtin,
+        LangItemKind::Foreign,
+        LangItemKind::Test,
+        LangItemKind::CopyParameters,
+        LangItemKind::MoveParameters,
+        LangItemKind::BreakEffect,
+        LangItemKind::ContinueEffect,
+        LangItemKind::ReturnEffect,
+        LangItemKind::Break,
+        LangItemKind::BreakUnit,
+        LangItemKind::Continue,
+        LangItemKind::Return,
+        LangItemKind::ReturnUnit,
+        LangItemKind::Defer,
+    ]
+    .into_iter()
+    .map(|kind| (kind, item(kind)))
+    .collect();
     Ok(LangItems {
+        additional,
         option: item(LangItemKind::Option),
         result: item(LangItemKind::Result),
         never: item(LangItemKind::Never),
@@ -1660,30 +1759,29 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
     })
 }
 
-fn validate_builtin_bootstrap(item: &Item, visibility: Visibility, diagnostics: &mut Vec<String>) {
-    let valid = visibility == Visibility::Private
-        && matches!(
-            item,
-            Item::Function(function)
-                if function.name == "builtin"
-                    && function.compile_groups.is_empty()
-                    && function.groups == vec![Vec::new()]
-                    && matches!(
-                        function.return_type.as_ref(),
-                        Some(Type::Named(name, arguments))
-                            if name.split(['.', ':']).rfind(|part| !part.is_empty())
-                                == Some("Never")
-                                && arguments.is_empty()
-                    )
-                    && function.effects == FunctionEffects::default()
-                    && function.where_predicates.is_empty()
-                    && function.foreign.is_none()
-                    && function.builtin
-                    && function.body.is_none()
-        );
+fn validate_builtin_bootstrap(item: &Item, diagnostics: &mut Vec<String>) {
+    let valid = matches!(
+        item,
+        Item::Function(function)
+            if function.name == "builtin"
+                && function.compile_groups.is_empty()
+                && function.groups == vec![Vec::new()]
+                && matches!(
+                    function.return_type.as_ref(),
+                    Some(Type::Named(name, arguments))
+                        if name.split(['.', ':']).rfind(|part| !part.is_empty())
+                            == Some("Never")
+                            && arguments.is_empty()
+                )
+                && function.effects == FunctionEffects::default()
+                && function.where_predicates.is_empty()
+                && function.foreign.is_none()
+                && function.builtin
+                && function.body.is_none()
+    );
     if !valid {
         diagnostics.push(
-            "compiler-definition bootstrap must have exact private shape `let builtin(): Never = builtin()`"
+            "compiler-definition bootstrap must have exact private shape `let builtin() = builtin()`"
                 .to_owned(),
         );
     }
@@ -1692,7 +1790,12 @@ fn validate_builtin_bootstrap(item: &Item, visibility: Visibility, diagnostics: 
 fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<String>) {
     let required = matches!(
         kind,
-        LangItemKind::I8
+        LangItemKind::Builtin
+            | LangItemKind::Foreign
+            | LangItemKind::Test
+            | LangItemKind::CopyParameters
+            | LangItemKind::MoveParameters
+            | LangItemKind::I8
             | LangItemKind::I16
             | LangItemKind::I32
             | LangItemKind::I64
@@ -1718,6 +1821,7 @@ fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut
             | LangItemKind::AwaitFunction
             | LangItemKind::Loop
             | LangItemKind::Match
+            | LangItemKind::Defer
     );
     let marked = match item {
         Item::Function(function) => function.builtin,
@@ -1752,14 +1856,10 @@ fn validate_builtin_boundaries(
             continue;
         }
         match item {
-            Item::Function(function) if function.builtin => match function.name.as_str() {
-                "copy" | "move" => {}
-                "defer" => validate_defer_support(function, diagnostics),
-                _ => diagnostics.push(format!(
-                    "unknown compiler-owned core function `{}` uses `builtin()`",
-                    function.name
-                )),
-            },
+            Item::Function(function) if function.builtin => diagnostics.push(format!(
+                "unknown compiler-owned core function `{}` uses `builtin()`",
+                function.name
+            )),
             Item::TypeForm(definition) if definition.builtin => diagnostics.push(format!(
                 "unknown compiler-owned core type `{}` uses `builtin()`",
                 definition.name
@@ -1841,23 +1941,10 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
         .is_some_and(|module| NON_LANG_ITEM_CORE_MODULES.contains(&module.as_str()))
 }
 
-fn is_control_support_item(name: &str) -> bool {
+fn is_core_support_item(name: &str) -> bool {
     matches!(
         name,
-        "Break"
-            | "Continue"
-            | "Return"
-            | "ArrayIntoIter"
-            | "SliceIter"
-            | "OwnedItem"
-            | "BorrowedItem"
-            | "Spin"
-            | "break"
-            | "continue"
-            | "defer"
-            | "return"
-            | "copy"
-            | "move"
+        "ArrayIntoIter" | "SliceIter" | "OwnedItem" | "BorrowedItem" | "Spin"
     )
 }
 
@@ -1877,6 +1964,24 @@ fn item_kind(item: &Item) -> &'static str {
 }
 
 fn item_has_expected_kind(kind: LangItemKind, item: &Item) -> bool {
+    if matches!(
+        kind,
+        LangItemKind::Break
+            | LangItemKind::BreakUnit
+            | LangItemKind::Return
+            | LangItemKind::ReturnUnit
+    ) {
+        let Item::Function(function) = item else {
+            return false;
+        };
+        return match kind {
+            LangItemKind::Break | LangItemKind::Return => !function.compile_groups.is_empty(),
+            LangItemKind::BreakUnit | LangItemKind::ReturnUnit => {
+                function.compile_groups.is_empty()
+            }
+            _ => unreachable!(),
+        };
+    }
     if matches!(kind, LangItemKind::Do | LangItemKind::DoWhile) {
         let Item::Function(function) = item else {
             return false;
@@ -1915,6 +2020,10 @@ fn visibility_name(visibility: Visibility) -> &'static str {
 
 fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<String>) {
     match (kind, item) {
+        (LangItemKind::Builtin, _) => validate_builtin_bootstrap(item, diagnostics),
+        (LangItemKind::Foreign | LangItemKind::Test, Item::Function(function)) => {
+            validate_syntax_contract(kind, function, diagnostics)
+        }
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
@@ -1940,12 +2049,22 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             Item::Effect(definition),
         ) => validate_effect(kind, definition, diagnostics),
         (
+            kind @ (LangItemKind::BreakEffect
+            | LangItemKind::ContinueEffect
+            | LangItemKind::ReturnEffect),
+            Item::Effect(definition),
+        ) => validate_control_effect(kind, definition, diagnostics),
+        (
             LangItemKind::TypeDomain
             | LangItemKind::RegionDomain
             | LangItemKind::EffectDomain
             | LangItemKind::ParametersDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
+        (
+            kind @ (LangItemKind::CopyParameters | LangItemKind::MoveParameters),
+            Item::Function(function),
+        ) => validate_parameter_modifier(kind.source_name(), function, diagnostics),
         (LangItemKind::AccessType, Item::Enum(definition)) => validate_closed_enum(
             "access",
             &["shared", "mut"],
@@ -2033,6 +2152,11 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (
             LangItemKind::Do
             | LangItemKind::DoWhile
+            | LangItemKind::Break
+            | LangItemKind::BreakUnit
+            | LangItemKind::Continue
+            | LangItemKind::Return
+            | LangItemKind::ReturnUnit
             | LangItemKind::Try
             | LangItemKind::Throw
             | LangItemKind::Unsafe
@@ -2043,6 +2167,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::For,
             Item::Function(function),
         ) => validate_control_function(kind, function, diagnostics),
+        (LangItemKind::Defer, Item::Function(function)) => {
+            validate_defer_support(function, diagnostics)
+        }
         (LangItemKind::Iterator, Item::Trait(definition)) => {
             validate_iterator(definition, diagnostics)
         }
@@ -2114,6 +2241,40 @@ fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mu
     if !valid {
         diagnostics.push(format!(
             "parameter modifier `{name}` must have shape `pub let {name}(P: parameters): parameters`"
+        ));
+    }
+}
+
+fn validate_syntax_contract(
+    kind: LangItemKind,
+    function: &Function,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = match kind {
+        LangItemKind::Foreign => {
+            function.compile_groups.is_empty()
+                && function.groups == vec![Vec::new()]
+                && function.return_type == Some(named_type("Never"))
+        }
+        LangItemKind::Test => {
+            function.compile_groups.is_empty()
+                && single_moved_callable(function, "body", Type::Bool, FunctionEffects::default())
+                && function.return_type == Some(Type::Unit)
+        }
+        _ => false,
+    } && function.effects == FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.foreign.is_none()
+        && function.builtin
+        && function.body.is_none();
+    if !valid {
+        let shape = match kind {
+            LangItemKind::Foreign => "let foreign(): Never = builtin()",
+            LangItemKind::Test => "let test(move body: (): bool): () = builtin()",
+            _ => unreachable!(),
+        };
+        diagnostics.push(format!(
+            "private syntax lang item `{kind}` must have shape `{shape}`"
         ));
     }
 }
@@ -2718,6 +2879,59 @@ fn valid_throws_raise_operation(function: &Function) -> bool {
         && error.ty == named_type("Error")
 }
 
+fn validate_control_effect(
+    kind: LangItemKind,
+    definition: &crate::ast::EffectDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = match kind {
+        LangItemKind::BreakEffect | LangItemKind::ReturnEffect => {
+            definition.compile_groups == vec![vec![type_parameter("T")]]
+                && matches!(
+                    definition.operations.as_slice(),
+                    [operation] if valid_control_exit_operation(operation)
+                )
+        }
+        LangItemKind::ContinueEffect => {
+            definition.compile_groups.is_empty()
+                && matches!(
+                    definition.operations.as_slice(),
+                    [operation] if operation.name == "next"
+                        && operation.compile_groups.is_empty()
+                        && operation.groups == vec![Vec::new()]
+                        && operation.return_type == Some(named_type("Never"))
+                        && operation.effects == FunctionEffects::default()
+                        && operation.where_predicates.is_empty()
+                        && operation.body.is_none()
+                )
+        }
+        _ => false,
+    };
+    if !valid {
+        let shape = match kind {
+            LangItemKind::BreakEffect => {
+                "pub let Break(T: type) = effect { let exit(move value: T): Never }"
+            }
+            LangItemKind::ContinueEffect => "pub let Continue = effect { let next(): Never }",
+            LangItemKind::ReturnEffect => {
+                "pub let Return(T: type) = effect { let exit(move value: T): Never }"
+            }
+            _ => unreachable!(),
+        };
+        diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
+    }
+}
+
+fn valid_control_exit_operation(function: &Function) -> bool {
+    function.name == "exit"
+        && function.compile_groups.is_empty()
+        && single_moved_parameter(function, "value", named_type("T"))
+        && function.return_type == Some(named_type("Never"))
+        && function.effects == FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+}
+
 fn validate_control_function(
     kind: LangItemKind,
     function: &Function,
@@ -2728,6 +2942,13 @@ fn validate_control_function(
         _ => {
             function.where_predicates.is_empty()
                 && match kind {
+                    LangItemKind::Break | LangItemKind::Return => {
+                        valid_control_exit_function(kind, function, false)
+                    }
+                    LangItemKind::BreakUnit | LangItemKind::ReturnUnit => {
+                        valid_control_exit_function(kind, function, true)
+                    }
+                    LangItemKind::Continue => valid_continue_function(function),
                     LangItemKind::Do => valid_do(function),
                     LangItemKind::DoWhile => valid_do_while(function),
                     LangItemKind::Try => valid_try(function),
@@ -2746,6 +2967,45 @@ fn validate_control_function(
             "lang item `{kind}` has an invalid validated control signature"
         ));
     }
+}
+
+fn valid_control_exit_function(kind: LangItemKind, function: &Function, unit: bool) -> bool {
+    let effect_name = match kind {
+        LangItemKind::Break | LangItemKind::BreakUnit => "Break",
+        LangItemKind::Return | LangItemKind::ReturnUnit => "Return",
+        _ => return false,
+    };
+    let argument = if unit { Type::Unit } else { named_type("T") };
+    let valid_groups = if unit {
+        function.compile_groups.is_empty() && function.groups == vec![Vec::new()]
+    } else {
+        function.compile_groups == vec![vec![type_parameter("T")]]
+            && single_moved_parameter(function, "value", named_type("T"))
+    };
+    valid_groups
+        && function.return_type == Some(named_type("Never"))
+        && has_only_control_effect(&function.effects, effect_name, &[argument])
+        && function.body.is_some()
+}
+
+fn valid_continue_function(function: &Function) -> bool {
+    function.compile_groups.is_empty()
+        && function.groups == vec![Vec::new()]
+        && function.return_type == Some(named_type("Never"))
+        && has_only_control_effect(&function.effects, "Continue", &[])
+        && function.body.is_some()
+}
+
+fn has_only_control_effect(effects: &FunctionEffects, name: &str, arguments: &[Type]) -> bool {
+    !effects.unsafe_effect
+        && effects.throws.is_none()
+        && effects.parameters.is_empty()
+        && matches!(
+            effects.custom.as_slice(),
+            [Type::Named(candidate, candidate_arguments)]
+                if candidate.split(['.', ':']).rfind(|part| !part.is_empty()) == Some(name)
+                    && candidate_arguments == arguments
+        )
 }
 
 fn valid_do(function: &Function) -> bool {
@@ -3921,11 +4181,14 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 331);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 319);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
             let canonical = match kind {
+                LangItemKind::Builtin | LangItemKind::Foreign | LangItemKind::Test => {
+                    format!("core::{}", kind.source_name())
+                }
                 LangItemKind::Option => "core::option::Option".to_owned(),
                 LangItemKind::Result => "core::result::Result".to_owned(),
                 LangItemKind::Never => "core::never::Never".to_owned(),
@@ -3997,6 +4260,9 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::ParametersDomain => {
                     format!("core::domains::{}", kind.source_name())
                 }
+                LangItemKind::CopyParameters | LangItemKind::MoveParameters => {
+                    format!("core::passing::{}", kind.source_name())
+                }
                 LangItemKind::AccessType => {
                     format!("core::borrow::{}", kind.source_name())
                 }
@@ -4017,13 +4283,22 @@ pub let Index(Key: type) = trait {
                     format!("core::effect::{}", kind.source_name())
                 }
                 LangItemKind::Attempt
+                | LangItemKind::BreakEffect
+                | LangItemKind::ContinueEffect
+                | LangItemKind::ReturnEffect
+                | LangItemKind::Break
+                | LangItemKind::BreakUnit
+                | LangItemKind::Continue
+                | LangItemKind::Return
+                | LangItemKind::ReturnUnit
                 | LangItemKind::Do
                 | LangItemKind::DoWhile
                 | LangItemKind::Loop
                 | LangItemKind::While
                 | LangItemKind::If
                 | LangItemKind::Match
-                | LangItemKind::For => format!("core::control::{}", kind.source_name()),
+                | LangItemKind::For
+                | LangItemKind::Defer => format!("core::control::{}", kind.source_name()),
                 LangItemKind::Try | LangItemKind::Throw => {
                     format!("core::error::{}", kind.source_name())
                 }
@@ -4038,6 +4313,7 @@ pub let Index(Key: type) = trait {
             );
             assert_eq!(lang_item.canonical_name(), canonical.as_str());
             let module_path: Vec<&str> = match kind {
+                LangItemKind::Builtin | LangItemKind::Foreign | LangItemKind::Test => vec![],
                 LangItemKind::Option => vec!["option"],
                 LangItemKind::Result => vec!["result"],
                 LangItemKind::Never => vec!["never"],
@@ -4097,6 +4373,7 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::RegionDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::ParametersDomain => vec!["domains"],
+                LangItemKind::CopyParameters | LangItemKind::MoveParameters => vec!["passing"],
                 LangItemKind::AccessType => vec!["borrow"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
@@ -4109,13 +4386,22 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle => vec!["effect"],
                 LangItemKind::Attempt
+                | LangItemKind::BreakEffect
+                | LangItemKind::ContinueEffect
+                | LangItemKind::ReturnEffect
+                | LangItemKind::Break
+                | LangItemKind::BreakUnit
+                | LangItemKind::Continue
+                | LangItemKind::Return
+                | LangItemKind::ReturnUnit
                 | LangItemKind::Do
                 | LangItemKind::DoWhile
                 | LangItemKind::Loop
                 | LangItemKind::While
                 | LangItemKind::If
                 | LangItemKind::Match
-                | LangItemKind::For => vec!["control"],
+                | LangItemKind::For
+                | LangItemKind::Defer => vec!["control"],
                 LangItemKind::Try | LangItemKind::Throw => vec!["error"],
                 LangItemKind::Unsafe => vec!["unsafe"],
                 LangItemKind::Iterator | LangItemKind::IntoIterator => vec!["iter"],
@@ -4160,19 +4446,42 @@ pub let Index(Key: type) = trait {
 
     #[test]
     fn builtin_markers_are_explicit_and_bounded_core_contracts() {
-        let missing_bootstrap = EDITION_2026_LIB.replace(
-            "// Private bootstrap marker for declarations whose definitions are supplied by\n// the compiler. Semantic validation gives each use its declaration annotation.\nlet builtin(): Never = builtin()\n\n",
-            "",
-        );
+        let missing_bootstrap = EDITION_2026_LIB.replace("let builtin() = builtin()\n", "");
         let modules = edition_2026_test_modules(&[("lib", &missing_bootstrap)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
-        assert!(
-            error
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic
-                    .contains("missing private compiler-definition bootstrap"))
-        );
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic == "missing lang item `builtin`"));
+
+        for (name, malformed) in [
+            (
+                "foreign",
+                EDITION_2026_LIB.replace(
+                    "let foreign(): Never = builtin()",
+                    "let foreign(): () = builtin()",
+                ),
+            ),
+            (
+                "test",
+                EDITION_2026_LIB.replace(
+                    "let test(move body: (): bool): () = builtin()",
+                    "let test(move body: (): i32): () = builtin()",
+                ),
+            ),
+        ] {
+            let modules = edition_2026_test_modules(&[("lib", &malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic
+                        .contains(&format!("private syntax lang item `{name}`"))),
+                "{:?}",
+                error.diagnostics()
+            );
+        }
 
         let missing_primitive_marker =
             EDITION_2026_PRIMITIVES.replace("pub let i32: type = builtin()", "pub let i32: type");
@@ -4311,6 +4620,27 @@ pub let Index(Key: type) = trait {
     #[test]
     fn rejects_malformed_control_contracts() {
         for (name, malformed) in [
+            (
+                "Break",
+                EDITION_2026_CONTROL.replace(
+                    "let exit(move value: T): Never",
+                    "let exit(value: T): Never",
+                ),
+            ),
+            (
+                "continue",
+                EDITION_2026_CONTROL.replace(
+                    "pub let continue(): Never with(Continue)",
+                    "pub let continue(): () with(Continue)",
+                ),
+            ),
+            (
+                "return",
+                EDITION_2026_CONTROL.replace(
+                    "(move value: T): Never with(Return(T))",
+                    "(value: T): Never with(Return(T))",
+                ),
+            ),
             (
                 "do",
                 EDITION_2026_CONTROL.replace(

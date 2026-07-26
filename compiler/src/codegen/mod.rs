@@ -166,7 +166,7 @@ fn rewrite_callable_bridge_groups(
 }
 
 struct Analyzer {
-    lang_items: LangItems,
+    lang_items: Box<LangItems>,
     functions: HashMap<String, Function>,
     function_origins: HashMap<String, ItemOrigin>,
     function_accesses: HashMap<String, AccessBoundary>,
@@ -257,13 +257,13 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn try_new(program: &Program) -> Result<Self, String> {
+    fn try_new(program: &Program) -> Result<Box<Self>, String> {
         let core = CoreBundle::cached_for_edition(Edition::Edition2026)
             .map_err(|error| error.to_string())?;
         let alloc = AllocBundle::cached_for_edition(Edition::Edition2026)
             .map_err(|error| error.to_string())?;
-        let mut analyzer = Self {
-            lang_items: core.lang_items().clone(),
+        let mut analyzer = Box::new(Self {
+            lang_items: Box::new(core.lang_items().clone()),
             functions: HashMap::new(),
             function_origins: HashMap::new(),
             function_accesses: HashMap::new(),
@@ -351,13 +351,14 @@ impl Analyzer {
             async_factory_depth: 0,
             diagnostics: Vec::new(),
             current_origin: None,
-        };
+        });
         if !program.uses.is_empty() {
             analyzer.error(
                 "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
             );
         }
         let mut core_program = core.program().clone();
+        remove_nonruntime_syntax_contracts(&mut core_program, &analyzer.lang_items);
         let mut alloc_program = alloc.program().clone();
         let mut source_program = program.clone();
         erase_region_parameters(&mut core_program);
@@ -386,7 +387,7 @@ impl Analyzer {
     }
 
     #[cfg(test)]
-    fn new(program: &Program) -> Self {
+    fn new(program: &Program) -> Box<Self> {
         Self::try_new(program)
             .expect("the compiler-embedded edition 2026 core bundle must be valid")
     }
@@ -572,7 +573,13 @@ impl Analyzer {
                     }
                     if function.builtin
                         && origin.package == PackageId::CORE.0
-                        && source_name.rsplit("::").next() == Some("builtin")
+                        && [
+                            LangItemKind::Builtin,
+                            LangItemKind::Foreign,
+                            LangItemKind::Test,
+                        ]
+                        .into_iter()
+                        .any(|kind| self.is_lang_item_name(&source_name, kind))
                     {
                         continue;
                     }
@@ -593,9 +600,10 @@ impl Analyzer {
                             .insert(source_name.clone());
                         continue;
                     }
-                    let modifier_name = source_name.rsplit("::").next();
                     let parameter_modifier_intrinsic = origin.package == PackageId::CORE.0
-                        && matches!(modifier_name, Some("copy" | "move"))
+                        && [LangItemKind::CopyParameters, LangItemKind::MoveParameters]
+                            .into_iter()
+                            .any(|kind| self.is_lang_item_name(&source_name, kind))
                         && function.compile_groups.as_slice().iter().flatten().count() == 1
                         && function.compile_groups[0][0].kind == CompileParamKind::Parameters
                         && function.groups.is_empty()
@@ -13532,6 +13540,39 @@ impl Analyzer {
             self.current_origin.as_deref().cloned(),
         ));
     }
+}
+
+fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangItems) {
+    let names = [
+        LangItemKind::Builtin,
+        LangItemKind::Foreign,
+        LangItemKind::Test,
+    ]
+    .map(|kind| lang_items.get(kind).canonical_name());
+    let mut items = Vec::with_capacity(program.items.len().saturating_sub(names.len()));
+    let mut visibilities =
+        Vec::with_capacity(program.item_visibilities.len().saturating_sub(names.len()));
+    let mut origins = Vec::with_capacity(program.item_origins.len().saturating_sub(names.len()));
+    for ((item, visibility), origin) in program
+        .items
+        .drain(..)
+        .zip(program.item_visibilities.drain(..))
+        .zip(program.item_origins.drain(..))
+    {
+        let name = match &item {
+            Item::Function(function) => Some(function.name.as_str()),
+            _ => None,
+        };
+        if name.is_some_and(|name| names.contains(&name)) {
+            continue;
+        }
+        items.push(item);
+        visibilities.push(visibility);
+        origins.push(origin);
+    }
+    program.items = items;
+    program.item_visibilities = visibilities;
+    program.item_origins = origins;
 }
 
 fn compile_parameter_kind_label(kind: &CompileParamKind) -> String {

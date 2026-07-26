@@ -492,7 +492,15 @@ impl Parser {
                     "`builtin()` defines a function or type declaration, not a global value",
                 ));
             }
-            if annotation.is_none() {
+            let builtin_bootstrap = name == "builtin"
+                && compile_groups.is_empty()
+                && matches!(groups.as_slice(), [group] if group.is_empty());
+            if builtin_bootstrap && annotation.is_some() {
+                return Err(self.error_here(
+                    "the compiler-definition bootstrap has exact shape `let builtin() = builtin()`",
+                ));
+            }
+            if annotation.is_none() && !builtin_bootstrap {
                 return Err(self.error_here(
                     "builtin functions require an explicit result type before `= builtin()`",
                 ));
@@ -504,7 +512,8 @@ impl Parser {
                 builtin: true,
                 compile_groups,
                 groups,
-                return_type: annotation,
+                return_type: annotation
+                    .or(builtin_bootstrap.then_some(Type::Named("Never".to_owned(), Vec::new()))),
                 effects,
                 where_predicates,
                 body: None,
@@ -8280,7 +8289,7 @@ mod tests {
     #[test]
     fn parses_complete_builtin_definition_markers() {
         let program = parse(
-            "let builtin(): Never = builtin()\n\
+            "let builtin() = builtin()\n\
              pub let Scalar: type = builtin()\n\
              pub let Family(T: type)(L: usize): type = builtin()\n\
              pub let intrinsic(T: type)(value: T): T = builtin()\n\
@@ -8294,7 +8303,10 @@ mod tests {
         assert!(matches!(
             &program.items[0],
             Item::Function(function)
-                if function.name == "builtin" && function.builtin && function.body.is_none()
+                if function.name == "builtin"
+                    && function.builtin
+                    && function.body.is_none()
+                    && function.return_type == Some(Type::Named("Never".to_owned(), Vec::new()))
         ));
         assert!(matches!(
             &program.items[1],
@@ -8325,6 +8337,7 @@ mod tests {
     #[test]
     fn rejects_malformed_builtin_definition_markers() {
         for source in [
+            "let builtin(): Never = builtin()\n",
             "let value: i32 = builtin()\n",
             "let intrinsic(value: i32) = builtin()\n",
             "let Scalar: type = builtin(1)\n",

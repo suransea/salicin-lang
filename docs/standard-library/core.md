@@ -5,13 +5,19 @@ services. The compiler embeds these `.sc` files, parses them through the ordinar
 validates declarations that have language-defined roles.
 
 Compiler-owned definitions are explicit. The private root declaration
-`let builtin(): Never = builtin()` bootstraps a declaration marker that is
+`let builtin() = builtin()` bootstraps a declaration marker that is
 unavailable to user packages. Primitive types, compiler-defined type
 constructors, intrinsic functions, and intrinsic extension methods use
 complete `= builtin()` initializers. Edition validation rejects missing,
 unknown, malformed, or public markers. Trait requirements and effect
 operations remain bodyless because they are abstract contracts, not
 compiler-provided default implementations.
+
+The same private root module declares
+`let foreign(): Never = builtin()` and
+`let test(move body: (): bool): () = builtin()`. These are canonical syntax
+contracts for foreign initializers and test registrations; their ABI/link and
+registration-name strings are compile-time metadata.
 
 ## Modules
 

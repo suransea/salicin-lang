@@ -1,0 +1,4 @@
+[env]
+# Semantic/codegen tests exercise deeply nested ownership and effect lowering.
+# Keep the libtest worker stack aligned with the compiler pipeline workers.
+RUST_MIN_STACK = { value = "16777216", force = false }

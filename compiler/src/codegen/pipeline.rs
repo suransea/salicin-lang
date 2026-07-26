@@ -30,21 +30,21 @@ struct PreparedProgram {
 /// already have passed module resolution; use the crate-level source entry
 /// points when compiling parser input.
 pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
-    compile_target(program, true)
+    on_compiler_stack(|| compile_target(program, true))
 }
 
 /// Type-check `program` and emit LLVM IR for a library target. Unlike
 /// [`compile`], this does not require `main` or generate the platform entry
 /// wrapper. The program must already have passed module resolution.
 pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
-    compile_target(program, false)
+    on_compiler_stack(|| compile_target(program, false))
 }
 
 /// Type-check a binary target, including its required `main` entry point,
 /// without emitting LLVM IR. Cleanup plans and global constants are still
 /// prepared so `check` reports the same frontend diagnostics as compilation.
 pub fn check(program: &Program) -> Result<(), Vec<Diagnostic>> {
-    analyze(program, true).and_then(prepare).map(|_| ())
+    on_compiler_stack(|| analyze(program, true).and_then(prepare).map(|_| ()))
 }
 
 /// Type-check a library target without requiring or emitting a binary entry
@@ -52,7 +52,19 @@ pub fn check(program: &Program) -> Result<(), Vec<Diagnostic>> {
 /// same constant-expression diagnostics as binary compilation. The program
 /// must already have passed module resolution.
 pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
-    analyze(program, false).and_then(prepare).map(|_| ())
+    on_compiler_stack(|| analyze(program, false).and_then(prepare).map(|_| ()))
+}
+
+fn on_compiler_stack<R: Send>(operation: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("salic-compiler".to_owned())
+            .stack_size(16 * 1024 * 1024)
+            .spawn_scoped(scope, operation)
+            .expect("spawn compiler worker")
+            .join()
+            .expect("compiler worker panicked")
+    })
 }
 
 fn compile_target(program: &Program, require_entry_point: bool) -> Result<String, Vec<Diagnostic>> {

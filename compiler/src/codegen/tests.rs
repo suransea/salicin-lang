@@ -726,6 +726,35 @@ fn registers_source_backed_core_lang_items() {
         "unexpected prelude diagnostics: {:?}",
         analyzer.diagnostics
     );
+    for kind in [
+        LangItemKind::Builtin,
+        LangItemKind::Foreign,
+        LangItemKind::Test,
+        LangItemKind::CopyParameters,
+        LangItemKind::MoveParameters,
+        LangItemKind::BreakEffect,
+        LangItemKind::ContinueEffect,
+        LangItemKind::ReturnEffect,
+        LangItemKind::Break,
+        LangItemKind::BreakUnit,
+        LangItemKind::Continue,
+        LangItemKind::Return,
+        LangItemKind::ReturnUnit,
+        LangItemKind::Defer,
+    ] {
+        assert!(!analyzer.lang_item_name(kind).is_empty());
+    }
+    for kind in [
+        LangItemKind::Builtin,
+        LangItemKind::Foreign,
+        LangItemKind::Test,
+        LangItemKind::CopyParameters,
+        LangItemKind::MoveParameters,
+    ] {
+        assert!(!analyzer
+            .function_templates
+            .contains_key(analyzer.lang_item_name(kind)));
+    }
     assert_eq!(
         &analyzer.enum_template_order[..2],
         &[
