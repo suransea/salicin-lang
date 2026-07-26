@@ -8,7 +8,8 @@ This file contains only unfinished work accepted by the
 
 Priority meanings:
 
-- **P0**: the active milestone; tasks run in listed dependency order;
+- **P0**: the active milestone; each workstream runs in listed dependency
+  order;
 - **P1**: the accepted next milestone; design work may start, implementation
   waits for the P0 exit gate;
 - **P2**: ordered later work; tasks may be refined before their milestone
@@ -19,7 +20,142 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Persistent Incremental Builds
+## P0: Standard Library Usability
+
+### Foundation
+
+- [ ] **STD-1 — Usability surface contract.** Define the initial `core`,
+  `alloc`, and host `std` module map; public naming; prelude exclusions;
+  ownership and borrow modes; trap-versus-`Option`/`Result` policy; error
+  families; target support; and the minimum API matrix for text, collections,
+  conversion, IO, and tests.
+
+- [ ] **STD-2 — Host library boundary.** Add the edition-matched `library/std`
+  source layer above `core` and `alloc`, its embedding and module-resolution
+  rules, and explicit rejection on unsupported targets. Do not give ordinary
+  user declarations compiler or runtime authority by name.
+
+### Common values
+
+- [ ] **VALUE-1 — `Option` and `Result` ergonomics.** Add common state
+  inspection, borrowed views, transformations, error mapping, fallback, and
+  extraction helpers while keeping payload evaluation single-shot and
+  forwarding callback effects.
+
+- [ ] **VALUE-2 — Numeric utilities and conversions.** Add min/max/clamp,
+  sign and magnitude helpers where defined, and explicit checked or fallible
+  conversions between integer widths. Preserve the language's overflow and
+  signed-boundary rules and never lower a failing conversion to backend
+  undefined behavior.
+
+### Text and conversion
+
+- [ ] **TEXT-1 — Runtime literals, borrowed text, and scalars.** Define a
+  zero-allocation runtime string literal backed by immutable static UTF-8,
+  plus an invariant-preserving borrowed UTF-8 view and Unicode scalar value.
+  Specify escapes, storage/linkage, representation, region behavior,
+  construction, equality, byte boundaries, invalid input, and conversions to
+  and from existing byte slices. Compile-time test names and foreign symbols
+  remain metadata rather than runtime allocations.
+
+- [ ] **TEXT-2 — Core `String` operations.** Add construction from borrowed
+  text and scalars; borrowed text access; `push`, `push_str`, truncation,
+  checked byte-boundary slicing, comparison, prefix/suffix checks, and search.
+  Preserve valid UTF-8 after every safe mutation and retain ownership on
+  recoverable conversion failure.
+
+- [ ] **TEXT-3 — Text iteration.** Add byte and Unicode-scalar iterators,
+  scalar counting and lookup, and forward search with exact invalid-boundary
+  behavior. Iterators must retain the source loan and never expose mutable
+  bytes from safe code.
+
+- [ ] **FMT-1 — Parsing and formatting protocols.** Define source-backed,
+  statically dispatched parsing and formatting contracts for integers,
+  booleans, Unicode scalars, borrowed text, and `String`, including overflow,
+  invalid input, allocation, and residual-effect behavior.
+
+- [ ] **FMT-2 — Formatting implementation.** Implement radix-aware integer
+  parsing, decimal formatting, boolean and scalar formatting, a `String`
+  writer/builder, and minimal display/debug output sufficient for IO and test
+  failure messages. Do not introduce formatting syntax, macros, reflection,
+  locale rules, or implicit IO.
+
+### Arrays, slices, vectors, and iteration
+
+- [ ] **COLL-1 — Consistent contiguous access.** Give `Array`, `Slice`, and
+  `Vec` a consistent `len`, `is_empty`, checked `get`, trapping `at`/index,
+  first/last, slice conversion, and shared or mutable access contract. Checked
+  operations return `Option` and never form an out-of-bounds borrow.
+
+- [ ] **COLL-2 — Slice and array iteration.** Complete shared and mutable
+  iteration for arrays and slices, remove the current copy-only limitation
+  from borrowed array traversal, and preserve exclusive yielded-borrow rules.
+
+- [ ] **COLL-3 — Array and slice mutation.** Add swap, reverse, copy/fill
+  where element bounds permit, and overlap-safe copy behavior for mutable
+  arrays and slices. Validate bounds before mutation and define partial
+  progress and cleanup for every effectful operation.
+
+- [ ] **COLL-4 — Common `Vec` operations.** Add checked access and slice-based
+  extension/copy operations that complement the existing push, insert,
+  remove, append, truncate, reverse, and capacity APIs. Allocation failure,
+  partial copy, overlap, and move-only element behavior must be explicit.
+
+- [ ] **ITER-1 — Common algorithms.** Provide source-backed `find`,
+  `position`, `contains`, `any`, `all`, and `fold` over the narrowest usable
+  iterator or slice contracts, forwarding callback effects and preserving
+  early-exit cleanup.
+
+### Synchronous host IO
+
+- [ ] **IO-1 — Explicit host IO contract.** Define the `IO` authority/effect,
+  entry-point handling, `IoError`, byte-versus-text boundaries, partial
+  operations, interruption, resource ownership, close behavior, and the
+  supported host matrix. No safe host operation may silently acquire
+  `Unsafe` or ambient authority.
+
+- [ ] **IO-2 — Console and process support.** Implement process arguments and
+  synchronous stdin, stdout, and stderr byte/text operations, including flush,
+  EOF, invalid UTF-8, broken pipes, short reads/writes, `read_line`, and
+  `print`/`println` plus stderr counterparts. Keep program output separate
+  from compiler diagnostics.
+
+- [ ] **IO-3 — Filesystem basics.** Implement owned file handles with
+  deterministic `Drop`, open/create options, read, write, flush, seek where
+  supported, and whole-file convenience functions with bounded allocation and
+  recoverable path/permission/encoding errors.
+
+### Test support
+
+- [ ] **TEST-1 — Structured test failure.** Replace boolean-only failure as
+  the sole test contract with a source-backed failure path that carries an
+  optional formatted message, is interpreted per registration, cleans test
+  resources exactly once, and allows later registrations to run. Preserve a
+  simple boolean migration path while the compiler is experimental.
+
+- [ ] **TEST-2 — Common assertions.** Add `assert`, `assert_eq`, `assert_ne`,
+  `fail`, and common `Option`/`Result` expectation helpers with static
+  `Eq`/formatting bounds, single evaluation of operands, useful failure
+  messages, and no generated names in output.
+
+- [ ] **TEST-3 — Runner selection and reporting.** Add deterministic
+  `salic test --list` and name filtering, selected/failed/passed counts, and
+  clear exit behavior. Keep source order, duplicate-name diagnostics, package
+  selection, dependency isolation, and one-runner batching.
+
+### Acceptance
+
+- [ ] **STD-3 — Practical standard-library acceptance.** Add a multi-module
+  command-line example and native suites that read arguments or input, parse
+  text, process arrays/slices/vectors, format output, use files where
+  available, and exercise standard assertions. Verify Unicode boundaries,
+  errors, early exits, allocation balance, deterministic output, and
+  documentation examples.
+
+P0 is complete only when every workstream above and the roadmap milestone exit
+conditions are satisfied.
+
+## P1: Persistent Incremental Builds
 
 - [ ] **INCR-2 — Persistent cache contract.** Specify the cache root, schema
   version, fingerprint mapping, LLVM IR payload, metadata, atomic publication,
@@ -48,10 +184,7 @@ status and changelog instead of remaining as a checked archive.
   aliases, module paths, source bytes, corrupt entries, failed compilation,
   and concurrent readers.
 
-P0 is complete only when every item above and the roadmap milestone exit
-conditions are satisfied.
-
-## P1: LSP Diagnostics Baseline
+## P2: LSP Diagnostics Baseline
 
 - [ ] **LSP-1 — Structured diagnostic origins.** Replace resolver
   message-parsing and remaining location fallbacks with structured document
@@ -125,7 +258,8 @@ A task is complete only when:
 ## Design Candidates
 
 - per-package incremental compilation and dependency interface hashes;
-- host-facing `std` with explicit authority;
+- networking, asynchronous IO, time, subprocess, and platform services;
+- advanced Unicode, regex, hashing, and unordered collections;
 - completion and partial-program recovery;
 - unsupported async and executor shapes;
 - non-host targets and broader C ABI lowering;

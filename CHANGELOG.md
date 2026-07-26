@@ -6,12 +6,14 @@ subset.
 
 ## Unreleased
 
-- Replanned the post-foundation work around daily compiler usability:
-  persistent whole-graph LLVM IR caching is current, followed by an LSP
-  diagnostics baseline, semantic navigation, and verified registry source
-  dependencies. The executable TODO now assigns stable tasks and acceptance
-  gates to those milestones while separating design candidates and deferred
-  language features from committed work.
+- Replanned the post-foundation work around daily compiler usability. The
+  current milestone now prioritizes practical standard-library text,
+  array/slice/vector, formatting, explicit synchronous IO, and test support.
+  Persistent whole-graph LLVM IR caching follows, then an LSP diagnostics
+  baseline, semantic navigation, and verified registry source dependencies.
+  The executable TODO assigns stable tasks and acceptance gates while
+  separating design candidates and deferred language features from committed
+  work.
 - Reworked formatter indentation around parser-provided source spans instead
   of keyword or first-token heuristics. Nested blocks, delimiters, declaration
   parameter groups, `where` predicates, operator continuations, trailing

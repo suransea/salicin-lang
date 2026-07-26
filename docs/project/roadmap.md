@@ -13,10 +13,12 @@ work in the [changelog](../../CHANGELOG.md).
 Salicin's next phase turns the implemented language core into a compiler that
 can support daily development. The near-term order is deliberately:
 
-1. make unchanged builds reusable;
-2. make source analysis continuously available to editors;
-3. build source navigation on structured semantic identities;
-4. make locked third-party source dependencies reproducible.
+1. make ordinary programs practical with text, collections, host IO, and test
+   support;
+2. make unchanged builds reusable;
+3. make source analysis continuously available to editors;
+4. build source navigation on structured semantic identities;
+5. make locked third-party source dependencies reproducible.
 
 New language surface is not a near-term goal unless one of those outcomes
 requires it. Every milestone must continue to preserve:
@@ -43,7 +45,69 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Persistent Incremental Builds
+## Now: Standard Library Usability
+
+The language core can already express ownership-sensitive containers and
+effectful programs, but the library surface is not yet sufficient for ordinary
+command-line applications. `String` owns validated UTF-8 but lacks borrowed
+text, character iteration, search, and formatting. `Array`, `Slice`, and
+`Vec` do not yet share a consistent safe-access and algorithm vocabulary.
+There is no host-facing `std` layer, and `test("name")` registrations return
+only a boolean without standard assertions or structured failures.
+
+This milestone fills those gaps before adding more language features. It is
+delivered in small end-to-end slices:
+
+1. fix the module, error, naming, and ownership contracts for the minimum
+   standard-library surface;
+2. complete UTF-8 text and common collection operations;
+3. add parsing and source-backed formatting needed by IO and test messages;
+4. add explicit synchronous console, process, and filesystem authority;
+5. build assertion helpers and runner ergonomics on the same formatting and IO
+   contracts.
+
+The small prelude remains small. APIs live in explicit `std` modules, safe
+operations preserve UTF-8 and collection initialization invariants, and host
+operations require visible authority rather than introducing ambient IO.
+
+Exit conditions:
+
+- a standard-library surface document records the initial module map,
+  naming conventions, ownership modes, error types, trap-versus-`Option` or
+  `Result` behavior, and portability boundary;
+- text has a zero-allocation runtime string literal, an invariant-preserving
+  borrowed UTF-8 view, a Unicode scalar value, byte and scalar iteration,
+  boundary-safe slicing, comparison, common search, and corresponding
+  `String` construction and mutation operations;
+- `Array`, `Slice`, and `Vec` share `len`, `is_empty`, checked access,
+  first/last access, slicing or slice conversion, shared and mutable
+  iteration, common mutation, and search/fold predicates where their ownership
+  permits;
+- `Option` and `Result` expose common inspection, borrowing, transformation,
+  and fallback operations, and primitive numbers expose bounded conversion
+  and basic utility functions without bypassing checked arithmetic;
+- integer, boolean, Unicode scalar, and text parsing or formatting is
+  sufficient for diagnostics, console output, and assertion messages without
+  macros or reflection;
+- a real `std` host layer provides process arguments, synchronous stdin,
+  stdout and stderr, and deterministic file open/read/write/close with
+  explicit IO authority and recoverable errors;
+- standard test support provides `assert`, equality and inequality
+  assertions, explicit failure, common `Option`/`Result` expectations, and
+  messages that identify the failing registration without aborting the
+  remaining runner;
+- `salic test` can list and filter registrations, while dependency tests
+  remain isolated unless their package is selected;
+- native examples exercise text parsing, collection processing, file or
+  console IO, and standard assertions with deterministic cleanup and no
+  allocation leaks.
+
+The first milestone does not include Unicode normalization, locale-sensitive
+case mapping or collation, grapheme segmentation, regex, hash collections,
+networking, asynchronous IO, formatting macros or interpolation syntax,
+property testing, mocking, or benchmarking.
+
+## Next: Persistent Incremental Builds
 
 The existing schema-1 fingerprint already identifies the semantic and native
 inputs to one selected package-graph target. This milestone turns that
@@ -76,7 +140,7 @@ This milestone does not promise per-package reuse, cross-compiler cache
 compatibility, remote caching, eviction policy, or a stable binary artifact
 format.
 
-## Next: LSP Diagnostics Baseline
+## Later: LSP Diagnostics Baseline
 
 The transport-independent editor API already exposes UTF-8 byte ranges,
 UTF-16 positions, tokens, and phased diagnostics. The next milestone adds a
@@ -156,8 +220,10 @@ These gaps need an accepted contract and sequencing decision before entering
 the executable queue:
 
 - per-package incremental reuse based on dependency interface digests;
-- host-facing `std` APIs with explicit IO, process, time, and filesystem
-  authority;
+- networking, asynchronous IO, time, subprocess, and platform-service APIs;
+- Unicode normalization, grapheme segmentation, locale-sensitive text, and
+  regular expressions;
+- hash maps, hash sets, and a stable hashing contract;
 - completion and partial-program analysis;
 - the currently diagnosed async shapes: recursive erasure, effectful loop
   conditions, nested residual iteration, and move-only backedge factories;
