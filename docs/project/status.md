@@ -259,6 +259,14 @@ The C import boundary supports validated ASCII link names and the documented int
 subset. Foreign calls require `unsafe`. Stable exported aggregates, a frozen Salicin ABI, registry
 dependencies, workspaces, and a distribution format are not defined.
 
+The experimental native [ABI representation audit](abi-review.md) specifies
+the current 64-bit host-target mapping for every emitted first-class value.
+Unit parameters are erased, borrows are pointers, owned values and aggregates
+pass directly, effect rows are specialized out of direct calls, `Throws` uses
+its `Result` return boundary, and compiler-owned continuation records contain
+entry, drop, environment, and active-flag pointers. Native calling agreement
+and exported Salicin linkage remain the active ABI milestones.
+
 ## Standard Library
 
 The source library is split into:

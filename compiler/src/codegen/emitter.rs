@@ -1189,11 +1189,7 @@ impl<'a> FunctionEmitter<'a> {
             if emitted_parameter_count != 0 {
                 self.output.push_str(", ");
             }
-            let abi_ty = if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
-                "ptr".to_owned()
-            } else {
-                llvm_value_type(&parameter.ty)?
-            };
+            let abi_ty = llvm_parameter_type(&parameter.ty, parameter.mode)?;
             self.output.push_str(&format!("{abi_ty} %arg.{index}"));
             emitted_parameter_count += 1;
         }
@@ -4414,6 +4410,14 @@ fn llvm_return_type(ty: &Ty) -> Result<String, Diagnostic> {
     }
 }
 
+fn llvm_parameter_type(ty: &Ty, mode: PassMode) -> Result<String, Diagnostic> {
+    if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+        Ok("ptr".to_owned())
+    } else {
+        llvm_value_type(ty)
+    }
+}
+
 fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
     match ty {
         Ty::I8 | Ty::U8 => Ok("i8".to_owned()),
@@ -4626,5 +4630,86 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
         _ => Err(Diagnostic::new(format!(
             "internal error: constant value does not have type `{ty}`"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{llvm_field_type, llvm_parameter_type, llvm_return_type, llvm_value_type};
+    use crate::ast::PassMode;
+    use crate::codegen::hir::Ty;
+
+    #[test]
+    fn native_abi_scalar_pointer_and_unit_representations_are_explicit() {
+        for (ty, expected) in [
+            (Ty::I8, "i8"),
+            (Ty::U16, "i16"),
+            (Ty::I32, "i32"),
+            (Ty::U64, "i64"),
+            (Ty::I128, "i128"),
+            (Ty::Bool, "i1"),
+        ] {
+            assert_eq!(llvm_value_type(&ty).unwrap(), expected);
+        }
+        assert_eq!(
+            llvm_value_type(&Ty::USize).unwrap(),
+            format!("i{}", usize::BITS)
+        );
+        assert_eq!(
+            llvm_value_type(&Ty::Pointer {
+                pointee: Box::new(Ty::I32),
+                mutable: true,
+            })
+            .unwrap(),
+            "ptr"
+        );
+        assert_eq!(llvm_return_type(&Ty::Unit).unwrap(), "void");
+        assert_eq!(llvm_field_type(&Ty::Unit).unwrap(), "[0 x i8]");
+        assert!(llvm_value_type(&Ty::Unit).is_err());
+        assert!(llvm_value_type(&Ty::Never).is_err());
+        for mode in [PassMode::Borrow, PassMode::MutBorrow] {
+            assert_eq!(llvm_parameter_type(&Ty::I128, mode).unwrap(), "ptr");
+        }
+        for mode in [PassMode::Inferred, PassMode::Copy, PassMode::Move] {
+            assert_eq!(llvm_parameter_type(&Ty::I128, mode).unwrap(), "i128");
+        }
+    }
+
+    #[test]
+    fn native_abi_aggregate_and_runtime_effect_records_are_explicit() {
+        assert_eq!(
+            llvm_value_type(&Ty::Tuple(vec![Ty::I8, Ty::Bool])).unwrap(),
+            "{ i8, i1 }"
+        );
+        assert_eq!(
+            llvm_value_type(&Ty::Array(Box::new(Ty::U32), 4)).unwrap(),
+            "[4 x i32]"
+        );
+        assert_eq!(
+            llvm_value_type(&Ty::Reference {
+                pointee: Box::new(Ty::Slice(Box::new(Ty::U8))),
+                mutable: false,
+                region: None,
+            })
+            .unwrap(),
+            "{ ptr, i64 }"
+        );
+        assert_eq!(
+            llvm_value_type(&Ty::Continuation {
+                input: Box::new(Ty::I32),
+                output: Box::new(Ty::Bool),
+            })
+            .unwrap(),
+            "%salicin.continuation"
+        );
+        assert_eq!(
+            llvm_value_type(&Ty::EffectCallable {
+                input: Box::new(Ty::I32),
+                output: Box::new(Ty::Bool),
+                answer: Box::new(Ty::I64),
+            })
+            .unwrap(),
+            "%salicin.effect_callable"
+        );
     }
 }

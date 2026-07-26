@@ -1,3 +1,6 @@
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("Salicin currently supports only 64-bit compiler hosts and native targets");
+
 pub mod alloc;
 pub mod ast;
 mod cleanup;

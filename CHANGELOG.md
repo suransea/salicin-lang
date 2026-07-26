@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Audited and documented the experimental native ABI representation for
+  scalars, pointers, borrows, slices, aggregates, enums, callables, effects,
+  ownership modes, continuations, and effect callables. Low-level tests pin
+  value, parameter, field, and return mappings; the compiler now rejects
+  non-64-bit hosts explicitly because allocator and slice records currently
+  use 64-bit sizes. The audit records whole-program ownership and internal
+  linkage as inputs to the following call and linkage milestones.
+
 ## 0.200.0 - 2026-07-26
 
 - Specialized recurring async `loop`, pre-test `while`, and post-test `while`

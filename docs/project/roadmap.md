@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: ABI Review And Interoperability
+## Current Milestone: Native Calling Convention
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -27,9 +27,11 @@ suspension, and residual handler specialization for supported state shapes.
 Unsupported recursive, self-referential, move-only backedge, effectful
 condition, and nested residual iteration shapes receive source diagnostics.
 
-The current milestone audits runtime representations and calling boundaries,
-then defines native calls, linkage, and verified C interoperability in that
-order. It is an experimental ABI definition, not a 1.0 stability promise.
+The runtime representation audit is complete. The current milestone defines
+native runtime parameter groups, returns, ownership transfer, cleanup
+responsibility, effect lowering, and error propagation. Linkage and verified C
+interoperability follow in that order. This remains an experimental ABI
+definition, not a 1.0 stability promise.
 
 ## Test Throughput Foundation
 
@@ -62,7 +64,7 @@ Trait requirements remain bodyless; user opaque types are a separate design prob
 This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not
 introduce `@` syntax, and `foreign` is not a variant of `builtin`.
 
-## Completed Milestone: ABI And Compiler Definitions
+## Completed Foundation: C Forms And Compiler Definitions
 
 This milestone followed the direct-tail suspended residual async slice and
 completed before the remaining async shapes, formatter, LSP, package, or
@@ -80,33 +82,21 @@ Exit conditions:
 - source, contract, cross-module, LLVM, and native tests cover the three
   boundaries independently.
 
-## Next Milestone: ABI Review And Interoperability
+## Completed ABI Representation Review
 
-This milestone begins as soon as async residual specialization is complete.
 The existing `struct(c)`, `foreign(c, ...)`, and core-private `builtin()`
 source forms remain the foundation; they are not reopened as competing syntax.
-It takes priority over formatter, LSP, package, and incremental-compilation
-work; no other milestone is scheduled between async completion and this review.
+The [ABI review](abi-review.md) records the implemented 64-bit host-target
+representation for scalars, pointers, aggregates, enums, callables,
+continuations, effect callables, and ownership modes. Low-level tests pin the
+mapping, unsupported first-class values fail before LLVM emission, and
+non-64-bit compiler hosts are rejected explicitly.
 
-Work proceeds in this order:
-
-1. audit runtime representations at function, module, and foreign boundaries;
-2. define the experimental native Salicin calling convention, including
-   ownership, cleanup, effects, and error propagation;
-3. define exported symbol identity and separately compiled module agreement;
-4. verify the supported C surface with cross-language layout and call tests.
-
-Exit conditions:
-
-- every supported boundary type has one documented target-aware representation;
-- unsupported types fail at source declarations rather than during LLVM emission
-  or linking;
-- separately compiled callers and callees agree on ownership and cleanup;
-- symbol collisions and incompatible declarations have deterministic
-  diagnostics;
-- C layout and calls are tested against a C compiler on supported targets.
-
-This milestone does not promise a stable ABI or freeze symbol mangling for 1.0.
+The review also confirms the remaining boundaries: owned call responsibility
+is whole-program behavior rather than a separately compiled contract, ordinary
+Salicin symbols remain internal, and C aggregate calls need cross-language
+verification. These feed `ABI-CALL-1`, `ABI-LINK-1`, and `ABI-C-1`
+respectively.
 
 ## Later Ecosystem Milestone
 

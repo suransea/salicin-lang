@@ -13,17 +13,11 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-Execution order is strict: perform the four ABI tasks in listed order. Tooling
-and package work does not begin before the ABI review is complete.
+Execution order is strict: perform the three remaining ABI tasks in listed
+order. Tooling and package work does not begin before the ABI sequence is
+complete.
 
-## P0: ABI Review And Interoperability
-
-- [ ] **ABI-REVIEW-1: Audit runtime representations and calling boundaries**
-
-Specify and verify the target-dependent representation passed across function,
-module, and foreign boundaries for primitives, pointers, aggregates, enums,
-callables, effects, and ownership modes. Keep this an experimental ABI review,
-not a stability promise.
+## P0: Native Calling Convention
 
 - [ ] **ABI-CALL-1: Define the native Salicin calling convention**
 
@@ -46,7 +40,7 @@ definitions orthogonal to this boundary.
 
 ## P1: Tooling And Packages
 
-Entry gate: all four P0 ABI tasks are complete.
+Entry gate: all three P0 ABI tasks are complete.
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

@@ -41,6 +41,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 - [Implementation status](project/status.md): supported behavior and known boundaries.
 - [Language roadmap](project/roadmap.md): milestone order, exit conditions, and deferrals.
 - [Project TODO](project/todo.md): unfinished tasks and their acceptance criteria.
+- [Experimental ABI review](project/abi-review.md): current runtime representations and boundary
+  gaps.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.
