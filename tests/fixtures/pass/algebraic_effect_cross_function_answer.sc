@@ -8,8 +8,8 @@ let choose_value(): bool with(Decide) = {
 
 let main(): i32 = {
   Decide.handle choose { (resume) -> resume(true) } action {
-    if choose_value() { 42 } else { 0 }
-  }
+      if choose_value() { 42 } else { 0 }
+    }
 }
 
 test("algebraic_effect_cross_function_answer.sc") {

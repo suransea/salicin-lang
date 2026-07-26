@@ -4,8 +4,8 @@ let Maybe(T: type) = enum {
 }
 
 let unwrap(move value: Maybe(i32)): i32 = { match value
-  { Some(item) -> item }
-  { None -> 0 }
+    { Some(item) -> item }
+    { None -> 0 }
 }
 
 let main(): i32 = { unwrap(Maybe(i32).Some(42)) }

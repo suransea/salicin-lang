@@ -1,10 +1,12 @@
 let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
   }
-  }}
+}
 
 let make(counter: Ptr(mut)(i32)): Array(Resource)(2) = { [Resource { counter: counter }, Resource { counter: counter }] }
 

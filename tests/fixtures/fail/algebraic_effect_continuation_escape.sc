@@ -4,9 +4,9 @@ let Ask = effect {
 
 let main(): i32 = {
   Ask.handle value { (resume) ->
-    let escaped = resume
-    42
-  } action {
-    Ask.value()
-  }
+      let escaped = resume
+      42
+    } action {
+      Ask.value()
+    }
 }

@@ -39,14 +39,14 @@ let shared(offset: borrow(i32)): i32 = {
     value
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let first = future.poll()
-    let second = future.poll()
-    match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let first = future.poll()
+      let second = future.poll()
+      match first
+        { Pending -> match second
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let mutable(value: borrow(mut)(i32)): i32 = {
@@ -56,14 +56,14 @@ let mutable(value: borrow(mut)(i32)): i32 = {
     value
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let first = future.poll()
-    let second = future.poll()
-    match first
-      { Pending -> match second
-        { Ready(result) -> result }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let first = future.poll()
+      let second = future.poll()
+      match first
+        { Pending -> match second
+          { Ready(result) -> result }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let cancelled(value: borrow(mut)(i32)): i32 = {
@@ -74,10 +74,10 @@ let cancelled(value: borrow(mut)(i32)): i32 = {
       value
     }
     let handled: () = Ask.handle ask { (resume) -> resume(40) } action {
-      match future.poll()
-        { Pending -> () }
-        { Ready(_) -> () }
-    }
+        match future.poll()
+          { Pending -> () }
+          { Ready(_) -> () }
+      }
     handled
   }
   value = 42

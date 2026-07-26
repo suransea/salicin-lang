@@ -7,6 +7,6 @@ let main(): i32 = {
       resume(20);
       resume(22)
     } action {
-    Choose.choose()
-  }
+      Choose.choose()
+    }
 }

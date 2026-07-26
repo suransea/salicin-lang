@@ -13,9 +13,9 @@ let main(): i32 = {
   let left: i32 = 0
   let right: i32 = 1
   Step.handle tick { (resume) ->
-    resume(())
-  } action {
-    update(values[left], values[right])
-    values[0] + values[1]
-  }
+      resume(())
+    } action {
+      update(values[left], values[right])
+      values[0] + values[1]
+    }
 }

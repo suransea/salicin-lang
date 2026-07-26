@@ -5,6 +5,6 @@ let Ask = effect {
 
 let main(): i32 = {
   Ask.handle value { (input, resume) -> resume(input) } action {
-    Ask.value(left: 42)
-  }
+      Ask.value(left: 42)
+    }
 }

@@ -6,9 +6,11 @@ let Resource = struct {
 }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let Step = struct {

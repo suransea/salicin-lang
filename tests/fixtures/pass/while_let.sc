@@ -26,7 +26,7 @@ let main(): i32 = {
         total = total + value
       }
       { None -> break() }
-    }
+  }
   total
 }
 

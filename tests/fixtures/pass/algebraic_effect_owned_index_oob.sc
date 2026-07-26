@@ -15,10 +15,10 @@ let program(index: i32): i32 with(Step) = {
 
 let main(): i32 = {
   Step.handle delta { (resume) ->
-    resume(2)
-  } action {
-    program(1)
-  }
+      resume(2)
+    } action {
+      program(1)
+    }
 }
 
 test("algebraic_effect_owned_index_oob.sc") {

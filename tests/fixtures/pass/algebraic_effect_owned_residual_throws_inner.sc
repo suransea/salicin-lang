@@ -11,9 +11,11 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let accept(fail: bool): i32 with(Throws(bool)) = {
@@ -30,11 +32,11 @@ let update(state: borrow(mut)(State), fail: bool): i32 with(Step, Throws(bool)) 
 let run(drops: Ptr(mut)(i32), fail: bool, abandon: bool): i32 = {
   let mut state = State { value: 20, drops: drops }
   Step.handle delta { (resume) ->
-    if abandon { 40 } else { resume(1) }
-  } action {
-    let result: Result(bool)(i32) = try { update(state, fail) }
-    result ?? 5
-  }
+      if abandon { 40 } else { resume(1) }
+    } action {
+      let result: Result(bool)(i32) = try { update(state, fail) }
+      result ?? 5
+    }
 }
 
 let main(): i32 = {

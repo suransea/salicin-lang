@@ -10,9 +10,11 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let update(
@@ -29,15 +31,17 @@ let unsafe_outside(
   drops: Ptr(mut)(i32),
   calls: Ptr(mut)(i32),
   abandon: bool,
-): i32 = { unsafe {
-  let mut state = State { value: 20, drops: drops }
-  Step.handle delta { (resume) ->
-    if abandon { 40 } else { resume(1) }
-  } action {
-    let value = update(state, calls)
-    value + state.value
+): i32 = {
+  unsafe {
+    let mut state = State { value: 20, drops: drops }
+    Step.handle delta { (resume) ->
+        if abandon { 40 } else { resume(1) }
+      } action {
+        let value = update(state, calls)
+        value + state.value
+      }
   }
-} }
+}
 
 let unsafe_inside(
   drops: Ptr(mut)(i32),
@@ -46,11 +50,13 @@ let unsafe_inside(
 ): i32 = {
   let mut state = State { value: 20, drops: drops }
   Step.handle delta { (resume) ->
-    if abandon { 40 } else { resume(1) }
-  } action { unsafe {
-    let value = update(state, calls)
-    value + state.value
-  } }
+      if abandon { 40 } else { resume(1) }
+    } action {
+      unsafe {
+        let value = update(state, calls)
+        value + state.value
+      }
+    }
 }
 
 let main(): i32 = {

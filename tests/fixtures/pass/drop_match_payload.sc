@@ -5,24 +5,27 @@ extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }}
+  }
+}
 
 let consume(move value: Resource): () = { () }
 
 let inspect(move choice: Choice): i32 = { match choice
-  { Pair(left, _) -> do {
-    consume(left)
-    42
-  } }
-  { None -> 0 }
+    { Pair(left, _) -> do {
+        consume(left)
+        42
+      }
+    }
+    { None -> 0 }
 }
 
 let escape(move choice: Choice): i32 = { match choice
-  { Pair(left, _) -> do {
-    consume(left)
-    return(42)
-  } }
-  { None -> 0 }
+    { Pair(left, _) -> do {
+        consume(left)
+        return(42)
+      }
+    }
+    { None -> 0 }
 }
 
 let main(): i32 = {

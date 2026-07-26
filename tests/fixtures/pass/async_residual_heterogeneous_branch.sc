@@ -90,29 +90,29 @@ let run(drops: Ptr(mut)(i32), first: bool): i32 = {
     }
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let pending = future.poll()
-    let ready = future.poll()
-    match pending
-      { Pending -> match ready
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let pending = future.poll()
+      let ready = future.poll()
+      match pending
+        { Pending -> match ready
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let cancel(drops: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (resume) -> resume(40) } action {
-    let mut future = async {
-      if false {
-        await First { drops: drops, polls: 0, value: Ask.ask() }
-      } else {
-        await Second { drops: drops, polls: 0, value: Ask.ask() }
+      let mut future = async {
+        if false {
+          await First { drops: drops, polls: 0, value: Ask.ask() }
+        } else {
+          await Second { drops: drops, polls: 0, value: Ask.ask() }
+        }
       }
+      match future.poll()
+        { Pending -> 42 }
+        { Ready(_) -> 0 }
     }
-    match future.poll()
-      { Pending -> 42 }
-      { Ready(_) -> 0 }
-  }
 }
 
 let run_match(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
@@ -124,14 +124,14 @@ let run_match(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
         await Second { drops: drops, polls: 0, value: Ask.ask() + offset } }
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let pending = future.poll()
-    let ready = future.poll()
-    match pending
-      { Pending -> match ready
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let pending = future.poll()
+      let ready = future.poll()
+      match pending
+        { Pending -> match ready
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let run_wrapped(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
@@ -145,31 +145,31 @@ let run_wrapped(drops: Ptr(mut)(i32), move choice: Choice): i32 = {
     value + retained.offset
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let pending = future.poll()
-    let ready = future.poll()
-    match pending
-      { Pending -> match ready
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let pending = future.poll()
+      let ready = future.poll()
+      match pending
+        { Pending -> match ready
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let cancel_wrapped(drops: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (resume) -> resume(40) } action {
-    let mut future = async {
-      let retained = Retained { drops: drops, offset: 2 }
-      let value = await if false {
-        First { drops: drops, polls: 0, value: Ask.ask() }
-      } else {
-        Second { drops: drops, polls: 0, value: Ask.ask() }
+      let mut future = async {
+        let retained = Retained { drops: drops, offset: 2 }
+        let value = await if false {
+          First { drops: drops, polls: 0, value: Ask.ask() }
+        } else {
+          Second { drops: drops, polls: 0, value: Ask.ask() }
+        }
+        value + retained.offset
       }
-      value + retained.offset
+      match future.poll()
+        { Pending -> 42 }
+        { Ready(_) -> 0 }
     }
-    match future.poll()
-      { Pending -> 42 }
-      { Ready(_) -> 0 }
-  }
 }
 
 let main(): i32 = {

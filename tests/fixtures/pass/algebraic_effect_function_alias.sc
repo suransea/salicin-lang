@@ -8,10 +8,10 @@ let ask(): i32 with(Ask) = {
 
 let main(): i32 = {
   Ask.handle value { (resume) -> resume(42) } action {
-    let action = ask
-    let forwarded = action
-    forwarded()
-  }
+      let action = ask
+      let forwarded = action
+      forwarded()
+    }
 }
 
 test("algebraic_effect_function_alias.sc") {

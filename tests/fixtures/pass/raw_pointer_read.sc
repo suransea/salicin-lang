@@ -1,6 +1,7 @@
-let read(pointer: Ptr(i32)): i32 = { unsafe {
-  *pointer
-}
+let read(pointer: Ptr(i32)): i32 = {
+  unsafe {
+    *pointer
+  }
 }
 
 let main(): i32 = {

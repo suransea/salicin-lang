@@ -10,8 +10,8 @@ let program(): i32 with(State(i32)) = {
 let main(): i32 = {
   let answer = 40
   State(i32).handle get { (resume) -> resume(answer) } action {
-    program() + 1
-  }
+      program() + 1
+    }
 }
 
 test("algebraic_effect_function_propagation.sc") {

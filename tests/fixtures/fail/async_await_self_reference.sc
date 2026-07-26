@@ -8,4 +8,6 @@ let main(): i32 = {
   0
 }
 
-let child() = { async { 1 } }
+let child() = {
+  async { 1 }
+}

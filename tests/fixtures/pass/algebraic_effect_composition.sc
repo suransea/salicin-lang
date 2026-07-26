@@ -12,10 +12,10 @@ let program(): i32 with(Read, Add) = {
 
 let main(): i32 = {
   Read.handle read { (resume) -> resume(20) } action {
-    Add.handle add { (x, resume) -> resume(x + Read.read() + 2) } action {
-      program()
+      Add.handle add { (x, resume) -> resume(x + Read.read() + 2) } action {
+        program()
+      }
     }
-  }
 }
 
 test("algebraic_effect_composition.sc") {

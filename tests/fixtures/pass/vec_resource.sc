@@ -7,10 +7,12 @@ extend Resource {
 }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
   }
-  }}
+}
 
 let main(): i32 = {
   let counter = unsafe {

@@ -4,6 +4,6 @@ let Abort = effect {
 
 let main(): i32 = {
   Abort.handle stop { (value, resume) -> resume(value) } action {
-    Abort.stop(42)
-  }
+      Abort.stop(42)
+    }
 }

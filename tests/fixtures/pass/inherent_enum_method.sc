@@ -5,8 +5,8 @@ let Choice = enum {
 
 extend Choice {
   let unwrap(move self)(): i32 = { match self
-    { Choice.Answer( answer: value ) -> value }
-    { Choice.Empty -> 0 }
+      { Choice.Answer( answer: value ) -> value }
+      { Choice.Empty -> 0 }
   }
 }
 

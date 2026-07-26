@@ -4,16 +4,18 @@ let Choice = enum { Pair(Resource, Resource), None }
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
-  }}
+  }
+}
 
 let consume(move value: Resource): () = { () }
 
 let main(): i32 = { match Choice.Pair(Resource { value: 1 }, Resource { value: 0 })
-  { Pair(left, _) -> do {
-    consume(left)
-    0
-  } }
-  { None -> 0 }
+    { Pair(left, _) -> do {
+        consume(left)
+        0
+      }
+    }
+    { None -> 0 }
 }
 
 test("drop_match_payload_trap.sc") {

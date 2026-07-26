@@ -8,9 +8,11 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let walk(state: borrow(mut)(State), count: i32): i32 with(Step) = {
@@ -26,10 +28,10 @@ let walk(state: borrow(mut)(State), count: i32): i32 with(Step) = {
 let run(drops: Ptr(mut)(i32), abandon: bool): i32 = {
   let mut state = State { value: 18, drops: drops }
   let result = Step.handle delta { (resume) ->
-    if abandon { 40 } else { resume(1) }
-  } action {
-    walk(state, 2)
-  }
+      if abandon { 40 } else { resume(1) }
+    } action {
+      walk(state, 2)
+    }
   result + state.value
 }
 

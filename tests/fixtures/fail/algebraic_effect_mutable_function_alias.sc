@@ -8,7 +8,7 @@ let ask(): i32 with(Ask) = {
 
 let main(): i32 = {
   Ask.handle value { (resume) -> resume(42) } action {
-    let mut action = ask
-    action()
-  }
+      let mut action = ask
+      action()
+    }
 }

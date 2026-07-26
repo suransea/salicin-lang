@@ -12,10 +12,11 @@ let invalid(move bytes: Vec(u8), expected_prefix: u64, expected_length: u64): bo
   match String.from_utf8(bytes)
     { Ok(_) -> false }
     { Err(error) -> do {
-      let prefix_matches = error.valid_up_to() == expected_prefix
-      let recovered = error.into_bytes()
-      prefix_matches && recovered.len() == expected_length
-    } }
+        let prefix_matches = error.valid_up_to() == expected_prefix
+        let recovered = error.into_bytes()
+        prefix_matches && recovered.len() == expected_length
+      }
+    }
 }
 
 let ascii(): Vec(u8) = {

@@ -14,9 +14,9 @@ let main(): i32 = {
       resume(())
     }
     action {
-    State(i32).put(add_two(State(i32).get()))
-    State(i32).get()
-  }
+      State(i32).put(add_two(State(i32).get()))
+      State(i32).get()
+    }
 }
 
 test("algebraic_effect_handler.sc") {

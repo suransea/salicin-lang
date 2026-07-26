@@ -5,41 +5,47 @@ extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }}
+  }
+}
 
 let consume(move value: Resource): () = { () }
 
 let guard_false(move choice: Choice): i32 = { match choice
-  { Pair(left, _) if left.value == 0 -> do {
-    consume(left)
-    0
-  } }
-  { Pair(left, _) -> do {
-    consume(left)
-    21
-  } }
-  { None -> 0 }
+    { Pair(left, _) if left.value == 0 -> do {
+        consume(left)
+        0
+      }
+    }
+    { Pair(left, _) -> do {
+        consume(left)
+        21
+      }
+    }
+    { None -> 0 }
 }
 
 let guard_true(move choice: Choice): i32 = { match choice
-  { Pair(left, _) if left.value == 1 -> do {
-    consume(left)
-    21
-  } }
-  { Pair(left, _) -> do {
-    consume(left)
-    0
-  } }
-  { None -> 0 }
+    { Pair(left, _) if left.value == 1 -> do {
+        consume(left)
+        21
+      }
+    }
+    { Pair(left, _) -> do {
+        consume(left)
+        0
+      }
+    }
+    { None -> 0 }
 }
 
 let guard_return(move choice: Choice): i32 = { match choice
-  { Pair(left, _) if return(42) -> 0 }
-  { Pair(left, _) -> do {
-    consume(left)
-    0
-  } }
-  { None -> 0 }
+    { Pair(left, _) if return(42) -> 0 }
+    { Pair(left, _) -> do {
+        consume(left)
+        0
+      }
+    }
+    { None -> 0 }
 }
 
 let main(): i32 = {

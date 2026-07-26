@@ -106,7 +106,7 @@ pub let match(
   Output: type,
   E: effect,
   ...Cases: parameters,
-  )
+)
   (move input: Input)
   ...Cases: Output with(E) = builtin()
 

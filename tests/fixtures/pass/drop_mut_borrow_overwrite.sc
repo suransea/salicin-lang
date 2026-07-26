@@ -5,7 +5,8 @@ extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }}
+  }
+}
 
 let replace_root(target: borrow(mut)(Resource))(move replacement: Resource): () = {
   target = replacement

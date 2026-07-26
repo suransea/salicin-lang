@@ -12,9 +12,11 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let update(state: borrow(mut)(State)): i32 with(Audit, Step) = {
@@ -31,15 +33,15 @@ let audit_outside(
 ): i32 = {
   let mut state = State { value: 20, drops: drops }
   Audit.handle adjust { (resume) ->
-    if abandon_audit { 40 } else { resume(1) }
-  } action {
-    Step.handle delta { (resume) ->
-      if abandon_step { 40 } else { resume(1) }
+      if abandon_audit { 40 } else { resume(1) }
     } action {
-      let value = update(state)
-      value + state.value
+      Step.handle delta { (resume) ->
+        if abandon_step { 40 } else { resume(1) }
+      } action {
+        let value = update(state)
+        value + state.value
+      }
     }
-  }
 }
 
 let step_outside(
@@ -49,15 +51,15 @@ let step_outside(
 ): i32 = {
   let mut state = State { value: 20, drops: drops }
   Step.handle delta { (resume) ->
-    if abandon_step { 40 } else { resume(1) }
-  } action {
-    Audit.handle adjust { (resume) ->
-      if abandon_audit { 40 } else { resume(1) }
+      if abandon_step { 40 } else { resume(1) }
     } action {
-      let value = update(state)
-      value + state.value
+      Audit.handle adjust { (resume) ->
+        if abandon_audit { 40 } else { resume(1) }
+      } action {
+        let value = update(state)
+        value + state.value
+      }
     }
-  }
 }
 
 let main(): i32 = {

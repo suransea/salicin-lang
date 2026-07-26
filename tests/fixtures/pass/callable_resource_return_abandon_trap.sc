@@ -4,7 +4,8 @@ extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }}
+  }
+}
 
 let finish(move resource: Resource)(value: i32): i32 = { value }
 

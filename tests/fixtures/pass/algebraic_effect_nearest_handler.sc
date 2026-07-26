@@ -4,11 +4,11 @@ let Read = effect {
 
 let main(): i32 = {
   Read.handle read { (resume) -> resume(40) } action {
-    let inner = Read.handle read { (resume) -> resume(2) } action {
-      Read.read()
+      let inner = Read.handle read { (resume) -> resume(2) } action {
+        Read.read()
+      }
+      inner + Read.read()
     }
-    inner + Read.read()
-  }
 }
 
 test("algebraic_effect_nearest_handler.sc") {

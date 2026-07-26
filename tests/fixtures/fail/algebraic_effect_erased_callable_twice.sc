@@ -8,8 +8,8 @@ let apply_twice(move action: (): i32 with(Ask)): i32 with(Ask) = {
 
 let run(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(21) } action {
-    apply_twice(action)
-  }
+      apply_twice(action)
+    }
 }
 
 let main(): i32 = {

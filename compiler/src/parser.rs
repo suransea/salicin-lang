@@ -1343,9 +1343,11 @@ impl Parser {
                     .flatten()
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
-                HeaderGroup::Runtime(
-                    self.runtime_parameter_group(allow_receiver, &modifier_parameters)?,
-                )
+                HeaderGroup::Runtime(self.runtime_parameter_group(
+                    allow_receiver,
+                    &modifier_parameters,
+                    true,
+                )?)
             };
             match group {
                 HeaderGroup::Compile(params) => {
@@ -1418,8 +1420,11 @@ impl Parser {
                     .filter(|parameter| parameter.kind.is_parameter_modifier())
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
-                runtime_groups
-                    .push(self.runtime_parameter_group(allow_receiver, &passing_parameters)?);
+                runtime_groups.push(self.runtime_parameter_group(
+                    allow_receiver,
+                    &passing_parameters,
+                    true,
+                )?);
                 self.take_newlines_if_followed_by(&[
                     TokenKind::LParen,
                     TokenKind::Colon,
@@ -1929,8 +1934,11 @@ impl Parser {
         &mut self,
         allow_receiver: bool,
         modifier_parameters: &HashSet<String>,
+        record_layout: bool,
     ) -> Result<Vec<Param>, ParseError> {
-        self.layout.parameter_groups.push(self.current().start_byte);
+        if record_layout {
+            self.layout.parameter_groups.push(self.current().start_byte);
+        }
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
         if self.take(&TokenKind::RParen) {
@@ -2693,7 +2701,6 @@ impl Parser {
 
     fn parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
         if self.untyped_closure_parameter_group_follows() {
-            self.layout.parameter_groups.push(self.current().start_byte);
             self.expect(&TokenKind::LParen, "`(`")?;
             let mut parameters = Vec::new();
             loop {
@@ -2717,7 +2724,7 @@ impl Parser {
             }
             return Ok(parameters);
         }
-        self.runtime_parameter_group(false, &HashSet::new())
+        self.runtime_parameter_group(false, &HashSet::new(), false)
     }
 
     fn untyped_closure_parameter_group_follows(&self) -> bool {

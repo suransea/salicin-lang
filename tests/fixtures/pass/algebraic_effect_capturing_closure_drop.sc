@@ -5,9 +5,12 @@ let Abort = effect {
 let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }}
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
+}
 
 let consume(move resource: Resource): i32 = { 0 }
 
@@ -17,13 +20,13 @@ let main(): i32 = {
   }
   unsafe { *counter = 0 }
   let result = Abort.handle stop { (resume) -> 41 } action {
-    let resource = Resource { counter: counter }
-    let action: (): i32 with(Abort) = { () ->
-      let value = Abort.stop()
-      value + consume(resource)
+      let resource = Resource { counter: counter }
+      let action: (): i32 with(Abort) = { () ->
+        let value = Abort.stop()
+        value + consume(resource)
+      }
+      action()
     }
-    action()
-  }
   let drops = unsafe { *counter }
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))

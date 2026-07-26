@@ -8,9 +8,11 @@ let Resource = struct {
 }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let consume(move resource: Resource): i32 = {
@@ -27,34 +29,34 @@ let apply_input(seed: i32, move action: (i32): i32 with(Ask)): i32 with(Ask) = {
 
 let run(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(10) } action {
-    apply(action)
-  }
+      apply(action)
+    }
 }
 
 let outer(move action: (): i32 with(Ask), abandon: bool): i32 = {
   Ask.handle value { (resume) ->
-    if abandon { 40 } else { resume(20) }
-  } action {
-    run(action)
-  }
+      if abandon { 40 } else { resume(20) }
+    } action {
+      run(action)
+    }
 }
 
 let discard(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(0) } action {
-    42
-  }
+      42
+    }
 }
 
 let run_input(move action: (i32): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(10) } action {
-    apply_input(11, action)
-  }
+      apply_input(11, action)
+    }
 }
 
 let outer_input(move action: (i32): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(20) } action {
-    run_input(action)
-  }
+      run_input(action)
+    }
 }
 
 let execute(drops: Ptr(mut)(i32), abandon: bool): i32 = {

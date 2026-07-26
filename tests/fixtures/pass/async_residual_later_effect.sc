@@ -61,44 +61,44 @@ let run_success(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
     value + retained.value + Ask.ask()
   }
   Ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
-    let pending = future.poll()
-    let ready = future.poll()
-    match pending
-      { Pending -> match ready
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let pending = future.poll()
+      let ready = future.poll()
+      match pending
+        { Pending -> match ready
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 let run_cancelled(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (resume) -> resume(record(calls, 1)) } action {
-    let mut future = async {
-      let retained = Resource { drops: drops, value: 1 }
-      let value = await Step { drops: drops, polls: 0, value: 40 }
-      value + retained.value + Ask.ask()
+      let mut future = async {
+        let retained = Resource { drops: drops, value: 1 }
+        let value = await Step { drops: drops, polls: 0, value: 40 }
+        value + retained.value + Ask.ask()
+      }
+      match future.poll()
+        { Pending -> 42 }
+        { Ready(_) -> 0 }
     }
-    match future.poll()
-      { Pending -> 42 }
-      { Ready(_) -> 0 }
-  }
 }
 
 let run_abandoned(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (_) -> record(calls, 42) } action {
-    let mut future = async {
-      let retained = Resource { drops: drops, value: 1 }
-      let value = await Step { drops: drops, polls: 0, value: 40 }
-      value + retained.value + Ask.ask()
+      let mut future = async {
+        let retained = Resource { drops: drops, value: 1 }
+        let value = await Step { drops: drops, polls: 0, value: 40 }
+        value + retained.value + Ask.ask()
+      }
+      let pending = future.poll()
+      let ready = future.poll()
+      match pending
+        { Pending -> match ready
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
     }
-    let pending = future.poll()
-    let ready = future.poll()
-    match pending
-      { Pending -> match ready
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
 }
 
 let main(): i32 = {

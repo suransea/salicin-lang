@@ -1,11 +1,11 @@
 let sum(pair: (i32, i32)): i32 = { match pair
-  { (left, right) -> left + right }
+    { (left, right) -> left + right }
 }
 
 let singleton(value: (i32,)): i32 = { value.0 }
 
 let nested(value: ((i32, i32), i32)): i32 = { match value
-  { ((_, inner), tail) -> inner + tail }
+    { ((_, inner), tail) -> inner + tail }
 }
 
 let main(): i32 = {

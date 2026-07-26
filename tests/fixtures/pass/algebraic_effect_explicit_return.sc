@@ -5,9 +5,12 @@ let Read = effect {
 let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }}
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
+}
 
 let read_early(counter: Ptr(mut)(i32)): i32 with(Read) = {
   let resource = Resource { counter: counter }
@@ -21,8 +24,8 @@ let main(): i32 = {
   }
   unsafe { *counter = 0 }
   let result = Read.handle read { (resume) -> resume(41) } action {
-    read_early(counter)
-  }
+      read_early(counter)
+    }
   let drops = unsafe { *counter }
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))

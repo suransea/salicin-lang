@@ -10,9 +10,12 @@ let Resource = struct {
 }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }}
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
+}
 
 let consume(move resource: Resource): i32 = { resource.value }
 
@@ -50,10 +53,10 @@ let main(): i32 = {
   let captured = 0
   let effect_resource = Resource { counter: counter, value: 1 }
   let effectful = Ask.handle value { (resume) -> resume(3) } action {
-    effect_once(Ask)({
-      Ask.value() + captured + consume(effect_resource) - 1
-    })
-  }
+      effect_once(Ask)({
+        Ask.value() + captured + consume(effect_resource) - 1
+      })
+    }
 
   let unsafe_effect = unsafe {
     effect_once(Unsafe)({ *counter - *counter })

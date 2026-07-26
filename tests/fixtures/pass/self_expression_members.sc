@@ -12,8 +12,8 @@ let Choice = enum { Some(i32), None }
 
 extend Choice {
   let unwrap(move self)(): i32 = { match self
-    { Self.Some(value) -> value }
-    { Self.None -> 0 }
+      { Self.Some(value) -> value }
+      { Self.None -> 0 }
   }
 }
 

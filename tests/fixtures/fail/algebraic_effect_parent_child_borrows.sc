@@ -13,9 +13,9 @@ let update(pair: borrow(mut)(Pair), left: borrow(mut)(i32)): () with(Step) = {
 let main(): i32 = {
   let mut pair = Pair { left: 20, right: 20 }
   Step.handle tick { (resume) ->
-    resume(())
-  } action {
-    update(pair, pair.left)
-    pair.left + pair.right
-  }
+      resume(())
+    } action {
+      update(pair, pair.left)
+      pair.left + pair.right
+    }
 }

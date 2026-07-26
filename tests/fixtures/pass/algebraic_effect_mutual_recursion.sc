@@ -15,8 +15,8 @@ let odd(count: i32): i32 with(Tick) = {
 let main(): i32 = {
   let value = 14
   Tick.handle tick { (resume) -> resume(value) } action {
-    even(3)
-  }
+      even(3)
+    }
 }
 
 test("algebraic_effect_mutual_recursion.sc") {

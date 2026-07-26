@@ -8,8 +8,8 @@ let apply(action: (): i32 with(Ask)): i32 with(Ask) = {
 
 let run(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(42) } action {
-    apply(action)
-  }
+      apply(action)
+    }
 }
 
 let main(): i32 = {

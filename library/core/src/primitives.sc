@@ -20,19 +20,19 @@ extend bool: core.ops.bit.Not {
   let Output = bool
   let not(self)(): bool = {
     match self
-    { false -> true }
-    { true -> false }
+      { false -> true }
+      { true -> false }
   }
 }
 extend bool: core.cmp.Eq(bool) {
   let eq(self: borrow(bool))(rhs: borrow(bool)): bool = {
     match self
-    { false -> match rhs
-      { false -> true }
-      { true -> false } }
-    { true -> match rhs
-      { false -> false }
-      { true -> true } }
+      { false -> match rhs
+        { false -> true }
+        { true -> false } }
+      { true -> match rhs
+        { false -> false }
+        { true -> true } }
   }
 }
 

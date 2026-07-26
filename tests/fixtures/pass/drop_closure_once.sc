@@ -4,7 +4,8 @@ extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }}
+  }
+}
 
 let consume(move value: Resource): () = { () }
 let consume_pair(move left: Resource, move right: Resource): () = { () }
@@ -36,10 +37,12 @@ let conditional(flag: bool): () = {
 
 let early(): i32 = {
   let resource = Resource { value: 1 }
-  let once = { (value: i32) -> do {
-    consume(resource)
-    value
-  }}
+  let once = {
+    (value: i32) -> do {
+      consume(resource)
+      value
+    }
+  }
   once(return(42))
 }
 

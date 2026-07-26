@@ -1,7 +1,9 @@
 let Result = std.Result
 let Throws = std.error.Throws
 
-let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 40 } }
+let read(fail: bool): i32 with(Throws(bool)) = {
+  if fail { throw(true) } else { 40 }
+}
 
 let main(): i32 = {
   let propagated: Result(bool)(i32) = try {

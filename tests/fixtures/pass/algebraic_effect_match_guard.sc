@@ -26,8 +26,8 @@ let classify_named(event: Event): i32 with(Decide) = {
 
 let main(): i32 = {
   Decide.handle accept { (value, resume) -> resume(value == 20) } action {
-    classify_direct(Event.Value( value: 20 )) + classify_named(Event.Value( value: 21 ))
-  }
+      classify_direct(Event.Value( value: 20 )) + classify_named(Event.Value( value: 21 ))
+    }
 }
 
 test("algebraic_effect_match_guard.sc") {

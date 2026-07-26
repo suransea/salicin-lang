@@ -8,10 +8,10 @@ let right(): i32 with(Ask) = { Ask.value() + 2 }
 
 let main(): i32 = {
   Ask.handle value { (resume) -> resume(40) } action {
-    let first: (): i32 with(Ask) = if true { left } else { right }
-    let second: (): i32 with(Ask) = if true { left } else { middle }
-    let mut selected = first
-    selected = second
-    selected()
-  }
+      let first: (): i32 with(Ask) = if true { left } else { right }
+      let second: (): i32 with(Ask) = if true { left } else { middle }
+      let mut selected = first
+      selected = second
+      selected()
+    }
 }

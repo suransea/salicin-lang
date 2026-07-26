@@ -10,17 +10,20 @@ extend Number: Neg {
 
 extend Flag: Not {
   let Output = i32
-  let not(self)(): i32 = { if self.value { 0 } else { 42 } }
+  let not(self)(): i32 = {
+    if self.value { 0 } else { 42 }
+  }
 }
 
 let negate(T: type)(move value: T): T where T: Neg(Output = T) = { -value }
 let invert(T: type)(move value: T): T where T: Not(Output = T) = { !value }
 
-let main(): i32 = { if invert(false) {
-  !Flag { value: false } + -Number { value: 0 } + negate(0)
-} else {
-  0
-}
+let main(): i32 = {
+  if invert(false) {
+    !Flag { value: false } + -Number { value: 0 } + negate(0)
+  } else {
+    0
+  }
 }
 
 test("unary_operator_traits.sc") {

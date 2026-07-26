@@ -19,10 +19,10 @@ let program(): i32 with(Step) = {
 
 let main(): i32 = {
   Step.handle delta { (resume) ->
-    resume(1)
-  } action {
-    program()
-  }
+      resume(1)
+    } action {
+      program()
+    }
 }
 
 test("algebraic_effect_owned_state_loop.sc") {

@@ -35,14 +35,14 @@ let main(): i32 = {
     value + 2
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let first = future.poll()
-    let second = future.poll()
-    match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
+      let first = future.poll()
+      let second = future.poll()
+      match first
+        { Pending -> match second
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
+    }
 }
 
 test("async_residual_post_await.sc") {

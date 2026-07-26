@@ -5,7 +5,7 @@ extend Value: Marker() {}
 
 let duplicate(T: type)(copy value: T): T
 where T: Copy,
-      T: Marker, = {
+  T: Marker, = {
   let first = value
   value
 }

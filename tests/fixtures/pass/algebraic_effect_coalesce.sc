@@ -25,8 +25,8 @@ let main(): i32 = {
       fallbacks += 1;
       resume(true)
     } action {
-    program()
-  }
+      program()
+    }
   result + fallbacks
 }
 

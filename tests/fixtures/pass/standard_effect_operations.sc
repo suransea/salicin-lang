@@ -17,20 +17,20 @@ let choose_with_throw_sugar(fail: bool): i32 with(Throws(i32)) = {
 
 let handled_throw(): i32 = {
   Throws(i32).handle raise { (error) -> error } action {
-    fail_with_answer()
-  }
+      fail_with_answer()
+    }
 }
 
 let handled_throw_sugar_function(): i32 = {
   Throws(i32).handle raise { (error) -> error } action {
-    fail_with_throw_sugar()
-  }
+      fail_with_throw_sugar()
+    }
 }
 
 let handled_throw_sugar_action(): i32 = {
   Throws(i32).handle raise { (error) -> error } action {
-    throw(42)
-  }
+      throw(42)
+    }
 }
 
 let tried_throw_sugar_function(): i32 = {
@@ -66,9 +66,9 @@ let handled_async(): i32 = {
       seen = 1;
       resume(())
     } action {
-    Async.suspend();
-    1
-  }
+      Async.suspend();
+      1
+    }
   value + seen + 40
 }
 

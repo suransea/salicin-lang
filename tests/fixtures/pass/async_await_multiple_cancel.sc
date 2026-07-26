@@ -10,15 +10,19 @@ let Step = struct {
 let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
 }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
 }
 
 extend Step: Future(()) {
@@ -38,38 +42,44 @@ extend Step: Future(()) {
 
 let consume(move resource: Resource): () = { () }
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = { unsafe {
-  raw_alloc(i32)(size_of(i32), align_of(i32))
-} }
-
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = { unsafe {
-  raw_dealloc(counter, size_of(i32), align_of(i32))
-} }
-
-let main(): i32 = { unsafe {
-  let counter = allocate()
-  *counter = 0
-
-  do {
-    let resource = Resource { counter: counter }
-    let mut future = async {
-      let first = await Step { counter: counter, polls: 0, value: 20 }
-      let second = await Step { counter: counter, polls: 0, value: 22 }
-      consume(resource)
-      first + second
-    }
-    match future.poll()
-      { Pending -> () }
-      { Ready(_) -> () }
-    match future.poll()
-      { Pending -> () }
-      { Ready(_) -> () }
+let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+  unsafe {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
   }
+}
 
-  let drops = *counter
-  release(counter)
-  39 + drops
-} }
+let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+  unsafe {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+}
+
+let main(): i32 = {
+  unsafe {
+    let counter = allocate()
+    *counter = 0
+
+    do {
+      let resource = Resource { counter: counter }
+      let mut future = async {
+        let first = await Step { counter: counter, polls: 0, value: 20 }
+        let second = await Step { counter: counter, polls: 0, value: 22 }
+        consume(resource)
+        first + second
+      }
+      match future.poll()
+        { Pending -> () }
+        { Ready(_) -> () }
+      match future.poll()
+        { Pending -> () }
+        { Ready(_) -> () }
+    }
+
+    let drops = *counter
+    release(counter)
+    39 + drops
+  }
+}
 
 test("async_await_multiple_cancel.sc") {
   main() == 42

@@ -8,8 +8,8 @@ let program(): i32 with(Read) = {
 
 let main(): i32 = {
   Read.handle read { (resume) -> resume(40) + 1 } action {
-    program() + 1
-  }
+      program() + 1
+    }
 }
 
 test("algebraic_effect_post_resume.sc") {

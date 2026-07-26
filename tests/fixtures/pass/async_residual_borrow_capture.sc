@@ -20,11 +20,11 @@ let program(offset: borrow(i32)): i32 = {
     request() + offset
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let polled: Poll(i32) = poll_once(future)
-    match polled
-      { Ready(value) -> value }
-      { Pending -> 0 }
-  }
+      let polled: Poll(i32) = poll_once(future)
+      match polled
+        { Ready(value) -> value }
+        { Pending -> 0 }
+    }
 }
 
 let main(): i32 = {

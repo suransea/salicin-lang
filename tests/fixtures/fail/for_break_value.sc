@@ -15,7 +15,8 @@ extend Once: Iterator {
       self.done = true
       Some(1)
     }
-  }}
+  }
+}
 
 extend Once: IntoIterator {
   let IntoIter = Once

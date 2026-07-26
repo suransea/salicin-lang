@@ -9,9 +9,11 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 let run(
@@ -20,20 +22,20 @@ let run(
   abandon: bool,
 )(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) ->
-    if abandon { 40 } else { resume(2) }
-  } action {
-    right = right + action()
-    left + right
-  }
+      if abandon { 40 } else { resume(2) }
+    } action {
+      right = right + action()
+      left + right
+    }
 }
 
 let execute(drops: Ptr(mut)(i32), abandon: bool): i32 = {
   let mut state = State { left: 10, right: 20, drops: drops }
   let mut order = 1
   let result = run(state.left, state.right, abandon) { () ->
-    order = order * 2
-    Ask.value() + order
-  }
+      order = order * 2
+      Ask.value() + order
+    }
   result + state.left + state.right + order
 }
 

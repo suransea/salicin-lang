@@ -17,7 +17,8 @@ extend Counter: Iterator {
     } else {
       None
     }
-  }}
+  }
+}
 
 extend Counter: IntoIterator {
   let IntoIter = Counter

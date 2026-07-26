@@ -4,16 +4,16 @@ let Ask = effect {
 
 let run()(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(10) } action {
-    action()
-  }
+      action()
+    }
 }
 
 let main(): i32 = {
   let mut base = 31
   run() { () ->
-    base = base + 1
-    Ask.value() + base
-  }
+      base = base + 1
+      Ask.value() + base
+    }
 }
 
 test("algebraic_effect_reusable_direct_action.sc") {

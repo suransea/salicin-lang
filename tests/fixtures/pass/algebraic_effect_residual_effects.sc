@@ -18,8 +18,8 @@ let request(): i32 with(Ask, Supply, Throws(bool), Unsafe) = {
 let run(): i32 with(Supply, Throws(bool)) = {
   unsafe {
     Ask.handle value { (resume) -> resume(42) } action {
-      request()
-    }
+        request()
+      }
   }
 }
 

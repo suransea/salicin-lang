@@ -12,8 +12,8 @@ let sum_reads(count: i32): i32 with(Read) = {
 let main(): i32 = {
   let value = 14
   Read.handle read { (resume) -> resume(value) } action {
-    sum_reads(3)
-  }
+      sum_reads(3)
+    }
 }
 
 test("algebraic_effect_recursion.sc") {

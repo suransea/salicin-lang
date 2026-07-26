@@ -22,11 +22,11 @@ let program(value: borrow(mut)(i32)): i32 = {
     value
   }
   Ask.handle ask { (resume) -> resume(40) } action {
-    let polled: Poll(i32) = poll_once(future)
-    match polled
-      { Ready(result) -> result }
-      { Pending -> 0 }
-  }
+      let polled: Poll(i32) = poll_once(future)
+      match polled
+        { Ready(result) -> result }
+        { Pending -> 0 }
+    }
 }
 
 let main(): i32 = {

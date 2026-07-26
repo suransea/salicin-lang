@@ -4,8 +4,8 @@ let defer = std.control.defer
 
 let fail(counter: borrow(mut)(i32)): i32 with(Throws(bool)) = {
   defer {
-    counter = counter + 1
-  }
+      counter = counter + 1
+    }
   throw(true)
 }
 

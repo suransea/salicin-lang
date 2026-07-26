@@ -9,10 +9,10 @@ let Outer = enum {
 }
 
 let read(value: Outer): i32 = { match value
-  { Outer.Wrapped(inner) -> match inner
-    { Inner.Value( value: number ) -> number }
-    { Inner.Empty -> 0 } }
-  { Outer.Empty -> 0 }
+    { Outer.Wrapped(inner) -> match inner
+      { Inner.Value( value: number ) -> number }
+      { Inner.Empty -> 0 } }
+    { Outer.Empty -> 0 }
 }
 
 let main(): i32 = { read(Outer.Wrapped(Inner.Value( value: 42 ))) }

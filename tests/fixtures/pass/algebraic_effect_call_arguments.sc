@@ -8,8 +8,8 @@ let combine(left: i32, right: i32): i32 with(Step) = {
 
 let main(): i32 = {
   Step.handle next { (value, resume) -> resume(value) } action {
-    combine(Step.next(19), Step.next(23))
-  }
+      combine(Step.next(19), Step.next(23))
+    }
 }
 
 test("algebraic_effect_call_arguments.sc") {

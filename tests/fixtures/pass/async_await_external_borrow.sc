@@ -1,7 +1,9 @@
 let Poll = std.async.Poll
 let Future = std.async.Future
 
-let child() = { async { 1 } }
+let child() = {
+  async { 1 }
+}
 
 let main(): i32 = {
   let value = 41

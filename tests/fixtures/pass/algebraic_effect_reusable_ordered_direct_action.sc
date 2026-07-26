@@ -4,8 +4,8 @@ let Ask = effect {
 
 let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(20) } action {
-    action() + seed
-  }
+      action() + seed
+    }
 }
 
 let prepare(order: borrow(mut)(i32)): i32 = {
@@ -16,9 +16,9 @@ let prepare(order: borrow(mut)(i32)): i32 = {
 let main(): i32 = {
   let mut order = 0
   run(prepare(order)) { () ->
-    order = order * 2
-    Ask.value() + order
-  }
+      order = order * 2
+      Ask.value() + order
+    }
 }
 
 test("algebraic_effect_reusable_ordered_direct_action.sc") {

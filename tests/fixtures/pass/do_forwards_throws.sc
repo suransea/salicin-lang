@@ -3,10 +3,11 @@ let Throws = std.error.Throws
 
 let reject(): i32 with(Throws(bool)) = { throw(true) }
 
-let choose(flag: bool): i32 with(Throws(bool)) = { do {
-  if flag { return(reject()) }
-  42
-}
+let choose(flag: bool): i32 with(Throws(bool)) = {
+  do {
+    if flag { return(reject()) }
+    42
+  }
 }
 
 let main(): i32 = {

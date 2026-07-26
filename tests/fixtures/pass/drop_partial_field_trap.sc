@@ -4,7 +4,8 @@ let Pair = struct { left: Resource, right: Resource }
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
-  }}
+  }
+}
 
 let consume(move value: Resource): () = { () }
 

@@ -9,8 +9,8 @@ extend Step: Future(()) {
   let Output = i32
 
   let poll(R: region)
-  (self: borrow(mut)(R)(Self))
-  (): Poll(i32) = {
+    (self: borrow(mut)(R)(Self))
+    (): Poll(i32) = {
     if self.ready {
       Ready(42)
     } else {
@@ -22,10 +22,10 @@ extend Step: Future(()) {
 
 let main(): i32 = {
   Async.handle
-  suspend { (resume) -> resume(()) }
-  action {
-    await_source(Step { ready: false })
-  }
+    suspend { (resume) -> resume(()) }
+    action {
+      await_source(Step { ready: false })
+    }
 }
 
 test("source_await_handler.sc") {

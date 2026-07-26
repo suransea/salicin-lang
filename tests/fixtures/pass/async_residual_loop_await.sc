@@ -60,66 +60,66 @@ let continue_once(calls: Ptr(mut)(i32)): bool = {
 
 let run_success(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (resume) -> resume(next(calls)) } action {
-    let mut future = async {
-      loop {
-        let done = await make_step(drops, false)
-        if done {
-          break 42
-        } else {
-          continue()
+      let mut future = async {
+        loop {
+          let done = await make_step(drops, false)
+          if done {
+            break 42
+          } else {
+            continue()
+          }
         }
       }
+      let first = future.poll()
+      let second = future.poll()
+      match first
+        { Pending -> match second
+          { Ready(value) -> value }
+          { Pending -> 0 } }
+        { Ready(_) -> 0 }
     }
-    let first = future.poll()
-    let second = future.poll()
-    match first
-      { Pending -> match second
-        { Ready(value) -> value }
-        { Pending -> 0 } }
-      { Ready(_) -> 0 }
-  }
 }
 
 let run_cancelled(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
   Ask.handle ask { (resume) -> resume(record_false(calls)) } action {
-    let mut future = async {
-      loop {
-        let done = await make_step(drops, true)
-        if done {
-          break 0
-        } else {
-          continue()
+      let mut future = async {
+        loop {
+          let done = await make_step(drops, true)
+          if done {
+            break 0
+          } else {
+            continue()
+          }
         }
       }
+      match future.poll()
+        { Pending -> 42 }
+        { Ready(_) -> 0 }
     }
-    match future.poll()
-      { Pending -> 42 }
-      { Ready(_) -> 0 }
-  }
 }
 
 let run_abandoned(drops: Ptr(mut)(i32), calls: Ptr(mut)(i32)): i32 = {
   Ask.handle ask {
-    (resume) -> if continue_once(calls) {
-      resume(false)
-    } else {
-      42
-    }
-  } action {
-    let mut future = async {
-      loop {
-        let done = await make_step(drops, false)
-        if done {
-          break 0
-        } else {
-          continue()
+      (resume) -> if continue_once(calls) {
+        resume(false)
+      } else {
+        42
+      }
+    } action {
+      let mut future = async {
+        loop {
+          let done = await make_step(drops, false)
+          if done {
+            break 0
+          } else {
+            continue()
+          }
         }
       }
+      match future.poll()
+        { Pending -> 0 }
+        { Ready(_) -> 0 }
     }
-    match future.poll()
-      { Pending -> 0 }
-      { Ready(_) -> 0 }
-  }
 }
 
 let main(): i32 = {

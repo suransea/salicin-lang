@@ -8,20 +8,26 @@ let State = struct {
 }
 
 extend State: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
-let mark(calls: Ptr(mut)(i32))(digit: i32): i32 = { unsafe {
-  *calls = *calls * 10 + digit
-  0
-} }
+let mark(calls: Ptr(mut)(i32))(digit: i32): i32 = {
+  unsafe {
+    *calls = *calls * 10 + digit
+    0
+  }
+}
 
-let next_index(calls: Ptr(mut)(i32)): i32 = { unsafe {
-  *calls = *calls * 10 + 2
-  1
-} }
+let next_index(calls: Ptr(mut)(i32)): i32 = {
+  unsafe {
+    *calls = *calls * 10 + 2
+    1
+  }
+}
 
 let update(before: i32)(value: borrow(mut)(i32))(after: i32): () with(Step) = {
   let delta = Step.delta()
@@ -47,15 +53,15 @@ let main(): i32 = {
   }
 
   let resumed = Step.handle delta { (resume) ->
-    resume(1)
-  } action {
-    program(drops)(calls)
-  }
+      resume(1)
+    } action {
+      program(drops)(calls)
+    }
   let abandoned = Step.handle delta { (_) ->
-    40
-  } action {
-    program(drops)(calls)
-  }
+      40
+    } action {
+      program(drops)(calls)
+    }
   let drop_count = unsafe { *drops }
   let argument_order = unsafe { *calls }
 

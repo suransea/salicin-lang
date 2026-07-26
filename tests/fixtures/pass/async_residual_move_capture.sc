@@ -44,11 +44,11 @@ let main(): i32 = {
     consume(resource) + request()
   }
   let result: i32 = Ask.handle ask { (resume) -> resume(40) } action {
-    let polled: Poll(i32) = poll_once(future)
-    match polled
-      { Ready(value) -> value }
-      { Pending -> 0 }
-  }
+      let polled: Poll(i32) = poll_once(future)
+      match polled
+        { Ready(value) -> value }
+        { Pending -> 0 }
+    }
   let drop_count = unsafe {
     *drops
   }

@@ -16,21 +16,27 @@ let Marker = struct {
 }
 
 extend Marker: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + self.amount
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + self.amount
+    }
+  }
 }
 
 extend First: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 10
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 10
+    }
+  }
 }
 
 extend Second: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
 }
 
 extend First: Future(()) {
@@ -53,35 +59,41 @@ extend Second: Future(()) {
   }
 }
 
-let allocate(): Ptr(mut)(i32) with(Unsafe) = { unsafe {
-  raw_alloc(i32)(size_of(i32), align_of(i32))
-} }
-
-let release(counter: Ptr(mut)(i32)): () with(Unsafe) = { unsafe {
-  raw_dealloc(counter, size_of(i32), align_of(i32))
-} }
-
-let main(): i32 = { unsafe {
-  let counter = allocate()
-  *counter = 0
-  do {
-    let mut future = async {
-      if false {
-        let marker = Marker { counter: counter, amount: 1000 }
-        await First { counter: counter }
-      } else {
-        let marker = Marker { counter: counter, amount: 100 }
-        await Second { counter: counter }
-      }
-    }
-    match future.poll()
-      { Pending -> () }
-      { Ready(_) -> () }
+let allocate(): Ptr(mut)(i32) with(Unsafe) = {
+  unsafe {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
   }
-  let drops = *counter
-  release(counter)
-  drops - 59
-} }
+}
+
+let release(counter: Ptr(mut)(i32)): () with(Unsafe) = {
+  unsafe {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+}
+
+let main(): i32 = {
+  unsafe {
+    let counter = allocate()
+    *counter = 0
+    do {
+      let mut future = async {
+        if false {
+          let marker = Marker { counter: counter, amount: 1000 }
+          await First { counter: counter }
+        } else {
+          let marker = Marker { counter: counter, amount: 100 }
+          await Second { counter: counter }
+        }
+      }
+      match future.poll()
+        { Pending -> () }
+        { Ready(_) -> () }
+    }
+    let drops = *counter
+    release(counter)
+    drops - 59
+  }
+}
 
 test("async_await_control_cancel.sc") {
   main() == 42

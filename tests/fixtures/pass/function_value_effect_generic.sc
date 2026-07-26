@@ -7,9 +7,10 @@ let apply(E: effect)
   (action: (i32): i32 with(E))
   (value: i32): i32 with(E) = { action(value) }
 
-let main(): i32 = { apply(increment)(20) + unsafe {
-  apply(dangerous)(20)
-}
+let main(): i32 = {
+  apply(increment)(20) + unsafe {
+    apply(dangerous)(20)
+  }
 }
 
 test("function_value_effect_generic.sc") {

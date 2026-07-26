@@ -7,9 +7,11 @@ let Step = struct {
 }
 
 extend Step: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.drops = *self.drops + 1
-  } }
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.drops = *self.drops + 1
+    }
+  }
 }
 
 extend Step: Future(()) {
@@ -17,14 +19,16 @@ extend Step: Future(()) {
 
   let poll(R: region)
     (self: borrow(mut)(R)(Self))
-    (): Poll(bool) = { unsafe {
-    if *self.polls == 0 {
-      *self.polls = 1
-      Poll(bool).Ready(false)
-    } else {
-      Poll(bool).Pending
+    (): Poll(bool) = {
+    unsafe {
+      if *self.polls == 0 {
+        *self.polls = 1
+        Poll(bool).Ready(false)
+      } else {
+        Poll(bool).Pending
+      }
     }
-  } }
+  }
 }
 
 let step(polls: Ptr(mut)(i32), drops: Ptr(mut)(i32)): Step = {

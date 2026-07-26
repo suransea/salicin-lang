@@ -1,7 +1,8 @@
-let next(counter: Ptr(mut)(i32)): i32 = { unsafe {
-  *counter = *counter + 1
-  41
-}
+let next(counter: Ptr(mut)(i32)): i32 = {
+  unsafe {
+    *counter = *counter + 1
+    41
+  }
 }
 
 let main(): i32 = {

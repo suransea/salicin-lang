@@ -5,16 +5,19 @@ let Ask = effect {
 let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
-  let drop(self: borrow(mut)(Self))(): () = { unsafe {
-    *self.counter = *self.counter + 1
-  } }}
+  let drop(self: borrow(mut)(Self))(): () = {
+    unsafe {
+      *self.counter = *self.counter + 1
+    }
+  }
+}
 
 let consume(move resource: Resource): i32 = { 0 }
 
 let run(move action: (): i32 with(Ask)): i32 = {
   Ask.handle value { (resume) -> resume(41) } action {
-    action()
-  }
+      action()
+    }
 }
 
 let execute(counter: Ptr(mut)(i32)): i32 = {

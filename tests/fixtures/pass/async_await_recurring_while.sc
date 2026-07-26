@@ -11,11 +11,13 @@ extend Step: Future(()) {
 
   let poll(R: region)
     (self: borrow(mut)(R)(Self))
-    (): Poll(()) = { unsafe {
-    *self.polls = *self.polls + 1
-    *self.remaining = *self.remaining - 1
-    Poll(()).Ready(())
-  } }
+    (): Poll(()) = {
+    unsafe {
+      *self.polls = *self.polls + 1
+      *self.remaining = *self.remaining - 1
+      Poll(()).Ready(())
+    }
+  }
 }
 
 let step(remaining: Ptr(mut)(i32), polls: Ptr(mut)(i32)): Step = {
@@ -56,7 +58,9 @@ let main(): i32 = {
   let mut pre_remaining = 3
   let pre_ptr = Ptr(mut)(borrow(mut)(pre_remaining))
   let mut pre = async {
-    while { unsafe { *pre_ptr > 0 } } {
+    while {
+      unsafe { *pre_ptr > 0 }
+    } {
       let ignored = await step(pre_ptr, polls_ptr)
     }
   }
@@ -67,7 +71,9 @@ let main(): i32 = {
   let mut false_remaining = 0
   let false_ptr = Ptr(mut)(borrow(mut)(false_remaining))
   let mut initially_false = async {
-    while { unsafe { *false_ptr > 0 } } {
+    while {
+      unsafe { *false_ptr > 0 }
+    } {
       let ignored = await step(false_ptr, polls_ptr)
     }
   }
@@ -81,7 +87,9 @@ let main(): i32 = {
     do {
       let ignored = await step(post_ptr, polls_ptr)
     }
-    while { unsafe { *post_ptr > 0 } }
+    while {
+      unsafe { *post_ptr > 0 }
+    }
   }
   let post_ready = match post.poll()
     { Pending -> 0 }
@@ -92,10 +100,12 @@ let main(): i32 = {
   let pending_ptr = Ptr(mut)(borrow(mut)(pending_remaining))
   let checks_ptr = Ptr(mut)(borrow(mut)(condition_checks))
   let mut pending = async {
-    while { unsafe {
-      *checks_ptr = *checks_ptr + 1
-      *pending_ptr > 0
-    } } {
+    while {
+      unsafe {
+        *checks_ptr = *checks_ptr + 1
+        *pending_ptr > 0
+      }
+    } {
       let ignored = await pending_step(pending_ptr)
     }
   }

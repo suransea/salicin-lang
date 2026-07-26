@@ -14,8 +14,8 @@ let odd(count: i32): bool with(Tick) = {
 
 let main(): i32 = {
   Tick.handle tick { (resume) -> resume(true) } action {
-    if odd(3) { 42 } else { 0 }
-  }
+      if odd(3) { 42 } else { 0 }
+    }
 }
 
 test("algebraic_effect_mutual_answer.sc") {
