@@ -357,10 +357,11 @@ Repository gates cover:
 
 The conservative [source formatter](formatter.md) provides `salic fmt` and
 `salic fmt --check` for individual files and root packages. It preserves the
-logical token stream and every physical line boundary while normalizing
-two-space brace indentation, trailing whitespace, LF line endings, and the
-final newline. Comments and dependencies remain source-owned; the passing
-fixture corpus is idempotent under repeated formatting.
+existing physical line boundaries, expands directly nested block boundaries,
+and uses parser-provided source roles for two-space brace, delimiter,
+declaration, `where`, trailing-closure, and match indentation. Comments and
+dependencies remain source-owned; the passing fixture corpus is idempotent
+under repeated formatting.
 
 Lossless byte spans, trivia ownership, editor diagnostics, and an LSP remain
 the active tooling boundary.

@@ -52,6 +52,41 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_tokens(tokens)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SourceLayout {
+    pub parameter_groups: Vec<usize>,
+    pub repeated_parameter_groups: Vec<usize>,
+    pub where_predicates: Vec<usize>,
+    pub match_arms: Vec<SourceBracedRegion>,
+    pub blocks: Vec<SourceBracedRegion>,
+    pub closures: Vec<SourceBracedRegion>,
+    pub trailing_closures: Vec<SourceTrailingClosure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceBracedRegion {
+    pub open_byte: usize,
+    pub close_byte: usize,
+    pub body_start_byte: usize,
+    pub open_line: usize,
+    pub close_line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceTrailingClosure {
+    pub start_byte: usize,
+    pub close_byte: usize,
+}
+
+pub(crate) fn parse_with_source_layout(
+    source: &str,
+) -> Result<(Program, SourceLayout), ParseError> {
+    let tokens = lex(source).map_err(|error| ParseError::from_lex(source, error))?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.program()?;
+    Ok((program, parser.layout))
+}
+
 fn byte_offset(source: &str, line: usize, column: usize) -> usize {
     let mut current_line = 1;
     let mut current_column = 1;
@@ -71,14 +106,7 @@ fn byte_offset(source: &str, line: usize, column: usize) -> usize {
 
 /// Parses a token stream produced by [`crate::lexer::lex`].
 pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    Parser {
-        tokens,
-        index: 0,
-        effect_parameters_in_scope: HashSet::new(),
-        next_control_binding: 0,
-        async_depth: 0,
-    }
-    .program()
+    Parser::new(tokens).program()
 }
 
 struct Parser {
@@ -87,6 +115,7 @@ struct Parser {
     effect_parameters_in_scope: HashSet<String>,
     next_control_binding: usize,
     async_depth: usize,
+    layout: SourceLayout,
 }
 
 enum HeaderGroup {
@@ -97,7 +126,18 @@ enum HeaderGroup {
 type DeclarationGroups = (Vec<Vec<CompileParam>>, Vec<Vec<Param>>);
 
 impl Parser {
-    fn program(mut self) -> Result<Program, ParseError> {
+    fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens,
+            index: 0,
+            effect_parameters_in_scope: HashSet::new(),
+            next_control_binding: 0,
+            async_depth: 0,
+            layout: SourceLayout::default(),
+        }
+    }
+
+    fn program(&mut self) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         let mut item_visibilities = Vec::new();
         let mut item_origins = Vec::new();
@@ -1171,6 +1211,7 @@ impl Parser {
         }
         let mut predicates = Vec::new();
         loop {
+            self.layout.where_predicates.push(self.current().start_byte);
             let subject = self.type_expr()?;
             self.expect(&TokenKind::Colon, "`:` in where predicate")?;
             let (trait_ref, associated_types) = self.where_trait_ref()?;
@@ -1330,6 +1371,9 @@ impl Parser {
         }
 
         if self.take(&TokenKind::Ellipsis) {
+            self.layout
+                .repeated_parameter_groups
+                .push(self.previous().start_byte);
             let schema = self.repeated_parameter_group_schema()?;
             let pack = match &schema {
                 Type::Named(name, _) => name.clone(),
@@ -1748,6 +1792,7 @@ impl Parser {
     }
 
     fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
+        self.layout.parameter_groups.push(self.current().start_byte);
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
 
@@ -1885,6 +1930,7 @@ impl Parser {
         allow_receiver: bool,
         modifier_parameters: &HashSet<String>,
     ) -> Result<Vec<Param>, ParseError> {
+        self.layout.parameter_groups.push(self.current().start_byte);
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
         if self.take(&TokenKind::RParen) {
@@ -2647,6 +2693,7 @@ impl Parser {
 
     fn parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
         if self.untyped_closure_parameter_group_follows() {
+            self.layout.parameter_groups.push(self.current().start_byte);
             self.expect(&TokenKind::LParen, "`(`")?;
             let mut parameters = Vec::new();
             loop {
@@ -3115,6 +3162,7 @@ impl Parser {
 
         let mut cases = Vec::new();
         while self.at(&TokenKind::LBrace) {
+            let open = self.current().clone();
             self.expect(&TokenKind::LBrace, "`{` before a match case")?;
             self.skip_separators();
             let pattern = self.pattern()?;
@@ -3124,7 +3172,16 @@ impl Parser {
                 None
             };
             self.expect(&TokenKind::Arrow, "`->` after match case pattern")?;
+            let body_start_byte = self.current().start_byte;
             let body = self.block_contents()?;
+            let close = self.previous().clone();
+            self.layout.match_arms.push(SourceBracedRegion {
+                open_byte: open.start_byte,
+                close_byte: close.start_byte,
+                body_start_byte,
+                open_line: open.line,
+                close_line: close.line,
+            });
             cases.push(Expr::PatternClosure {
                 pattern,
                 guard: guard.map(Box::new),
@@ -3616,7 +3673,8 @@ impl Parser {
                         "a handler action must use the named trailing group `action { ... }`",
                     ));
                 }
-                let closure = self.closure()?;
+                let start_byte = self.current().start_byte;
+                let closure = self.trailing_closure(start_byte)?;
                 expression = Expr::Call(
                     Box::new(expression),
                     vec![CallArg {
@@ -3629,9 +3687,10 @@ impl Parser {
                 && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.named_trailing_closure_follows()
             {
+                let start_byte = self.current().start_byte;
                 let label = self.expect_ident("a trailing closure label")?;
                 self.expect(&TokenKind::Colon, "`:` after trailing closure label")?;
-                let closure = self.closure()?;
+                let closure = self.trailing_closure(start_byte)?;
                 let completes_handler =
                     label == "action" && Self::starts_implicit_handler_groups(&expression);
                 expression = Expr::Call(
@@ -3649,8 +3708,9 @@ impl Parser {
                 && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.colonless_named_trailing_closure_follows()
             {
+                let start_byte = self.current().start_byte;
                 let label = self.take_trailing_label()?;
-                let closure = self.closure()?;
+                let closure = self.trailing_closure(start_byte)?;
                 let completes_handler =
                     label == "action" && Self::starts_implicit_handler_groups(&expression);
                 expression = Expr::Call(
@@ -3715,6 +3775,15 @@ impl Parser {
             Expr::Call(callee, _) => Self::starts_implicit_handler_groups(callee),
             _ => false,
         }
+    }
+
+    fn trailing_closure(&mut self, start_byte: usize) -> Result<Expr, ParseError> {
+        let closure = self.closure()?;
+        self.layout.trailing_closures.push(SourceTrailingClosure {
+            start_byte,
+            close_byte: self.previous().start_byte,
+        });
+        Ok(closure)
     }
 
     fn token_can_start_bare_call_argument(kind: &TokenKind) -> bool {
@@ -4347,8 +4416,19 @@ impl Parser {
     }
 
     fn block(&mut self) -> Result<Expr, ParseError> {
+        let open = self.current().clone();
+        let body_start_byte = self.body_start_byte(self.index + 1);
         self.expect(&TokenKind::LBrace, "`{`")?;
-        self.block_contents()
+        let body = self.block_contents()?;
+        let close = self.previous().clone();
+        self.layout.blocks.push(SourceBracedRegion {
+            open_byte: open.start_byte,
+            close_byte: close.start_byte,
+            body_start_byte,
+            open_line: open.line,
+            close_line: close.line,
+        });
+        Ok(body)
     }
 
     fn core_control_function(name: &str) -> Expr {
@@ -4442,6 +4522,21 @@ impl Parser {
     }
 
     fn closure_inner(&mut self) -> Result<Expr, ParseError> {
+        let open = self.current().clone();
+        let body_start_byte = self.body_start_byte(self.index + 1);
+        let closure = self.closure_inner_untracked()?;
+        let close = self.previous().clone();
+        self.layout.closures.push(SourceBracedRegion {
+            open_byte: open.start_byte,
+            close_byte: close.start_byte,
+            body_start_byte,
+            open_line: open.line,
+            close_line: close.line,
+        });
+        Ok(closure)
+    }
+
+    fn closure_inner_untracked(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::LBrace, "`{`")?;
         self.skip_separators();
         if self.take(&TokenKind::RBrace) {
@@ -4492,6 +4587,18 @@ impl Parser {
             expression = Expr::Closure(params, Box::new(expression));
         }
         Ok(expression)
+    }
+
+    fn body_start_byte(&self, mut index: usize) -> usize {
+        while matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Newline | TokenKind::Semicolon)
+        ) {
+            index += 1;
+        }
+        self.tokens
+            .get(index)
+            .map_or_else(|| self.current().end_byte, |token| token.start_byte)
     }
 
     fn async_expression(&mut self) -> Result<Expr, ParseError> {

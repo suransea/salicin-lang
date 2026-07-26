@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Reworked formatter indentation around parser-provided source spans instead
+  of keyword or first-token heuristics. Nested blocks, delimiters, declaration
+  parameter groups, `where` predicates, operator continuations, trailing
+  closures, and prefix `match` arms now carry their semantic layout depth;
+  directly nested blocks and leading closing braces expand onto separate
+  lines.
 - Unified passing modifiers, control-exit effects/functions, and lexical
   `defer` under the edition lang-item registry instead of special-name
   exceptions. Added canonical private declarations for `foreign(c, ...)` and

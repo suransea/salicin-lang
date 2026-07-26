@@ -127,12 +127,12 @@ until target ABI lowering explicitly supports them.
 
 ## Completed Formatter Invariants
 
-The [source formatter](formatter.md) preserves the lexer token-kind stream and
-all physical line boundaries, then validates the formatted parse. It
-normalizes only brace indentation, trailing whitespace, LF endings, and the
-final newline. `salic fmt` supports files and root packages; `--check`,
-invalid-source atomicity, dependency isolation, and corpus-wide idempotence
-are tested.
+The [source formatter](formatter.md) preserves all existing physical line
+boundaries, expands directly nested block boundaries, and validates the
+formatted parse. Parser-provided source roles drive brace, delimiter,
+parameter-group, `where`, trailing-closure, and prefix-match indentation.
+`salic fmt` supports files and root packages; `--check`, invalid-source
+atomicity, dependency isolation, and corpus-wide idempotence are tested.
 
 ## Completed Editor Spans
 
