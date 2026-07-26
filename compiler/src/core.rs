@@ -4529,6 +4529,46 @@ pub let Index(Key: type) = trait {
     }
 
     #[test]
+    fn derived_primitive_operations_are_source_defined() {
+        let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
+        let expected = BTreeMap::from([
+            ("not", 1),
+            ("eq", 1),
+            ("neg", 6),
+            ("add_assign", 12),
+            ("sub_assign", 12),
+            ("mul_assign", 12),
+            ("div_assign", 12),
+            ("rem_assign", 12),
+            ("bit_and_assign", 12),
+            ("bit_or_assign", 12),
+            ("bit_xor_assign", 12),
+            ("shl_assign", 12),
+            ("shr_assign", 12),
+        ]);
+        let mut actual = BTreeMap::<&str, usize>::new();
+
+        for item in &bundle.program().items {
+            let Item::Extend(extension) = item else {
+                continue;
+            };
+            for member in &extension.members {
+                let crate::ast::ExtendMember::Function(function) = member else {
+                    continue;
+                };
+                let Some((name, _)) = expected.get_key_value(function.name.as_str()) else {
+                    continue;
+                };
+                if function.body.is_some() && !function.builtin {
+                    *actual.entry(name).or_default() += 1;
+                }
+            }
+        }
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn bool_lang_item_requires_its_enum_variants() {
         let malformed = EDITION_2026_PRIMITIVES.replace(
             "pub let bool = enum { false, true }",

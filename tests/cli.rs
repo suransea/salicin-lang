@@ -4641,6 +4641,7 @@ fn arithmetic_trait_programs_run_with_expected_result() {
         "add_trait_copy_operands_reusable.sc",
         "compound_assign_builtin.sc",
         "compound_assign_trait.sc",
+        "source_defined_primitive_ops.sc",
     ];
     for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(

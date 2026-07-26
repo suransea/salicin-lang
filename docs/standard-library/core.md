@@ -11,7 +11,9 @@ constructors, intrinsic functions, and intrinsic extension methods use
 complete `= builtin()` initializers. Edition validation rejects missing,
 unknown, malformed, or public markers. Trait requirements and effect
 operations remain bodyless because they are abstract contracts, not
-compiler-provided default implementations.
+compiler-provided default implementations. Operations derivable from those
+primitives remain ordinary Salicin definitions: the core implementation does
+not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
 `let foreign(): Never = builtin()` and
@@ -102,7 +104,9 @@ extend Number: PartialOrd(Number) {
 
 `Neg` and `Not` use automatic passing for their operand and define an associated `Output` type. Consequently an
 overloaded `!` may return a non-boolean result; only the built-in boolean operation is fixed to
-`bool`. Generic code can state the same output relationship in a normal where predicate.
+`bool`. The boolean implementation is ordinary source control flow, and signed
+integer negation is defined as subtraction from zero. Generic code can state
+the same output relationship in a normal where predicate.
 
 `BitAnd(Rhs)`, `BitOr(Rhs)`, `BitXor(Rhs)`, `Shl(Rhs)`, and `Shr(Rhs)` have the same two automatic
 parameter groups and associated `Output` shape as arithmetic protocols. Built-in integer shifts use
@@ -126,7 +130,8 @@ The corresponding `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>
 these validated identities for nominal values. Built-in integers use the same fixed operator
 semantics, including division, remainder, and shift traps. The left place is resolved once; an
 inherent or unrelated trait method with the same member spelling cannot intercept compound
-assignment.
+assignment. Their standard implementations are source definitions of the form
+`self = self + rhs`; only the underlying scalar operation is intrinsic.
 
 Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an
 alias. An alias is required when source names the protocol in an implementation, bound, type, or

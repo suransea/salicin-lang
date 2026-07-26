@@ -11,6 +11,10 @@ subset.
   exceptions. Added canonical private declarations for `foreign(c, ...)` and
   `test("name") { ... }`, and changed the unique compiler-definition bootstrap
   to the self-recursive `let builtin() = builtin()` contract.
+- Replaced derived primitive intrinsics with ordinary core source definitions:
+  boolean negation and equality, signed integer negation, and every integer
+  compound-assignment implementation now build on source control flow,
+  primitive operations, and ordinary assignment.
 
 ## 0.208.0 - 2026-07-26
 
