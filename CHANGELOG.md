@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.203.0 - 2026-07-26
+
 - Verified the bounded C interoperability surface against the native host
   Clang ABI. Cross-language tests cover every signed, unsigned, pointer-sized,
   and 128-bit integer in parameter and return positions, plus bidirectional
