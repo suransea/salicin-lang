@@ -24,18 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Value model and contract
 
-- [ ] **CTFE-1 — Composite CTFE contract.** Document supported value types,
-  typing and phase rules, equality and normalization, source constructs,
-  evaluation order, resource exclusion, complexity budgets, diagnostics, and
-  the boundary between runtime-typed CTFE values and erased `StaticValue`
-  metadata. Keep runtime nominal types distinct from `sort`s.
-
-- [ ] **CTFE-2 — Unified typed value IR.** Replace the separate scalar CTFE
-  value and global `ConstValue` aggregate model with one typed recursive value
-  representation carrying exact integer type, tuple/array shape, nominal
-  identity, enum variant, and payload. Preserve a narrow adapter for erased
-  sort values rather than encoding composites as marker-shaped source types.
-
 ### Builtin and aggregate values
 
 - [ ] **CTFE-3 — Complete builtin scalars.** Support Unit, `Bool`, all signed

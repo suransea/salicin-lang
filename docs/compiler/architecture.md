@@ -47,7 +47,9 @@ The implementation lives under `compiler/src`:
   - `control.rs` lowers loops, `break`, and `continue`, including loop backedge flow checks.
   - `constructors.rs` lowers struct literals, struct and enum construction, field argument
     validation, and context-sensitive short enum variant resolution.
-  - `emitter.rs` evaluates global constants and emits textual LLVM IR.
+  - `ctfe_value.rs` defines the recursive runtime-typed value shared by dependent-expression and
+    global-constant evaluation while keeping erased metadata in `StaticValue`.
+  - `emitter.rs` normalizes globals into typed CTFE values and encodes them as textual LLVM IR.
   - `effects.rs` owns source-level support state, effect identity helpers, call-site effect
     requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
     and handler entry lowering.
@@ -93,7 +95,8 @@ The implementation lives under `compiler/src`:
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
   - `static_eval.rs` evaluates the pure static-expression subset through ordinary source function
-    definitions before dependent types are lowered to runtime layouts.
+    definitions into the shared typed CTFE value before dependent types are lowered to runtime
+    layouts.
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
     infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
     automatic throws propagation return-boundary wrappers.

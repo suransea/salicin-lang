@@ -6,27 +6,35 @@ subset.
 
 ## Unreleased
 
-- Standardized source type names as `PascalCase`: `Bool`, `i8` through
-  `i128`, `isize`, `u8` through `u128`, and `usize`. Unified
-  compile-time length and metadata sorts with their runtime-facing spellings,
-  so binders now use `L: usize` and `S: String`; functions, values, modules,
-  and ordinary sorts retain `snake_case`.
+- Accepted the composite CTFE contract. It defines the runtime-typed value
+  domain, phase rules, strict evaluation order, pure-call eligibility,
+  resource exclusion, structural equality and normalization, target-width
+  integers, deterministic complexity budgets, source diagnostics, and the
+  boundary from erased `StaticValue` metadata.
+- Replaced the private scalar CTFE value and untyped global aggregate
+  `ConstValue` with one recursive `CtfeValue`. Integers retain their exact
+  runtime type, tuples and arrays remain distinct, structs retain canonical
+  nominal identity, and enums retain their source variant and active payload;
+  LLVM emission only encodes this already typed value.
+- Standardized all source identifiers on `snake_case`, including types,
+  traits, parameters, functions, values, modules, and sorts. Compile-time
+  length and metadata binders use `usize` and `string`.
 - Made the private foreign/test syntax contracts reflect their erased inputs:
-  `foreign(ABI: abi)` now receives `c` from the finite `abi = sort { c }`, and
-  `test(Name: String)(body)` receives its UTF-8 registration name through the
-  compiler-owned metadata `String` sort.
+  `foreign(abi_value: abi)` now receives `c` from the finite
+  `abi = sort { c }`, and `test(name: string)(body)` receives its UTF-8
+  registration name through the compiler-owned metadata `string` sort.
 - Moved `access` from a closed runtime enum to the finite compile-time sort
   `sort { shared mut }`, with prelude aliases `mut = access.mut` and
   `shared = access.shared`. Split the former combined effect classifier into
   `effect` for exactly one nominal identity and `effects` for normalized
-  zero-or-more rows; row-polymorphic APIs now bind `E: effects`.
+  zero-or-more rows; row-polymorphic APIs now bind `e: effects`.
 - Replaced source `domain` declarations with compiler-owned abstract `sort`s
   and user-defined finite sorts. Constructor Sorts now retain curried group
   boundaries and every parameter Sort, and trait constructor matching checks
   that complete signature instead of flattened arity.
 - Added typed `StaticValue`, trait `Constraint`/`Goal`, and projection-equation
-  IR boundaries. Ordinary pure `usize`/`Bool` functions can now run under
-  bounded CTFE in dependent `Array(T)(expression)` lengths after generic
+  IR boundaries. Ordinary pure `usize`/`bool` functions can now run under
+  bounded CTFE in dependent `array(t)(expression)` lengths after generic
   substitution; mutation, borrowing, runtime effects, invalid arithmetic, and
   repeated nonterminating calls are rejected.
 - Replanned the post-foundation work around daily compiler usability.

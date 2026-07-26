@@ -10,7 +10,8 @@ use crate::ast::{Program, StructRepresentation};
 use crate::cleanup::CleanupPlan;
 
 use super::cleanup_plan::build_and_verify_cleanup_plans;
-use super::emitter::{evaluate_globals, ConstValue, Emitter};
+use super::ctfe_value::CtfeValue;
+use super::emitter::{evaluate_globals, Emitter};
 use super::hir::Ty;
 use super::{Analyzer, Diagnostic, HirProgram};
 
@@ -21,7 +22,7 @@ struct AnalyzedProgram {
 struct PreparedProgram {
     hir: HirProgram,
     cleanup_plans: Vec<CleanupPlan>,
-    constants: HashMap<String, ConstValue>,
+    constants: HashMap<String, CtfeValue>,
 }
 
 /// Type-check `program` and emit portable textual LLVM IR using opaque

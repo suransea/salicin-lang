@@ -1,18 +1,10 @@
+use super::ctfe_value::{CtfeValue, CtfeValueKind};
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ConstValue {
-    Integer(i128),
-    Bool(bool),
-    Unit,
-    Aggregate(Vec<ConstValue>),
-    LayoutQuery(Ty, LayoutQueryKind),
-}
-
 pub(super) fn evaluate_globals(
     program: &HirProgram,
-) -> Result<HashMap<String, ConstValue>, Vec<Diagnostic>> {
+) -> Result<HashMap<String, CtfeValue>, Vec<Diagnostic>> {
     let globals: HashMap<_, _> = program
         .globals
         .iter()
@@ -38,13 +30,13 @@ pub(super) fn evaluate_globals(
 struct ConstantEvaluator<'a> {
     program: &'a HirProgram,
     globals: HashMap<String, &'a HirGlobal>,
-    values: HashMap<String, ConstValue>,
+    values: HashMap<String, CtfeValue>,
     active: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
 impl ConstantEvaluator<'_> {
-    fn evaluate_global(&mut self, name: &str) -> Option<ConstValue> {
+    fn evaluate_global(&mut self, name: &str) -> Option<CtfeValue> {
         if let Some(value) = self.values.get(name) {
             return Some(value.clone());
         }
@@ -65,32 +57,47 @@ impl ConstantEvaluator<'_> {
     fn evaluate_expr(
         &mut self,
         expression: &HirExpr,
-        locals: &mut HashMap<LocalId, ConstValue>,
-    ) -> Option<ConstValue> {
+        locals: &mut HashMap<LocalId, CtfeValue>,
+    ) -> Option<CtfeValue> {
         match &expression.kind {
-            HirExprKind::Integer(value) => Some(ConstValue::Integer(*value)),
-            HirExprKind::Bool(value) => Some(ConstValue::Bool(*value)),
-            HirExprKind::Unit => Some(ConstValue::Unit),
-            HirExprKind::LayoutQuery { queried, kind } => {
-                Some(ConstValue::LayoutQuery(queried.clone(), *kind))
-            }
-            HirExprKind::Array(elements) | HirExprKind::Tuple(elements) => {
-                Some(ConstValue::Aggregate(
+            HirExprKind::Integer(value) => Some(CtfeValue::integer(expression.ty.clone(), *value)),
+            HirExprKind::Bool(value) => Some(CtfeValue::bool(*value)),
+            HirExprKind::Unit => Some(CtfeValue::unit()),
+            HirExprKind::LayoutQuery { queried, kind } => Some(CtfeValue {
+                ty: expression.ty.clone(),
+                kind: CtfeValueKind::LayoutQuery {
+                    queried: queried.clone(),
+                    kind: *kind,
+                },
+            }),
+            HirExprKind::Array(elements) => Some(CtfeValue {
+                ty: expression.ty.clone(),
+                kind: CtfeValueKind::Array(
                     elements
                         .iter()
                         .map(|element| self.evaluate_expr(element, locals))
                         .collect::<Option<Vec<_>>>()?,
-                ))
-            }
+                ),
+            }),
+            HirExprKind::Tuple(elements) => Some(CtfeValue {
+                ty: expression.ty.clone(),
+                kind: CtfeValueKind::Tuple(
+                    elements
+                        .iter()
+                        .map(|element| self.evaluate_expr(element, locals))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            }),
             HirExprKind::Index { base, index, .. } => {
-                let ConstValue::Aggregate(elements) = self.evaluate_expr(base, locals)? else {
+                let value = self.evaluate_expr(base, locals)?;
+                let CtfeValueKind::Array(elements) = value.kind else {
                     self.error("invalid array value in constant expression");
                     return None;
                 };
                 let index = match index {
                     HirIndex::Static(index) => i128::from(*index),
                     HirIndex::Dynamic(index) => {
-                        let ConstValue::Integer(index) = self.evaluate_expr(index, locals)? else {
+                        let Some(index) = self.evaluate_expr(index, locals)?.integer_value() else {
                             self.error("invalid array index in constant expression");
                             return None;
                         };
@@ -112,11 +119,7 @@ impl ConstantEvaluator<'_> {
                     None
                 })?;
                 for index in &place.projections {
-                    let ConstValue::Aggregate(fields) = value else {
-                        self.error("invalid field read in constant expression");
-                        return None;
-                    };
-                    let Some(field) = fields.get(*index).cloned() else {
+                    let Some(field) = value.projection(*index).cloned() else {
                         self.error("invalid field index in constant expression");
                         return None;
                     };
@@ -135,7 +138,13 @@ impl ConstantEvaluator<'_> {
                 for (index, field) in fields {
                     values[*index] = self.evaluate_expr(field, locals)?;
                 }
-                Some(ConstValue::Aggregate(values))
+                Some(CtfeValue {
+                    ty: expression.ty.clone(),
+                    kind: CtfeValueKind::Struct {
+                        name: name.clone(),
+                        fields: values,
+                    },
+                })
             }
             HirExprKind::ConstructEnum {
                 name,
@@ -144,47 +153,43 @@ impl ConstantEvaluator<'_> {
             } => {
                 let layout = self.program.enum_layout(name)?;
                 let variant_layout = &layout.variants[*variant];
-                let mut values = vec![ConstValue::Integer(*variant as i128)];
-                values.extend(
-                    layout
-                        .variants
-                        .iter()
-                        .flat_map(|variant| &variant.fields)
-                        .map(|field| zero_const(&field.ty, self.program))
-                        .collect::<Option<Vec<_>>>()?,
-                );
+                let mut values = variant_layout
+                    .fields
+                    .iter()
+                    .map(|field| zero_const(&field.ty, self.program))
+                    .collect::<Option<Vec<_>>>()?;
                 for (index, field) in fields {
-                    values[1 + variant_layout.payload_offset + index] =
-                        self.evaluate_expr(field, locals)?;
+                    values[*index] = self.evaluate_expr(field, locals)?;
                 }
-                Some(ConstValue::Aggregate(values))
+                Some(CtfeValue {
+                    ty: expression.ty.clone(),
+                    kind: CtfeValueKind::Enum {
+                        name: name.clone(),
+                        variant: *variant,
+                        fields: values,
+                    },
+                })
             }
-            HirExprKind::Field { base, index } => {
-                let ConstValue::Aggregate(fields) = self.evaluate_expr(base, locals)? else {
-                    return None;
-                };
-                fields.get(*index).cloned()
-            }
+            HirExprKind::Field { base, index } => self
+                .evaluate_expr(base, locals)?
+                .projection(*index)
+                .cloned(),
             HirExprKind::Unary(operator, operand) => {
                 let operand = self.evaluate_expr(operand, locals)?;
                 self.evaluate_unary(*operator, operand, &expression.ty)
             }
             HirExprKind::Binary(left, BinaryOp::And, right) => {
-                let ConstValue::Bool(left) = self.evaluate_expr(left, locals)? else {
-                    return None;
-                };
+                let left = self.evaluate_expr(left, locals)?.bool_value()?;
                 if !left {
-                    Some(ConstValue::Bool(false))
+                    Some(CtfeValue::bool(false))
                 } else {
                     self.evaluate_expr(right, locals)
                 }
             }
             HirExprKind::Binary(left, BinaryOp::Or, right) => {
-                let ConstValue::Bool(left) = self.evaluate_expr(left, locals)? else {
-                    return None;
-                };
+                let left = self.evaluate_expr(left, locals)?.bool_value()?;
                 if left {
-                    Some(ConstValue::Bool(true))
+                    Some(CtfeValue::bool(true))
                 } else {
                     self.evaluate_expr(right, locals)
                 }
@@ -209,7 +214,7 @@ impl ConstantEvaluator<'_> {
                 }
                 let result = match tail {
                     Some(tail) => self.evaluate_expr(tail, locals),
-                    None => Some(ConstValue::Unit),
+                    None => Some(CtfeValue::unit()),
                 };
                 *locals = saved;
                 result
@@ -219,15 +224,13 @@ impl ConstantEvaluator<'_> {
                 then_branch,
                 else_branch,
             } => {
-                let ConstValue::Bool(condition) = self.evaluate_expr(condition, locals)? else {
-                    return None;
-                };
+                let condition = self.evaluate_expr(condition, locals)?.bool_value()?;
                 if condition {
                     self.evaluate_expr(then_branch, locals)
                 } else if let Some(else_branch) = else_branch {
                     self.evaluate_expr(else_branch, locals)
                 } else {
-                    Some(ConstValue::Unit)
+                    Some(CtfeValue::unit())
                 }
             }
             HirExprKind::Assign { .. }
@@ -275,21 +278,21 @@ impl ConstantEvaluator<'_> {
     fn evaluate_unary(
         &mut self,
         operator: UnaryOp,
-        operand: ConstValue,
+        operand: CtfeValue,
         ty: &Ty,
-    ) -> Option<ConstValue> {
-        if matches!(&operand, ConstValue::LayoutQuery(_, _)) {
+    ) -> Option<CtfeValue> {
+        if matches!(&operand.kind, CtfeValueKind::LayoutQuery { .. }) {
             self.error(
                 "target layout queries may only be standalone global constants in this version",
             );
             return None;
         }
-        match (operator, operand) {
-            (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
-            (UnaryOp::Neg, ConstValue::Integer(value)) => value
+        match (operator, operand.kind) {
+            (UnaryOp::Not, CtfeValueKind::Bool(value)) => Some(CtfeValue::bool(!value)),
+            (UnaryOp::Neg, CtfeValueKind::Integer(value)) => value
                 .checked_neg()
                 .filter(|value| integer_value_fits(*value, ty))
-                .map(ConstValue::Integer)
+                .map(|value| CtfeValue::integer(ty.clone(), value))
                 .or_else(|| {
                     self.error(format!("constant arithmetic overflows `{ty}`"));
                     None
@@ -300,22 +303,22 @@ impl ConstantEvaluator<'_> {
 
     fn evaluate_binary(
         &mut self,
-        left: ConstValue,
+        left: CtfeValue,
         operator: BinaryOp,
-        right: ConstValue,
+        right: CtfeValue,
         operand_ty: &Ty,
-    ) -> Option<ConstValue> {
+    ) -> Option<CtfeValue> {
         use BinaryOp::*;
-        if matches!(&left, ConstValue::LayoutQuery(_, _))
-            || matches!(&right, ConstValue::LayoutQuery(_, _))
+        if matches!(&left.kind, CtfeValueKind::LayoutQuery { .. })
+            || matches!(&right.kind, CtfeValueKind::LayoutQuery { .. })
         {
             self.error(
                 "target layout queries may only be standalone global constants in this version",
             );
             return None;
         }
-        match (left, right) {
-            (ConstValue::Integer(left), ConstValue::Integer(right)) => {
+        match (left.kind, right.kind) {
+            (CtfeValueKind::Integer(left), CtfeValueKind::Integer(right)) => {
                 if matches!(operator, Div | Rem)
                     && right == -1
                     && signed_integer_min(operand_ty) == Some(left)
@@ -358,25 +361,25 @@ impl ConstantEvaluator<'_> {
                         .ok()
                         .filter(|shift| *shift < integer_bit_width(operand_ty))
                         .and_then(|shift| left.checked_shr(shift)),
-                    Eq => return Some(ConstValue::Bool(left == right)),
-                    Ne => return Some(ConstValue::Bool(left != right)),
-                    Lt => return Some(ConstValue::Bool(left < right)),
-                    Le => return Some(ConstValue::Bool(left <= right)),
-                    Gt => return Some(ConstValue::Bool(left > right)),
-                    Ge => return Some(ConstValue::Bool(left >= right)),
+                    Eq => return Some(CtfeValue::bool(left == right)),
+                    Ne => return Some(CtfeValue::bool(left != right)),
+                    Lt => return Some(CtfeValue::bool(left < right)),
+                    Le => return Some(CtfeValue::bool(left <= right)),
+                    Gt => return Some(CtfeValue::bool(left > right)),
+                    Ge => return Some(CtfeValue::bool(left >= right)),
                     And | Or => unreachable!("short-circuit operators handled separately"),
                 };
                 arithmetic
                     .filter(|value| integer_value_fits(*value, operand_ty))
-                    .map(ConstValue::Integer)
+                    .map(|value| CtfeValue::integer(operand_ty.clone(), value))
                     .or_else(|| {
                         self.error(format!("constant arithmetic overflows `{operand_ty}`"));
                         None
                     })
             }
-            (ConstValue::Bool(left), ConstValue::Bool(right)) => match operator {
-                Eq => Some(ConstValue::Bool(left == right)),
-                Ne => Some(ConstValue::Bool(left != right)),
+            (CtfeValueKind::Bool(left), CtfeValueKind::Bool(right)) => match operator {
+                Eq => Some(CtfeValue::bool(left == right)),
+                Ne => Some(CtfeValue::bool(left != right)),
                 _ => None,
             },
             _ => None,
@@ -390,14 +393,14 @@ impl ConstantEvaluator<'_> {
 
 pub(super) struct Emitter<'a> {
     program: &'a HirProgram,
-    constants: HashMap<String, ConstValue>,
+    constants: HashMap<String, CtfeValue>,
     cleanup_plans: &'a [CleanupPlan],
 }
 
 impl<'a> Emitter<'a> {
     pub(super) fn new(
         program: &'a HirProgram,
-        constants: HashMap<String, ConstValue>,
+        constants: HashMap<String, CtfeValue>,
         cleanup_plans: &'a [CleanupPlan],
     ) -> Self {
         Self {
@@ -4489,7 +4492,7 @@ fn llvm_layout_const(ty: &Ty, kind: LayoutQueryKind) -> Result<String, Diagnosti
     })
 }
 
-fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
+fn zero_const(ty: &Ty, program: &HirProgram) -> Option<CtfeValue> {
     match ty {
         Ty::I8
         | Ty::I16
@@ -4502,44 +4505,57 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         | Ty::U32
         | Ty::U64
         | Ty::U128
-        | Ty::USize => Some(ConstValue::Integer(0)),
-        Ty::Bool => Some(ConstValue::Bool(false)),
-        Ty::Unit => Some(ConstValue::Unit),
-        Ty::Tuple(fields) => Some(ConstValue::Aggregate(
-            fields
-                .iter()
-                .map(|field| zero_const(field, program))
-                .collect::<Option<Vec<_>>>()?,
-        )),
+        | Ty::USize => Some(CtfeValue::integer(ty.clone(), 0)),
+        Ty::Bool => Some(CtfeValue::bool(false)),
+        Ty::Unit => Some(CtfeValue::unit()),
+        Ty::Tuple(fields) => Some(CtfeValue {
+            ty: ty.clone(),
+            kind: CtfeValueKind::Tuple(
+                fields
+                    .iter()
+                    .map(|field| zero_const(field, program))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+        }),
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
-            Some(ConstValue::Aggregate(
-                (0..length)
-                    .map(|_| zero_const(element, program))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
+            Some(CtfeValue {
+                ty: ty.clone(),
+                kind: CtfeValueKind::Array(
+                    (0..length)
+                        .map(|_| zero_const(element, program))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            })
         }
-        Ty::Struct(name) => Some(ConstValue::Aggregate(
-            program
-                .struct_layout(name)?
-                .fields
-                .iter()
-                .map(|field| zero_const(&field.ty, program))
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        Ty::Enum(name) => {
-            let layout = program.enum_layout(name)?;
-            let mut fields = vec![ConstValue::Integer(0)];
-            fields.extend(
-                layout
-                    .variants
+        Ty::Struct(name) => Some(CtfeValue {
+            ty: ty.clone(),
+            kind: CtfeValueKind::Struct {
+                name: name.clone(),
+                fields: program
+                    .struct_layout(name)?
+                    .fields
                     .iter()
-                    .flat_map(|variant| &variant.fields)
                     .map(|field| zero_const(&field.ty, program))
                     .collect::<Option<Vec<_>>>()?,
-            );
-            Some(ConstValue::Aggregate(fields))
+            },
+        }),
+        Ty::Enum(name) => {
+            let layout = program.enum_layout(name)?;
+            let variant = layout.variants.first()?;
+            Some(CtfeValue {
+                ty: ty.clone(),
+                kind: CtfeValueKind::Enum {
+                    name: name.clone(),
+                    variant: 0,
+                    fields: variant
+                        .fields
+                        .iter()
+                        .map(|field| zero_const(&field.ty, program))
+                        .collect::<Option<Vec<_>>>()?,
+                },
+            })
         }
         Ty::Never
         | Ty::Function(_)
@@ -4551,13 +4567,21 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
     }
 }
 
-fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String, Diagnostic> {
-    match (value, ty) {
-        (ConstValue::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
-        (ConstValue::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
-        (ConstValue::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
-        (ConstValue::LayoutQuery(queried, kind), Ty::U64) => llvm_layout_const(queried, *kind),
-        (ConstValue::Aggregate(values), Ty::Array(element, length)) => {
+fn const_ir(value: &CtfeValue, ty: &Ty, program: &HirProgram) -> Result<String, Diagnostic> {
+    if value.ty != *ty {
+        return Err(Diagnostic::new(format!(
+            "internal error: constant value has type `{}`, expected `{ty}`",
+            value.ty
+        )));
+    }
+    match (&value.kind, ty) {
+        (CtfeValueKind::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
+        (CtfeValueKind::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
+        (CtfeValueKind::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
+        (CtfeValueKind::LayoutQuery { queried, kind }, Ty::U64) => {
+            llvm_layout_const(queried, *kind)
+        }
+        (CtfeValueKind::Array(values), Ty::Array(element, length)) => {
             if values.len() as u64 != *length {
                 return Err(Diagnostic::new(
                     "internal error: constant array length does not match its type",
@@ -4575,7 +4599,7 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
                 .collect::<Result<Vec<_>, Diagnostic>>()?;
             Ok(format!("[{}]", elements.join(", ")))
         }
-        (ConstValue::Aggregate(values), Ty::Tuple(fields)) => {
+        (CtfeValueKind::Tuple(values), Ty::Tuple(fields)) => {
             if values.len() != fields.len() {
                 return Err(Diagnostic::new(
                     "internal error: constant tuple length does not match its type",
@@ -4594,7 +4618,13 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
                 .collect::<Result<Vec<_>, Diagnostic>>()?;
             Ok(format!("{{ {} }}", values.join(", ")))
         }
-        (ConstValue::Aggregate(values), Ty::Struct(name)) => {
+        (
+            CtfeValueKind::Struct {
+                name: value_name,
+                fields: values,
+            },
+            Ty::Struct(name),
+        ) if value_name == name => {
             let layout = program.struct_layout(name).ok_or_else(|| {
                 Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
             })?;
@@ -4611,30 +4641,53 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
                 .collect::<Result<Vec<_>, Diagnostic>>()?;
             Ok(format!("{{ {} }}", fields.join(", ")))
         }
-        (ConstValue::Aggregate(values), Ty::Enum(name)) => {
+        (
+            CtfeValueKind::Enum {
+                name: value_name,
+                variant,
+                fields: values,
+            },
+            Ty::Enum(name),
+        ) if value_name == name => {
             let layout = program.enum_layout(name).ok_or_else(|| {
                 Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
             })?;
-            let mut types = vec![Ty::U32];
-            types.extend(
-                layout
-                    .variants
-                    .iter()
-                    .flat_map(|variant| &variant.fields)
-                    .map(|field| field.ty.clone()),
-            );
-            let fields = values
-                .iter()
-                .zip(types)
-                .map(|(value, ty)| {
-                    Ok(format!(
+            let variant_layout = layout.variants.get(*variant).ok_or_else(|| {
+                Diagnostic::new("internal error: constant enum variant is out of range")
+            })?;
+            if values.len() != variant_layout.fields.len() {
+                return Err(Diagnostic::new(
+                    "internal error: constant enum payload does not match its variant",
+                ));
+            }
+            let mut encoded = vec![format!("i32 {variant}")];
+            for candidate in &layout.variants {
+                for field in &candidate.fields {
+                    encoded.push(format!(
                         "{} {}",
-                        llvm_field_type(&ty)?,
-                        const_ir(value, &ty, program)?
-                    ))
-                })
-                .collect::<Result<Vec<_>, Diagnostic>>()?;
-            Ok(format!("{{ {} }}", fields.join(", ")))
+                        llvm_field_type(&field.ty)?,
+                        const_ir(
+                            &zero_const(&field.ty, program).ok_or_else(|| {
+                                Diagnostic::new(
+                                    "internal error: enum padding is not constant representable",
+                                )
+                            })?,
+                            &field.ty,
+                            program
+                        )?
+                    ));
+                }
+            }
+            for (index, (field, field_layout)) in
+                values.iter().zip(&variant_layout.fields).enumerate()
+            {
+                encoded[1 + variant_layout.payload_offset + index] = Ok(format!(
+                    "{} {}",
+                    llvm_field_type(&field_layout.ty)?,
+                    const_ir(field, &field_layout.ty, program)?
+                ))?;
+            }
+            Ok(format!("{{ {} }}", encoded.join(", ")))
         }
         _ => Err(Diagnostic::new(format!(
             "internal error: constant value does not have type `{ty}`"

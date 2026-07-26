@@ -1,6 +1,6 @@
 # Programming-Language Research Ledger
 
-Last reviewed: 2026-07-26
+Last reviewed: 2026-07-27
 
 This ledger records research that materially changes Salicin's language model. It is a repeatable
 review gate, not a claim that any language can remain “advanced” without continuing comparison,
@@ -57,6 +57,38 @@ The design is compared against recent staged shape-dependent work:
 
 Future shape inference should be best-effort and should request explicit static arguments when
 inversion is ambiguous; the compiler must not guess equations it cannot justify.
+
+### Composite CTFE Uses Typed Values and Fixed Budgets
+
+The accepted [composite CTFE contract](../project/composite-ctfe.md) keeps
+runtime-typed normalized values separate from erased `StaticValue` metadata.
+It requires strict left-to-right evaluation, target-width `isize`/`usize`,
+use-site diagnostics, structural nominal normalization, resource exclusion,
+and compiler-owned step, call, nesting, and aggregate limits.
+
+The July 2026 review retained Salicin's use-site staging model:
+
+- Rust's current constant-evaluation reference makes required const contexts
+  fail at compile time, interprets pointer-sized integers for the compilation
+  target, and excludes executed destructor calls;
+- Zig exposes a backwards-branch quota, confirming that bounded evaluation is
+  operationally necessary, but Salicin deliberately keeps budgets fixed and
+  unavailable to source so normalized identities remain reproducible;
+- C++ work continues moving eligibility diagnostics from function
+  declarations to required constant-evaluation uses, matching Salicin's reuse
+  of ordinary pure functions;
+- *When Do Staging Annotations Preserve Semantics?* (2026) makes evaluation
+  order and let insertion part of semantics preservation. Salicin does not
+  generate code during CTFE, but therefore specifies argument, binding,
+  pattern, guard, and branch order rather than treating normalization as
+  optimizer freedom.
+
+Primary references:
+
+- [Rust Reference: Constant evaluation](https://doc.rust-lang.org/reference/const_eval.html)
+- [Zig language reference: `@setEvalBranchQuota`](https://ziglang.org/documentation/0.12.0/#setEvalBranchQuota)
+- [P2448R0: Relaxing some `constexpr` restrictions](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p2448r0.html)
+- [When Do Staging Annotations Preserve Semantics? (2026)](https://arxiv.org/abs/2606.30854)
 
 ### Trait Requirements Are Logical Goals
 

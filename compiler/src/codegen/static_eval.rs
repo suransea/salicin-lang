@@ -2,15 +2,11 @@ use std::collections::HashMap;
 
 use crate::ast::{BinaryOp, Expr, Function, PassMode, Pattern, StaticExpr, Stmt, Type, UnaryOp};
 
+use super::ctfe_value::CtfeValue;
+use super::hir::Ty;
 use super::Analyzer;
 
 const STATIC_EVALUATION_FUEL: usize = 1_024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Scalar {
-    USize(u64),
-    Bool(bool),
-}
 
 impl Analyzer {
     pub(super) fn evaluate_static_usize(&mut self, expression: &StaticExpr) -> Option<u64> {
@@ -22,9 +18,16 @@ impl Analyzer {
             &mut fuel,
             &mut active_calls,
         ) {
-            Ok(Scalar::USize(value)) => Some(value),
-            Ok(Scalar::Bool(_)) => {
+            Ok(value) if value.ty == Ty::USize => value.usize_value(),
+            Ok(value) if value.ty == Ty::Bool => {
                 self.error("compile-time array length evaluated to `bool`, expected `usize`");
+                None
+            }
+            Ok(value) => {
+                self.error(format!(
+                    "compile-time array length evaluated to `{}`, expected `usize`",
+                    value.ty
+                ));
                 None
             }
             Err(message) => {
@@ -37,17 +40,17 @@ impl Analyzer {
     fn evaluate_static_expression(
         &self,
         expression: &StaticExpr,
-        locals: &HashMap<String, Scalar>,
+        locals: &HashMap<String, CtfeValue>,
         fuel: &mut usize,
-        active_calls: &mut Vec<(String, Vec<Scalar>)>,
-    ) -> Result<Scalar, String> {
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
         Self::consume_static_fuel(fuel)?;
         match expression {
-            StaticExpr::USize(value) => Ok(Scalar::USize(*value)),
-            StaticExpr::Bool(value) => Ok(Scalar::Bool(*value)),
+            StaticExpr::USize(value) => Ok(CtfeValue::usize(*value)),
+            StaticExpr::Bool(value) => Ok(CtfeValue::bool(*value)),
             StaticExpr::Name(name) => locals
                 .get(name)
-                .copied()
+                .cloned()
                 .ok_or_else(|| format!("unknown static value `{name}`")),
             StaticExpr::Unary(operator, operand) => {
                 let operand =
@@ -56,11 +59,11 @@ impl Analyzer {
             }
             StaticExpr::Binary(left, operator, right) => {
                 let left = self.evaluate_static_expression(left, locals, fuel, active_calls)?;
-                if matches!((left, operator), (Scalar::Bool(false), BinaryOp::And)) {
-                    return Ok(Scalar::Bool(false));
+                if left.bool_value() == Some(false) && *operator == BinaryOp::And {
+                    return Ok(CtfeValue::bool(false));
                 }
-                if matches!((left, operator), (Scalar::Bool(true), BinaryOp::Or)) {
-                    return Ok(Scalar::Bool(true));
+                if left.bool_value() == Some(true) && *operator == BinaryOp::Or {
+                    return Ok(CtfeValue::bool(true));
                 }
                 let right = self.evaluate_static_expression(right, locals, fuel, active_calls)?;
                 Self::evaluate_static_binary(left, *operator, right)
@@ -83,10 +86,10 @@ impl Analyzer {
     fn evaluate_static_call(
         &self,
         name: &str,
-        arguments: &[Scalar],
+        arguments: &[CtfeValue],
         fuel: &mut usize,
-        active_calls: &mut Vec<(String, Vec<Scalar>)>,
-    ) -> Result<Scalar, String> {
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
         Self::consume_static_fuel(fuel)?;
         let call = (name.to_owned(), arguments.to_vec());
         if active_calls.contains(&call) {
@@ -106,7 +109,7 @@ impl Analyzer {
         let mut locals = parameters
             .iter()
             .zip(arguments)
-            .map(|(parameter, value)| (parameter.name.clone(), *value))
+            .map(|(parameter, value)| (parameter.name.clone(), value.clone()))
             .collect::<HashMap<_, _>>();
         active_calls.push(call);
         let result = self.evaluate_static_body(
@@ -125,7 +128,7 @@ impl Analyzer {
     fn validate_static_function(
         &self,
         function: &Function,
-        arguments: &[Scalar],
+        arguments: &[CtfeValue],
     ) -> Result<(), String> {
         if function.foreign.is_some() || function.builtin || function.body.is_none() {
             return Err(format!(
@@ -168,8 +171,8 @@ impl Analyzer {
                 ));
             }
             let compatible = matches!(
-                (&parameter.ty, argument),
-                (Type::USize, Scalar::USize(_)) | (Type::Bool, Scalar::Bool(_))
+                (&parameter.ty, &argument.ty),
+                (Type::USize, Ty::USize) | (Type::Bool, Ty::Bool)
             );
             if !compatible {
                 return Err(format!(
@@ -190,19 +193,19 @@ impl Analyzer {
     fn evaluate_static_body(
         &self,
         expression: &Expr,
-        locals: &mut HashMap<String, Scalar>,
+        locals: &mut HashMap<String, CtfeValue>,
         fuel: &mut usize,
-        active_calls: &mut Vec<(String, Vec<Scalar>)>,
-    ) -> Result<Scalar, String> {
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
         Self::consume_static_fuel(fuel)?;
         match expression.unlocated() {
             Expr::Integer(value) => u64::try_from(*value)
-                .map(Scalar::USize)
+                .map(CtfeValue::usize)
                 .map_err(|_| "integer value does not fit in `usize`".to_owned()),
-            Expr::Bool(value) => Ok(Scalar::Bool(*value)),
+            Expr::Bool(value) => Ok(CtfeValue::bool(*value)),
             Expr::Name(name) => locals
                 .get(name)
-                .copied()
+                .cloned()
                 .ok_or_else(|| format!("unknown local `{name}` in ctfe function")),
             Expr::Unary(operator, operand) => {
                 let operand = self.evaluate_static_body(operand, locals, fuel, active_calls)?;
@@ -210,11 +213,11 @@ impl Analyzer {
             }
             Expr::Binary(left, operator, right) => {
                 let left = self.evaluate_static_body(left, locals, fuel, active_calls)?;
-                if matches!((left, operator), (Scalar::Bool(false), BinaryOp::And)) {
-                    return Ok(Scalar::Bool(false));
+                if left.bool_value() == Some(false) && *operator == BinaryOp::And {
+                    return Ok(CtfeValue::bool(false));
                 }
-                if matches!((left, operator), (Scalar::Bool(true), BinaryOp::Or)) {
-                    return Ok(Scalar::Bool(true));
+                if left.bool_value() == Some(true) && *operator == BinaryOp::Or {
+                    return Ok(CtfeValue::bool(true));
                 }
                 let right = self.evaluate_static_body(right, locals, fuel, active_calls)?;
                 Self::evaluate_static_binary(left, *operator, right)
@@ -270,11 +273,10 @@ impl Analyzer {
                 then_branch,
                 else_branch,
             } => {
-                let Scalar::Bool(condition) =
-                    self.evaluate_static_body(condition, locals, fuel, active_calls)?
-                else {
-                    return Err("ctfe `if` condition must be `bool`".to_owned());
-                };
+                let condition = self
+                    .evaluate_static_body(condition, locals, fuel, active_calls)?
+                    .bool_value()
+                    .ok_or_else(|| "ctfe `if` condition must be `bool`".to_owned())?;
                 if condition {
                     self.evaluate_static_body(then_branch, locals, fuel, active_calls)
                 } else {
@@ -288,19 +290,19 @@ impl Analyzer {
                 let value = self.evaluate_static_body(scrutinee, locals, fuel, active_calls)?;
                 for arm in arms {
                     let mut arm_locals = locals.clone();
-                    if !Self::static_pattern_matches(&arm.pattern, value, &mut arm_locals)? {
+                    if !Self::static_pattern_matches(&arm.pattern, &value, &mut arm_locals)? {
                         continue;
                     }
                     if let Some(guard) = &arm.guard {
-                        let Scalar::Bool(guard) = self.evaluate_static_body(
-                            guard,
-                            &mut arm_locals,
-                            fuel,
-                            active_calls,
-                        )?
-                        else {
-                            return Err("ctfe match guard must be `bool`".to_owned());
-                        };
+                        let guard = self
+                            .evaluate_static_body(
+                                guard,
+                                &mut arm_locals,
+                                fuel,
+                                active_calls,
+                            )?
+                            .bool_value()
+                            .ok_or_else(|| "ctfe match guard must be `bool`".to_owned())?;
                         if !guard {
                             continue;
                         }
@@ -323,118 +325,108 @@ impl Analyzer {
 
     fn static_pattern_matches(
         pattern: &Pattern,
-        value: Scalar,
-        locals: &mut HashMap<String, Scalar>,
+        value: &CtfeValue,
+        locals: &mut HashMap<String, CtfeValue>,
     ) -> Result<bool, String> {
-        match (pattern, value) {
-            (Pattern::Bool(expected), Scalar::Bool(actual)) => Ok(*expected == actual),
-            (Pattern::Integer(expected), Scalar::USize(actual)) if !expected.negative => {
-                Ok(u64::try_from(expected.magnitude).is_ok_and(|expected| expected == actual))
+        match pattern {
+            Pattern::Bool(expected) if value.ty == Ty::Bool => {
+                Ok(value.bool_value() == Some(*expected))
             }
-            (Pattern::Integer(_), Scalar::USize(_)) => Ok(false),
-            (Pattern::Wildcard, _) => Ok(true),
-            (Pattern::Binding(name), value) => {
-                locals.insert(name.clone(), value);
+            Pattern::Integer(expected) if value.ty == Ty::USize && !expected.negative => {
+                Ok(value.usize_value().is_some_and(|actual| {
+                    u64::try_from(expected.magnitude).is_ok_and(|expected| expected == actual)
+                }))
+            }
+            Pattern::Integer(_) if value.ty == Ty::USize => Ok(false),
+            Pattern::Wildcard => Ok(true),
+            Pattern::Binding(name) => {
+                locals.insert(name.clone(), value.clone());
                 Ok(true)
             }
-            (Pattern::Integer(_), Scalar::Bool(_))
-            | (Pattern::Bool(_), Scalar::USize(_))
-            | (Pattern::Tuple(_), _)
-            | (Pattern::Constructor { .. }, _) => {
+            Pattern::Integer(_)
+            | Pattern::Bool(_)
+            | Pattern::Tuple(_)
+            | Pattern::Constructor { .. } => {
                 Err("pattern is outside the `usize`/`bool` ctfe subset".to_owned())
             }
         }
     }
 
-    fn evaluate_static_unary(operator: UnaryOp, operand: Scalar) -> Result<Scalar, String> {
-        match (operator, operand) {
-            (UnaryOp::Not, Scalar::Bool(value)) => Ok(Scalar::Bool(!value)),
-            (UnaryOp::Neg, Scalar::USize(_)) => {
+    fn evaluate_static_unary(operator: UnaryOp, operand: CtfeValue) -> Result<CtfeValue, String> {
+        match operator {
+            UnaryOp::Not if operand.ty == Ty::Bool => Ok(CtfeValue::bool(
+                !operand.bool_value().expect("bool value has bool payload"),
+            )),
+            UnaryOp::Neg if operand.ty == Ty::USize => {
                 Err("negation cannot produce a compile-time `usize`".to_owned())
             }
-            (UnaryOp::Deref, _) => Err("dereference is not permitted during ctfe".to_owned()),
+            UnaryOp::Deref => Err("dereference is not permitted during ctfe".to_owned()),
             _ => Err("invalid unary operand during ctfe".to_owned()),
         }
     }
 
     fn evaluate_static_binary(
-        left: Scalar,
+        left: CtfeValue,
         operator: BinaryOp,
-        right: Scalar,
-    ) -> Result<Scalar, String> {
-        match (left, operator, right) {
-            (Scalar::USize(left), BinaryOp::Add, Scalar::USize(right)) => left
-                .checked_add(right)
-                .map(Scalar::USize)
-                .ok_or_else(|| "`usize` overflow in ctfe addition".to_owned()),
-            (Scalar::USize(left), BinaryOp::Sub, Scalar::USize(right)) => left
-                .checked_sub(right)
-                .map(Scalar::USize)
-                .ok_or_else(|| "`usize` underflow in ctfe subtraction".to_owned()),
-            (Scalar::USize(left), BinaryOp::Mul, Scalar::USize(right)) => left
-                .checked_mul(right)
-                .map(Scalar::USize)
-                .ok_or_else(|| "`usize` overflow in ctfe multiplication".to_owned()),
-            (Scalar::USize(_), BinaryOp::Div | BinaryOp::Rem, Scalar::USize(0)) => {
-                Err("division by zero during ctfe".to_owned())
-            }
-            (Scalar::USize(left), BinaryOp::Div, Scalar::USize(right)) => {
-                Ok(Scalar::USize(left / right))
-            }
-            (Scalar::USize(left), BinaryOp::Rem, Scalar::USize(right)) => {
-                Ok(Scalar::USize(left % right))
-            }
-            (Scalar::USize(left), BinaryOp::BitAnd, Scalar::USize(right)) => {
-                Ok(Scalar::USize(left & right))
-            }
-            (Scalar::USize(left), BinaryOp::BitOr, Scalar::USize(right)) => {
-                Ok(Scalar::USize(left | right))
-            }
-            (Scalar::USize(left), BinaryOp::BitXor, Scalar::USize(right)) => {
-                Ok(Scalar::USize(left ^ right))
-            }
-            (Scalar::USize(left), BinaryOp::Shl, Scalar::USize(right)) => u32::try_from(right)
-                .ok()
-                .and_then(|right| left.checked_shl(right))
-                .map(Scalar::USize)
-                .ok_or_else(|| "invalid left shift during ctfe".to_owned()),
-            (Scalar::USize(left), BinaryOp::Shr, Scalar::USize(right)) => u32::try_from(right)
-                .ok()
-                .and_then(|right| left.checked_shr(right))
-                .map(Scalar::USize)
-                .ok_or_else(|| "invalid right shift during ctfe".to_owned()),
-            (Scalar::USize(left), BinaryOp::Eq, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left == right))
-            }
-            (Scalar::USize(left), BinaryOp::Ne, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left != right))
-            }
-            (Scalar::USize(left), BinaryOp::Lt, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left < right))
-            }
-            (Scalar::USize(left), BinaryOp::Le, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left <= right))
-            }
-            (Scalar::USize(left), BinaryOp::Gt, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left > right))
-            }
-            (Scalar::USize(left), BinaryOp::Ge, Scalar::USize(right)) => {
-                Ok(Scalar::Bool(left >= right))
-            }
-            (Scalar::Bool(left), BinaryOp::Eq, Scalar::Bool(right)) => {
-                Ok(Scalar::Bool(left == right))
-            }
-            (Scalar::Bool(left), BinaryOp::Ne, Scalar::Bool(right)) => {
-                Ok(Scalar::Bool(left != right))
-            }
-            (Scalar::Bool(left), BinaryOp::And, Scalar::Bool(right)) => {
-                Ok(Scalar::Bool(left && right))
-            }
-            (Scalar::Bool(left), BinaryOp::Or, Scalar::Bool(right)) => {
-                Ok(Scalar::Bool(left || right))
-            }
-            _ => Err("invalid operand sorts in ctfe expression".to_owned()),
+        right: CtfeValue,
+    ) -> Result<CtfeValue, String> {
+        if left.ty == Ty::USize && right.ty == Ty::USize {
+            let left = left.usize_value().expect("usize value has usize payload");
+            let right = right.usize_value().expect("usize value has usize payload");
+            return match operator {
+                BinaryOp::Add => left
+                    .checked_add(right)
+                    .map(CtfeValue::usize)
+                    .ok_or_else(|| "`usize` overflow in ctfe addition".to_owned()),
+                BinaryOp::Sub => left
+                    .checked_sub(right)
+                    .map(CtfeValue::usize)
+                    .ok_or_else(|| "`usize` underflow in ctfe subtraction".to_owned()),
+                BinaryOp::Mul => left
+                    .checked_mul(right)
+                    .map(CtfeValue::usize)
+                    .ok_or_else(|| "`usize` overflow in ctfe multiplication".to_owned()),
+                BinaryOp::Div | BinaryOp::Rem if right == 0 => {
+                    Err("division by zero during ctfe".to_owned())
+                }
+                BinaryOp::Div => Ok(CtfeValue::usize(left / right)),
+                BinaryOp::Rem => Ok(CtfeValue::usize(left % right)),
+                BinaryOp::BitAnd => Ok(CtfeValue::usize(left & right)),
+                BinaryOp::BitOr => Ok(CtfeValue::usize(left | right)),
+                BinaryOp::BitXor => Ok(CtfeValue::usize(left ^ right)),
+                BinaryOp::Shl => u32::try_from(right)
+                    .ok()
+                    .and_then(|right| left.checked_shl(right))
+                    .map(CtfeValue::usize)
+                    .ok_or_else(|| "invalid left shift during ctfe".to_owned()),
+                BinaryOp::Shr => u32::try_from(right)
+                    .ok()
+                    .and_then(|right| left.checked_shr(right))
+                    .map(CtfeValue::usize)
+                    .ok_or_else(|| "invalid right shift during ctfe".to_owned()),
+                BinaryOp::Eq => Ok(CtfeValue::bool(left == right)),
+                BinaryOp::Ne => Ok(CtfeValue::bool(left != right)),
+                BinaryOp::Lt => Ok(CtfeValue::bool(left < right)),
+                BinaryOp::Le => Ok(CtfeValue::bool(left <= right)),
+                BinaryOp::Gt => Ok(CtfeValue::bool(left > right)),
+                BinaryOp::Ge => Ok(CtfeValue::bool(left >= right)),
+                BinaryOp::And | BinaryOp::Or => {
+                    Err("invalid operand sorts in ctfe expression".to_owned())
+                }
+            };
         }
+        if left.ty == Ty::Bool && right.ty == Ty::Bool {
+            let left = left.bool_value().expect("bool value has bool payload");
+            let right = right.bool_value().expect("bool value has bool payload");
+            return match operator {
+                BinaryOp::Eq => Ok(CtfeValue::bool(left == right)),
+                BinaryOp::Ne => Ok(CtfeValue::bool(left != right)),
+                BinaryOp::And => Ok(CtfeValue::bool(left && right)),
+                BinaryOp::Or => Ok(CtfeValue::bool(left || right)),
+                _ => Err("invalid operand sorts in ctfe expression".to_owned()),
+            };
+        }
+        Err("invalid operand sorts in ctfe expression".to_owned())
     }
 
     fn consume_static_fuel(fuel: &mut usize) -> Result<(), String> {

@@ -61,9 +61,8 @@ Implemented lexical and declaration features include:
 - explicit erased inputs for those syntax declarations: `foreign(ABI: abi)` selects the finite
   `abi.c` value and `test(Name: String)(body)` receives compiler-owned UTF-8 metadata.
 
-Built-in and nominal types, together with traits, use `PascalCase`. Functions, values, modules,
-and ordinary sorts use `snake_case`; dual-use `usize` and `String` keep their type spelling in
-compile-parameter positions.
+Types, traits, functions, values, modules, parameters, and ordinary sorts use
+`snake_case`.
 
 An abstract sort is distinct from a defined empty sort. Bare `let Name = sort` and the former
 top-level `= type` forms are rejected. Primitive integer types use declarations such as
@@ -79,7 +78,7 @@ Implemented type-system features include:
 - all fixed-width signed and unsigned integers plus pointer-width `isize` and `usize`;
 - tuples, arrays, borrows, raw pointers, function types, structs, and enums;
 - transparent type aliases and partially applied type constructors;
-- compile-time `type`, `usize`, `String`, `region`, `effect`, `effects`, `access`,
+- compile-time `type`, `usize`, `string`, `region`, `effect`, `effects`, `access`,
   closed-value, constructor, and
   parameter-schema arguments;
 - source-level compile-time diagnostics that identify binder, sort, owner, and parameter group;
@@ -98,15 +97,27 @@ Generic associated constructors preserve parameter sorts and groups in trait dec
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-Ordinary pure `usize`/`Bool` functions can be evaluated in dependent array-length expressions.
+Ordinary pure `usize`/`bool` functions can be evaluated in dependent array-length expressions.
 The static expression IR excludes runtime-only operations, substitutes generic `usize` values
 before evaluation, checks arithmetic, and diagnoses nontermination through a bounded evaluator.
 
-The type-level evaluator does not yet admit Unit, other integer widths,
+Dependent-expression evaluation and global constant normalization now share
+one recursive typed CTFE value. It retains the exact integer type,
+distinguishes tuples from arrays, records canonical struct and enum identity,
+and stores an enum's source variant plus active payload rather than backend
+padding or discriminants. Erased sort metadata remains in `StaticValue`.
+
+The type-level evaluator does not yet admit unit, other integer widths,
 tuples, arrays, structs, or enums as intermediate values. Global constant
-evaluation separately supports scalar and aggregate literals but cannot call
-ordinary source functions. Unifying and extending those evaluators is the
-active roadmap boundary.
+evaluation supports scalar and aggregate literals but cannot yet call
+ordinary source functions. Extending the shared value through those
+evaluators is the active roadmap boundary.
+
+The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
+value domain, phase and function-eligibility rules, strict evaluation order,
+resource exclusion, structural normalization, deterministic complexity
+budgets, diagnostics, and the boundary from erased `StaticValue` metadata.
+Implementation begins with the unified typed value IR.
 
 ## Ownership and Borrowing
 

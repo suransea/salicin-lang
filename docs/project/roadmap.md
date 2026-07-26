@@ -49,8 +49,13 @@ history remains in the changelog.
 
 ## Now: Composite Compile-Time Evaluation
 
+The accepted [composite CTFE contract](composite-ctfe.md) fixes the phase
+boundary, typed value domain, evaluation order, resource exclusions,
+normalization rules, deterministic complexity budgets, diagnostics, and
+consumer behavior for this milestone.
+
 Salicin currently has two deliberately bounded but overlapping constant
-systems. Type-level CTFE evaluates pure `usize`/`Bool` expressions for
+systems. Type-level CTFE evaluates pure `usize`/`bool` expressions for
 dependent array lengths, while global constant emission separately represents
 integers, booleans, Unit, tuples, arrays, structs, and enums. The current
 milestone replaces that split implementation with one typed CTFE value and
@@ -60,13 +65,13 @@ pure compile-time calls.
 Runtime `struct` and `enum` declarations remain runtime types; this milestone
 does not turn them into `sort`s. A value of such a type may be constructed,
 inspected, matched, and returned while a pure function is being evaluated at
-compile time. Compiler metadata values such as `type`, `String`, `effect`,
+compile time. Compiler metadata values such as `type`, `string`, `effect`,
 `effects`, regions, constructors, and finite-sort members remain erased
 `StaticValue`s with their existing classification rules.
 
 The supported plain-data CTFE set is:
 
-- Unit, `Bool`, every signed and unsigned integer width, `isize`, and `usize`;
+- unit, `bool`, every signed and unsigned integer width, `isize`, and `usize`;
 - tuples and fixed arrays whose elements are supported;
 - concrete, fully instantiated structs and closed enums whose fields are
   recursively supported and require no runtime address, allocation, or

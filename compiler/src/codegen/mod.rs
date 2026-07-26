@@ -34,6 +34,7 @@ mod coalesce;
 mod compile_time;
 mod constructors;
 mod control;
+mod ctfe_value;
 mod defer;
 mod effects;
 mod emitter;

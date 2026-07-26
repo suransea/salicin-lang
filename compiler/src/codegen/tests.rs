@@ -3095,6 +3095,31 @@ let main(): i32 = { read(choice.pair(left: global)) }
 }
 
 #[test]
+fn emits_typed_nominal_enum_global_constants() {
+    let ir = compile_text(
+        r#"
+let pair = struct { left: i32, right: i32 }
+let choice = enum {
+  pair(pair),
+  empty,
+}
+let global: choice = choice.pair(pair { left: 40, right: 2 })
+let read(value: choice): i32 = { value match {
+  pair(value) => value.left + value.right,
+  empty => 0,
+} }
+let main(): i32 = { read(global) }
+"#,
+    )
+    .expect("typed nominal enum globals must normalize and emit");
+    assert!(ir.contains(&format!(
+        "@sali.global.676c6f62616c = internal unnamed_addr constant %{} {{ i32 0, %{} {{ i32 40, i32 2 }} }}",
+        type_symbol("choice"),
+        type_symbol("pair")
+    )));
+}
+
+#[test]
 fn rejects_private_fields_across_module_boundaries_for_read_construct_and_pattern() {
     let errors = compile_with_origins(
         r#"
