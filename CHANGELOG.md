@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.201.0 - 2026-07-26
+
 - Defined the experimental whole-program native calling convention: compile
   groups disappear, runtime groups flatten in source order, borrows pass as
   pointers, owned values transfer cleanup at call entry, direct returns
