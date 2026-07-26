@@ -94,6 +94,9 @@ pub enum TokenKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
+    /// Half-open UTF-8 byte range in the original source.
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub line: usize,
     pub column: usize,
     pub end_line: usize,
@@ -119,6 +122,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     let mut lexer = Lexer {
         chars: source.chars().collect(),
         index: 0,
+        byte_offset: 0,
         line: 1,
         column: 1,
         delimiter_depth: 0,
@@ -153,6 +157,7 @@ fn keyword(text: &str) -> Option<TokenKind> {
 struct Lexer {
     chars: Vec<char>,
     index: usize,
+    byte_offset: usize,
     line: usize,
     column: usize,
     delimiter_depth: usize,
@@ -183,6 +188,7 @@ impl Lexer {
 
             let line = self.line;
             let column = self.column;
+            let start_byte = self.byte_offset;
             let kind = if ch.is_ascii_digit() {
                 self.number()?
             } else if ch == '"' {
@@ -289,6 +295,8 @@ impl Lexer {
             };
             tokens.push(Token {
                 kind,
+                start_byte,
+                end_byte: self.byte_offset,
                 line,
                 column,
                 end_line: self.line,
@@ -297,6 +305,8 @@ impl Lexer {
         }
         tokens.push(Token {
             kind: TokenKind::Eof,
+            start_byte: self.byte_offset,
+            end_byte: self.byte_offset,
             line: self.line,
             column: self.column,
             end_line: self.line,
@@ -308,6 +318,7 @@ impl Lexer {
     fn logical_newline(&mut self, tokens: &mut Vec<Token>) {
         let line = self.line;
         let column = self.column;
+        let start_byte = self.byte_offset;
         self.bump();
 
         let continued = tokens.last().is_some_and(|token| {
@@ -375,6 +386,8 @@ impl Lexer {
         if self.delimiter_depth == 0 && !continued {
             tokens.push(Token {
                 kind: TokenKind::Newline,
+                start_byte,
+                end_byte: self.byte_offset,
                 line,
                 column,
                 end_line: self.line,
@@ -507,6 +520,7 @@ impl Lexer {
     fn bump(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.index += 1;
+        self.byte_offset += ch.len_utf8();
         if ch == '\n' {
             self.line += 1;
             self.column = 1;

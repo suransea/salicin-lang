@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Added a transport-independent editor analysis API with exact UTF-8 token
+  byte ranges, zero-based UTF-16 positions, phased lexer/parser/resolver/
+  semantic diagnostics, explicit exact-versus-fallback precision, and
+  multi-document source routing. Unicode, cross-file, and the complete
+  failure-fixture corpus are covered.
+
 ## 0.204.0 - 2026-07-26
 
 - Added the conservative `salic fmt` formatter for individual files and root

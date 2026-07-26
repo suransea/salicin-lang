@@ -51,6 +51,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   `struct(c)` layout, and rejected ABI categories.
 - [Source formatter](project/formatter.md): token-preserving layout invariants, CLI behavior,
   idempotence, and deliberate limits.
+- [Editor span contract](project/editor-spans.md): UTF-8 byte ranges, UTF-16 positions,
+  diagnostic phases, and multi-document routing.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

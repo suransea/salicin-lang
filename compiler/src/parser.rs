@@ -14,6 +14,9 @@ use crate::lexer::{lex, LexError, Token, TokenKind};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub message: String,
+    /// Half-open UTF-8 byte range in the original source.
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub line: usize,
     pub column: usize,
 }
@@ -26,10 +29,17 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-impl From<LexError> for ParseError {
-    fn from(error: LexError) -> Self {
+impl ParseError {
+    fn from_lex(source: &str, error: LexError) -> Self {
+        let start_byte = byte_offset(source, error.line, error.column);
+        let end_byte = source[start_byte..]
+            .chars()
+            .next()
+            .map_or(start_byte, |ch| start_byte + ch.len_utf8());
         Self {
             message: error.message,
+            start_byte,
+            end_byte,
             line: error.line,
             column: error.column,
         }
@@ -38,7 +48,25 @@ impl From<LexError> for ParseError {
 
 /// Lexes and parses one Salicin source file.
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    parse_tokens(lex(source)?)
+    let tokens = lex(source).map_err(|error| ParseError::from_lex(source, error))?;
+    parse_tokens(tokens)
+}
+
+fn byte_offset(source: &str, line: usize, column: usize) -> usize {
+    let mut current_line = 1;
+    let mut current_column = 1;
+    for (offset, ch) in source.char_indices() {
+        if current_line == line && current_column == column {
+            return offset;
+        }
+        if ch == '\n' {
+            current_line += 1;
+            current_column = 1;
+        } else {
+            current_column += 1;
+        }
+    }
+    source.len()
 }
 
 /// Parses a token stream produced by [`crate::lexer::lex`].
@@ -4707,6 +4735,8 @@ impl Parser {
     fn error_at(&self, token: &Token, message: impl Into<String>) -> ParseError {
         ParseError {
             message: message.into(),
+            start_byte: token.start_byte,
+            end_byte: token.end_byte,
             line: token.line,
             column: token.column,
         }

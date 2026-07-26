@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Stable Editor Spans
+## Current Milestone: Workspaces And Registry Identities
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -28,10 +28,10 @@ Unsupported recursive, self-referential, move-only backedge, effectful
 condition, and nested residual iteration shapes receive source diagnostics.
 
 The runtime representation audit, native calling convention, exported symbol
-contract, bounded C interoperability, and conservative formatter are
-complete. The current milestone exposes lossless parser and semantic spans
-for editor diagnostics before workspace, registry identity, or incremental
-compilation work begins.
+contract, bounded C interoperability, conservative formatter, and editor span
+contract are complete. The current milestone defines workspace membership and
+stable dependency identities before reproducible resolution or incremental
+compilation begins.
 
 ## Test Throughput Foundation
 
@@ -133,11 +133,18 @@ final newline. `salic fmt` supports files and root packages; `--check`,
 invalid-source atomicity, dependency isolation, and corpus-wide idempotence
 are tested.
 
+## Completed Editor Spans
+
+The [editor span contract](editor-spans.md) exposes half-open UTF-8 byte ranges
+and zero-based UTF-16 positions for tokens and phased diagnostics. Single-file
+and source-graph analysis route source-backed errors to their documents;
+location-free fallbacks are explicitly distinguished from exact ranges.
+Unicode, cross-file, and complete failure-fixture coverage pin the boundary.
+
 ## Later Ecosystem Milestone
 
-Tooling and package compatibility follow verified C interoperability:
+Package compatibility follows the completed tooling foundation:
 
-- an LSP over stable parser and semantic spans;
 - workspaces and reproducible dependency resolution;
 - incremental compilation keyed by stable semantic inputs.
 

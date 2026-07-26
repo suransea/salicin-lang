@@ -13,18 +13,17 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-The async, ABI, and formatter milestones are complete. Tooling and package
-work now proceeds in listed order.
+The async, ABI, formatter, and editor-span milestones are complete. Package
+and incremental-compilation work now proceeds in listed order.
 
-## P0: Editor Spans
-
-- [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**
-
-## P1: Packages And Incremental Compilation
-
-Entry gate: tooling syntax and span contracts are complete.
+## P0: Workspaces
 
 - [ ] **PKG-WORKSPACE-1: Design workspaces and registry dependency identities**
+
+## P1: Reproducibility And Incremental Compilation
+
+Entry gate: workspace and package-identity contracts are complete.
+
 - [ ] **PKG-REPRO-1: Specify reproducible dependency resolution**
 - [ ] **INCR-1: Define stable incremental-compilation inputs**
 

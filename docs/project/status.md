@@ -19,6 +19,11 @@ current capability inventory. It does not record release history; see the
 - source-declared pass-fixture tests batched into native runners by semantic
   group, while process-terminating fixtures remain isolated;
 - project manifests, local path dependencies, and deterministic lockfiles.
+- token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
+  UTF-16 positions, phased precision metadata, and multi-document routing.
+
+The compiler does not yet provide an LSP transport, incremental document
+updates, completion, hover, or rename.
 
 The command-line surface is:
 
