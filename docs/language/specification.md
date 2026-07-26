@@ -645,7 +645,12 @@ and handling rules as a closure whose concrete effect was written directly.
 An `async { ... }` expression is cold: creating it does not execute its body. The compiler
 materializes private nominal state containing a state word and captured fields. That state is
 structurally `Move`; relocation transfers its initialized captures, and cancellation drops them
-exactly once. A compiler-generated future implements `Future((), Output = T)`. Polling a body with
+exactly once. `core.async.async` is the intrinsic that materializes this
+anonymous state. `core.async.await` is a source polling loop: `Pending`
+performs `Async.suspend()`, while `Ready(value)` returns the value.
+Syntax-directed lowering may specialize `await` into the generated state
+machine without changing its source contract.
+A compiler-generated future implements `Future((), Output = T)`. Polling a body with
 no suspension point transfers its captures, executes the body once, and returns `Poll.Ready(T)`;
 polling that completed future again traps. The completed state no longer drops transferred
 captures. An unhandled `Unsafe` requirement is inferred from the body and attached to the

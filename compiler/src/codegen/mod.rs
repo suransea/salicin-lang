@@ -6585,7 +6585,6 @@ impl Analyzer {
                     LangItemKind::SizeOf,
                     LangItemKind::AlignOf,
                     LangItemKind::AsyncFunction,
-                    LangItemKind::AwaitFunction,
                 ]
                 .into_iter()
                 .any(|kind| {

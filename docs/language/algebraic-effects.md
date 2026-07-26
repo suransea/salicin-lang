@@ -122,7 +122,10 @@ structures, and their values are linear resources.
 
 The runtime representation may use generated frames and adapters, but those details are not
 observable language entities. Generated names must not appear in user diagnostics or participate in
-source lookup.
+source lookup. A continuation currently cannot escape its handler clause.
+Consequently `Async.handle` can interpret `Async.suspend()` directly, but a
+source handler cannot yet store the suspended continuation as future state;
+`core.async.async` remains the compiler boundary that materializes that state.
 
 ## Rejection Boundaries
 

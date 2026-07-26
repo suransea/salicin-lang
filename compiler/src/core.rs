@@ -1818,7 +1818,6 @@ fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut
             | LangItemKind::Continuation
             | LangItemKind::EffectCallable
             | LangItemKind::AsyncFunction
-            | LangItemKind::AwaitFunction
             | LangItemKind::Loop
             | LangItemKind::Match
             | LangItemKind::Defer
@@ -3828,7 +3827,6 @@ fn validate_async_function(
     let effects = async_effect_row("E");
     let expected_bound = future_output_bound("F", "E", "T");
     let valid = definition.name == kind.source_name()
-        && definition.body.is_none()
         && definition.where_predicates == vec![expected_bound]
         && match kind {
             LangItemKind::AsyncFunction => {
@@ -3846,6 +3844,8 @@ fn validate_async_function(
                     )
                     && definition.return_type == Some(named_type("F"))
                     && definition.effects == crate::ast::FunctionEffects::default()
+                    && definition.body.is_none()
+                    && definition.builtin
             }
             LangItemKind::AwaitFunction => {
                 definition.compile_groups
@@ -3857,6 +3857,8 @@ fn validate_async_function(
                     && single_moved_parameter(definition, "future", named_type("F"))
                     && definition.return_type == Some(named_type("T"))
                     && definition.effects == effects
+                    && definition.body.is_some()
+                    && !definition.builtin
             }
             _ => false,
         };
@@ -4566,6 +4568,24 @@ pub let Index(Key: type) = trait {
         }
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn await_is_source_defined_while_async_remains_intrinsic() {
+        let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
+        let async_function =
+            &bundle.program().items[bundle.lang_items().async_function().item_index()];
+        let await_function =
+            &bundle.program().items[bundle.lang_items().await_function().item_index()];
+
+        assert!(matches!(
+            async_function,
+            Item::Function(function) if function.builtin && function.body.is_none()
+        ));
+        assert!(matches!(
+            await_function,
+            Item::Function(function) if !function.builtin && function.body.is_some()
+        ));
     }
 
     #[test]

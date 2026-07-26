@@ -1011,6 +1011,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_continuation_drop.sc",
         "algebraic_effect_continuation_resume_drop.sc",
         "standard_effect_operations.sc",
+        "source_await_handler.sc",
     ];
     for (fixture_name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(

@@ -137,6 +137,9 @@ Implemented data and control features include:
 - cold compiler-generated futures with a typed pure `Future` implementation, one-shot
   `Poll.Ready` transition, inferred residual `Unsafe`, state-aware capture transfer, cancellation
   cleanup, completed-state repoll traps, and one tail-position child suspension;
+- a direct intrinsic `core.async.async` entry point for anonymous future state
+  and a source-defined `core.async.await` over the ordinary
+  `poll`/`Async.suspend` protocol;
 - the explicit allocation-free `core.async.Spin` executor for one owned future;
 - handler specialization for non-suspending futures with a custom residual
   effect, including standard `Throws(Error)`, and by-value `Copy`, move-only,

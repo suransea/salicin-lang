@@ -15,6 +15,9 @@ subset.
   boolean negation and equality, signed integer negation, and every integer
   compound-assignment implementation now build on source control flow,
   primitive operations, and ordinary assignment.
+- Moved `core.async.await` to a source definition expressed as `Future.poll`,
+  `Async.suspend`, and a loop. `core.async.async` remains the direct intrinsic
+  that materializes anonymous future state.
 
 ## 0.208.0 - 2026-07-26
 

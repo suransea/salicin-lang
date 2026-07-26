@@ -297,9 +297,13 @@ not ordinary source-level standard-library functions.
 associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Executor.run` is
 explicit, and the ordinary zero-field `Spin` implementation repeatedly polls one owned future
 until `Ready` without allocation. Constructing a cold future does not select or run an executor.
-`async` and `await` are
-validated `= builtin()` functions whose declarations expose their effect rows and
-`Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
+`async` remains the direct intrinsic that materializes the anonymous future
+state selected for its action, while `await` is source-defined. Their
+signatures expose their effect rows and `Future(E, Output = T)` relationship.
+`await` repeatedly calls `poll`; `Pending` invokes
+`Async.suspend()`, and `Ready(value)` exits the source loop. The compiler may
+take an equivalent syntax-directed state-machine path for `await`.
+Compiler-generated futures without suspension already
 implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
 once. `E` may be empty, `Unsafe`, or a custom residual effect. A body without suspension can poll
 under the corresponding algebraic handler through generated poll/resume source specialization

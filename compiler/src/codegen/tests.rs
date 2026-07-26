@@ -755,6 +755,12 @@ fn registers_source_backed_core_lang_items() {
             .function_templates
             .contains_key(analyzer.lang_item_name(kind)));
     }
+    let async_function =
+        &analyzer.function_templates[analyzer.lang_item_name(LangItemKind::AsyncFunction)];
+    let await_function =
+        &analyzer.function_templates[analyzer.lang_item_name(LangItemKind::AwaitFunction)];
+    assert!(async_function.builtin && async_function.body.is_none());
+    assert!(!await_function.builtin && await_function.body.is_some());
     assert_eq!(
         &analyzer.enum_template_order[..2],
         &[
