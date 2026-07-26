@@ -48,6 +48,8 @@ impl PackageId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourcePackage {
     pub id: PackageId,
+    pub name: String,
+    pub version: String,
     pub is_primary: bool,
     pub dependencies: BTreeMap<String, PackageId>,
     pub sources: Vec<SourceUnit>,
@@ -74,6 +76,8 @@ pub fn is_valid_module_segment(segment: &str) -> bool {
 pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
     resolve_packages(&[SourcePackage {
         id: PackageId(0),
+        name: "source".to_owned(),
+        version: "0.0.0".to_owned(),
         is_primary: true,
         dependencies: BTreeMap::new(),
         sources: sources.to_vec(),
@@ -95,6 +99,8 @@ pub(crate) fn resolve_embedded_sources(sources: &[SourceUnit]) -> Result<Program
     resolve_packages_impl(
         &[SourcePackage {
             id: PackageId(0),
+            name: "core".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
             is_primary: true,
             dependencies: BTreeMap::new(),
             sources: sources.to_vec(),
@@ -112,6 +118,8 @@ pub(crate) fn resolve_embedded_alloc_sources(
     resolve_packages_impl(
         &[SourcePackage {
             id: PackageId(0),
+            name: "alloc".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
             is_primary: true,
             dependencies: BTreeMap::new(),
             sources: sources.to_vec(),
@@ -197,6 +205,9 @@ fn resolve_packages_impl(
     {
         let Program {
             items: unit_items,
+            primary_package_identity: _,
+            primary_package: _,
+            package_identities: _,
             item_visibilities: unit_visibilities,
             item_origins: unit_origins,
             uses: _,
@@ -228,7 +239,37 @@ fn resolve_packages_impl(
     }
 
     if resolver.diagnostics.is_empty() {
-        let program = Program::with_metadata(items, item_visibilities, item_origins, Vec::new());
+        let primary = packages
+            .iter()
+            .find(|package| package.is_primary)
+            .expect("validated package graph has one primary package");
+        let mut program =
+            Program::with_metadata(items, item_visibilities, item_origins, Vec::new());
+        program.primary_package = primary.id.0;
+        program.primary_package_identity = format!("{}@{}", primary.name, primary.version);
+        program.package_identities = packages
+            .iter()
+            .map(|package| {
+                (
+                    package.id.0,
+                    format!("{}@{}", package.name, package.version),
+                )
+            })
+            .chain([
+                (
+                    PackageId::CORE.0,
+                    format!("core@{}", env!("CARGO_PKG_VERSION")),
+                ),
+                (
+                    PackageId::ALLOC.0,
+                    format!("alloc@{}", env!("CARGO_PKG_VERSION")),
+                ),
+                (
+                    PackageId::STD.0,
+                    format!("std@{}", env!("CARGO_PKG_VERSION")),
+                ),
+            ])
+            .collect();
         let diagnostics = validate_api_visibility(&program, &item_source_paths);
         if diagnostics.is_empty() {
             Ok(program)
@@ -594,7 +635,15 @@ fn validate_package_layout(
     }
 
     let mut package_roots = HashMap::new();
+    let mut package_identities = HashMap::new();
     for package in packages {
+        let identity = format!("{}@{}", package.name, package.version);
+        if let Some(previous) = package_identities.insert(identity.clone(), package.id) {
+            diagnostics.push(format!(
+                "<packages>: error: packages #{} and #{} have duplicate identity `{identity}`",
+                previous.0, package.id.0
+            ));
+        }
         if matches!(
             package.id,
             PackageId::CORE | PackageId::ALLOC | PackageId::STD
@@ -613,7 +662,7 @@ fn validate_package_layout(
         let root = if package.is_primary {
             Vec::new()
         } else {
-            vec![format!("@{}", package.id.0)]
+            vec![stable_package_root(&identity)]
         };
         if package_roots.insert(package.id, root).is_some() {
             diagnostics.push(format!(
@@ -669,10 +718,12 @@ fn validate_package_layout(
 
     for package in packages {
         let package_name = format!("#{}", package.id.0);
-        let package_root = package_roots
-            .get(&package.id)
-            .cloned()
-            .unwrap_or_else(|| vec![format!("@{}", package.id.0)]);
+        let package_root = package_roots.get(&package.id).cloned().unwrap_or_else(|| {
+            vec![stable_package_root(&format!(
+                "{}@{}",
+                package.name, package.version
+            ))]
+        });
 
         let roots = package
             .sources
@@ -760,6 +811,15 @@ fn validate_package_layout(
     }
 
     (prepared, dependencies, diagnostics)
+}
+
+fn stable_package_root(identity: &str) -> String {
+    let mut root = String::from("@");
+    for byte in identity.as_bytes() {
+        use std::fmt::Write as _;
+        write!(root, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    root
 }
 
 fn validate_dependency_graph(packages: &[SourcePackage]) -> Vec<String> {
@@ -3934,6 +3994,8 @@ mod tests {
     ) -> SourcePackage {
         SourcePackage {
             id: PackageId(id),
+            name: format!("package-{id}"),
+            version: "0.0.0".to_owned(),
             is_primary,
             dependencies: dependencies
                 .iter()
@@ -3988,6 +4050,37 @@ mod tests {
                 value
             })
             .collect()
+    }
+
+    #[test]
+    fn rejects_duplicate_stable_package_identities() {
+        let mut primary = package(
+            1,
+            true,
+            &[("dependency", 2)],
+            vec![unit("primary.sc", &[], "let main(): i32 = { 0 }\n", true)],
+        );
+        let mut dependency = package(
+            2,
+            false,
+            &[],
+            vec![unit(
+                "dependency.sc",
+                &[],
+                "pub let answer(): i32 = { 42 }\n",
+                true,
+            )],
+        );
+        primary.name = "same".to_owned();
+        primary.version = "1.0.0".to_owned();
+        dependency.name = "same".to_owned();
+        dependency.version = "1.0.0".to_owned();
+
+        let diagnostics =
+            resolve_packages(&[primary, dependency]).expect_err("duplicate identity must fail");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("duplicate identity `same@1.0.0`")));
     }
 
     #[test]
@@ -4623,11 +4716,12 @@ let main(): i32 = { Option {} }
         ])
         .unwrap();
 
-        assert!(function(&program, "@1::inner::answer").body.is_some());
+        let answer = format!("{}::inner::answer", stable_package_root("package-1@0.0.0"));
+        assert!(function(&program, &answer).body.is_some());
         assert!(matches!(
             function_tail(function(&program, "main")),
             Expr::Call(callee, _)
-                if callee.as_ref() == &Expr::Name("@1::inner::answer".into())
+                if callee.as_ref() == &Expr::Name(answer)
         ));
     }
 
@@ -4844,10 +4938,11 @@ let main(): i32 = { Option {} }
             ),
         ])
         .unwrap();
+        let answer = format!("{}::answer", stable_package_root("package-2@0.0.0"));
         assert!(matches!(
             function_tail(function(&exposed, "main")),
             Expr::Call(callee, _)
-                if callee.as_ref() == &Expr::Name("@2::answer".into())
+                if callee.as_ref() == &Expr::Name(answer)
         ));
     }
 
@@ -4897,19 +4992,14 @@ let main(): i32 = { Option {} }
         .unwrap();
 
         let same = function(&program, "same");
-        assert_eq!(
-            same.groups[0][0].ty,
-            Type::Named("@3::Token".into(), vec![])
-        );
-        assert_eq!(
-            same.return_type,
-            Some(Type::Named("@3::Token".into(), vec![]))
-        );
+        let token = format!("{}::Token", stable_package_root("package-3@0.0.0"));
+        assert_eq!(same.groups[0][0].ty, Type::Named(token.clone(), vec![]));
+        assert_eq!(same.return_type, Some(Type::Named(token.clone(), vec![])));
         assert_eq!(
             program
                 .items
                 .iter()
-                .filter(|item| matches!(item, Item::Struct(definition) if definition.name == "@3::Token"))
+                .filter(|item| matches!(item, Item::Struct(definition) if definition.name == token))
                 .count(),
             1
         );

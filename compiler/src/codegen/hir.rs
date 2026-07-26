@@ -344,7 +344,9 @@ pub(super) struct HirProgram {
     pub(super) structs: Vec<StructLayout>,
     pub(super) enums: Vec<EnumLayout>,
     pub(super) globals: Vec<HirGlobal>,
+    pub(super) exported_globals: HashMap<String, String>,
     pub(super) functions: Vec<HirFunction>,
+    pub(super) exported_functions: HashMap<String, String>,
     pub(super) foreign_functions: Vec<HirForeignFunction>,
     pub(super) drop_methods: HashMap<Ty, String>,
     pub(super) box_pointees: HashMap<String, Ty>,
@@ -402,6 +404,20 @@ pub(super) struct RuntimeHandlerAction {
 }
 
 impl HirProgram {
+    pub(super) fn function_symbol(&self, name: &str) -> String {
+        self.exported_functions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| super::names::function_symbol(name))
+    }
+
+    pub(super) fn global_symbol(&self, name: &str) -> String {
+        self.exported_globals
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| super::names::global_symbol(name))
+    }
+
     pub(super) fn foreign_link_name(&self, name: &str) -> Option<&str> {
         self.foreign_functions
             .iter()

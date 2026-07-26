@@ -2681,6 +2681,72 @@ fn emits_flattened_curried_call_and_i32_wrapper() {
 }
 
 #[test]
+fn public_library_functions_use_package_qualified_export_symbols() {
+    let ir = compile_library_text(
+        "pub let answer(): i32 = { 42 }\n\
+         let private_answer(): i32 = { answer() }\n",
+    )
+    .expect("public library function must emit");
+    let exported = ir
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("define i32 @sali.export.")
+                .and_then(|suffix| suffix.split_once('('))
+                .map(|(suffix, _)| format!("sali.export.{suffix}"))
+        })
+        .expect("answer export");
+    assert!(ir.contains(&format!("define i32 @{exported}()")));
+    assert!(ir.contains(&format!("call i32 @{exported}()")));
+    assert!(ir.contains(&format!(
+        "define internal i32 @{}()",
+        function_symbol("private_answer")
+    )));
+    assert!(!ir.contains(&format!("define internal i32 @{exported}()")));
+}
+
+#[test]
+fn public_library_globals_use_package_qualified_export_symbols() {
+    let ir = compile_library_text(
+        "pub let answer: i32 = 42\n\
+         pub let read(): i32 = { answer }\n",
+    )
+    .expect("public library global must emit");
+    let exported = ir
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("@sali.export.")
+                .and_then(|suffix| suffix.split_once(" ="))
+                .map(|(suffix, _)| format!("sali.export.{suffix}"))
+        })
+        .expect("answer export");
+    assert!(ir.contains(&format!("@{exported} = constant i32 42")));
+    assert!(ir.contains(&format!("load i32, ptr @{exported}")));
+    assert!(!ir.contains(&format!("@{exported} = internal")));
+}
+
+#[test]
+fn public_generic_specializations_remain_consumer_owned_and_internal() {
+    let ir = compile_library_text(
+        "pub let identity(T: type)(move value: T): T = { value }\n\
+         pub let answer(): i32 = { identity(i32)(42) }\n",
+    )
+    .expect("public generic specialization must emit");
+    assert_eq!(
+        ir.lines()
+            .filter(|line| line.contains("define ") && line.contains("@sali.export."))
+            .count(),
+        1,
+        "{ir}"
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("define internal i32 @sali.fn.")
+                && line.contains("(i32 %arg.0)")),
+        "{ir}"
+    );
+}
+
+#[test]
 fn rejects_unsized_native_call_parameters_and_returns_before_emission() {
     let diagnostics = compile_library_text(
         "let Slice = std.Slice\n\

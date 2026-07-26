@@ -13,17 +13,10 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-Execution order is strict: perform the two remaining ABI tasks in listed
-order. Tooling and package work does not begin before the ABI sequence is
-complete.
+The async and native-linkage milestones are complete. Execution order is
+strict: `ABI-C-1` -> tooling and package work.
 
-## P0: Linkage And C Interoperability
-
-- [ ] **ABI-LINK-1: Define exported symbols and cross-module linkage**
-
-Specify source visibility, symbol identity, declaration/definition agreement,
-generic specialization ownership, and duplicate or incompatible export
-diagnostics without freezing symbol names for 1.0.
+## P0: C Interoperability
 
 - [ ] **ABI-C-1: Complete the verified C interoperability surface**
 
@@ -34,7 +27,7 @@ definitions orthogonal to this boundary.
 
 ## P1: Tooling And Packages
 
-Entry gate: both P0 ABI tasks are complete.
+Entry gate: `ABI-C-1` is complete.
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

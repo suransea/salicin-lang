@@ -1,6 +1,14 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub items: Vec<Item>,
+    /// Stable identity of the package whose target is being compiled.
+    pub primary_package_identity: String,
+    /// Definition-owner ID of the primary package in this resolved graph.
+    pub primary_package: usize,
+    /// Stable identities for every package represented by an item origin.
+    pub package_identities: HashMap<usize, String>,
     /// Visibility is stored alongside top-level items until module lowering
     /// gives declarations stable module identities.
     pub item_visibilities: Vec<Visibility>,
@@ -17,6 +25,9 @@ impl Program {
         let item_origins = vec![ItemOrigin::default(); items.len()];
         Self {
             items,
+            primary_package_identity: "source@0.0.0".to_owned(),
+            primary_package: 0,
+            package_identities: HashMap::from([(0, "source@0.0.0".to_owned())]),
             item_visibilities,
             item_origins,
             uses: Vec::new(),
@@ -54,6 +65,9 @@ impl Program {
         );
         Self {
             items,
+            primary_package_identity: "source@0.0.0".to_owned(),
+            primary_package: 0,
+            package_identities: HashMap::from([(0, "source@0.0.0".to_owned())]),
             item_visibilities,
             item_origins,
             uses,

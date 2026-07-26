@@ -170,6 +170,9 @@ struct Analyzer {
     functions: HashMap<String, Function>,
     function_origins: HashMap<String, ItemOrigin>,
     function_accesses: HashMap<String, AccessBoundary>,
+    primary_package: usize,
+    primary_package_identity: String,
+    package_identities: HashMap<usize, String>,
     function_templates: HashMap<String, Function>,
     function_overloads: HashMap<String, Vec<String>>,
     function_template_origins: HashMap<String, ItemOrigin>,
@@ -264,6 +267,9 @@ impl Analyzer {
             functions: HashMap::new(),
             function_origins: HashMap::new(),
             function_accesses: HashMap::new(),
+            primary_package: program.primary_package,
+            primary_package_identity: program.primary_package_identity.clone(),
+            package_identities: program.package_identities.clone(),
             function_templates: HashMap::new(),
             function_overloads: HashMap::new(),
             function_template_origins: HashMap::new(),
@@ -6324,6 +6330,42 @@ impl Analyzer {
             .filter_map(|name| self.hir_functions.get(name).cloned())
             .collect();
         functions.extend(self.lifted_functions.clone());
+        let exported_functions = functions
+            .iter()
+            .filter(|function| {
+                !function.name.starts_with("$mono$fn$")
+                    && self
+                        .function_accesses
+                        .get(&function.name)
+                        .is_some_and(|access| {
+                            access.visibility == Visibility::Public
+                                && access.origin.package == self.primary_package
+                        })
+            })
+            .map(|function| {
+                (
+                    function.name.clone(),
+                    exported_function_symbol(self, &function.name, function),
+                )
+            })
+            .collect();
+        let exported_globals = self
+            .global_order
+            .iter()
+            .filter(|name| {
+                self.hir_globals
+                    .get(*name)
+                    .is_some_and(|global| global.ty != Ty::Unit)
+                    && self.global_accesses.get(*name).is_some_and(|access| {
+                        access.visibility == Visibility::Public
+                            && access.origin.package == self.primary_package
+                    })
+            })
+            .map(|name| {
+                let global = &self.hir_globals[name];
+                (name.clone(), exported_global_symbol(self, name, &global.ty))
+            })
+            .collect();
         Some(HirProgram {
             structs: self
                 .struct_order
@@ -6340,7 +6382,9 @@ impl Analyzer {
                 .iter()
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
+            exported_globals,
             functions,
+            exported_functions,
             foreign_functions: self
                 .function_order
                 .iter()

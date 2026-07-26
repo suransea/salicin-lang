@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use salicin_lang::modules::{PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
-    check_library_source, check_source, compile_source, compile_test_source_packages,
+    check_library_source, check_source, compile_library_source_packages, compile_source,
+    compile_test_source_packages,
 };
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -175,6 +176,8 @@ fn batched_native_fixture_outputs(names: &[&str]) -> Vec<(String, Output)> {
             .spawn(move || {
                 compile_test_source_packages(&[SourcePackage {
                     id: PackageId(0),
+                    name: "fixtures".to_owned(),
+                    version: "0.0.0".to_owned(),
                     is_primary: true,
                     dependencies: BTreeMap::new(),
                     sources,
@@ -3130,6 +3133,166 @@ fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
     assert!(ir.contains("declare i32 @abs(i32)"));
     assert!(ir.contains("call i32 @abs(i32"));
     assert!(!ir.contains("define i32 @abs"));
+}
+
+#[test]
+fn package_qualified_exports_link_across_independent_llvm_modules() {
+    fn package(name: &str, value: i32) -> SourcePackage {
+        SourcePackage {
+            id: PackageId(0),
+            name: name.to_owned(),
+            version: "1.0.0".to_owned(),
+            is_primary: true,
+            dependencies: BTreeMap::new(),
+            sources: vec![SourceUnit {
+                path: format!("<{name}>"),
+                module_path: Vec::new(),
+                source: format!("pub let answer(): i32 = {{ {value} }}\n"),
+                is_root: true,
+            }],
+        }
+    }
+
+    let alpha =
+        compile_library_source_packages(&[package("alpha", 20)]).expect("compile alpha library");
+    let beta =
+        compile_library_source_packages(&[package("beta", 22)]).expect("compile beta library");
+    let alpha_symbol = exported_function_symbols(&alpha).remove(0);
+    let beta_symbol = exported_function_symbols(&beta).remove(0);
+    assert_ne!(alpha_symbol, beta_symbol);
+
+    let driver = format!(
+        "declare i32 @{alpha_symbol}()\n\
+         declare i32 @{beta_symbol}()\n\
+         define i32 @main() {{\n\
+         entry:\n\
+           %alpha = call i32 @{alpha_symbol}()\n\
+           %beta = call i32 @{beta_symbol}()\n\
+           %answer = add i32 %alpha, %beta\n\
+           ret i32 %answer\n\
+         }}\n"
+    );
+    let temporary = TestDirectory::new();
+    let alpha_path = temporary.write("alpha.ll", &alpha);
+    let beta_path = temporary.write("beta.ll", &beta);
+    let driver_path = temporary.write("driver.ll", &driver);
+    let executable = temporary.join("linked");
+    let linked = Command::new("/usr/bin/clang")
+        .arg("-Wno-override-module")
+        .arg("-x")
+        .arg("ir")
+        .arg(&alpha_path)
+        .arg(&beta_path)
+        .arg(&driver_path)
+        .arg("-x")
+        .arg("none")
+        .arg(test_allocator_object())
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link independent Salicin library modules");
+    assert!(linked.status.success(), "{}", output_text(&linked));
+    let output = Command::new(executable)
+        .output()
+        .expect("run independently linked Salicin libraries");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn export_contracts_are_stable_and_reject_incompatible_binding() {
+    fn source_package(
+        id: usize,
+        name: &str,
+        version: &str,
+        primary: bool,
+        dependencies: &[(&str, usize)],
+        source: &str,
+    ) -> SourcePackage {
+        SourcePackage {
+            id: PackageId(id),
+            name: name.to_owned(),
+            version: version.to_owned(),
+            is_primary: primary,
+            dependencies: dependencies
+                .iter()
+                .map(|(alias, id)| ((*alias).to_owned(), PackageId(*id)))
+                .collect(),
+            sources: vec![SourceUnit {
+                path: format!("<{name}>"),
+                module_path: Vec::new(),
+                source: source.to_owned(),
+                is_root: true,
+            }],
+        }
+    }
+
+    fn graph(dependency_id: usize) -> Vec<SourcePackage> {
+        vec![
+            source_package(
+                0,
+                "consumer",
+                "1.0.0",
+                true,
+                &[("dep", dependency_id)],
+                "pub let echo(move value: dep.Token): dep.Token = { value }\n",
+            ),
+            source_package(
+                dependency_id,
+                "dependency",
+                "2.0.0",
+                false,
+                &[],
+                "pub let Token = struct { value: i32 }\n\
+                 pub let dependency_only(): i32 = { 42 }\n",
+            ),
+        ]
+    }
+
+    let first = compile_library_source_packages(&graph(1)).expect("compile first dependency graph");
+    let reordered =
+        compile_library_source_packages(&graph(9)).expect("compile reordered dependency graph");
+    let first_exports = exported_function_symbols(&first);
+    let reordered_exports = exported_function_symbols(&reordered);
+    assert_eq!(first_exports, reordered_exports);
+    assert_eq!(first_exports.len(), 1, "dependency export leaked:\n{first}");
+
+    let i32_ir = compile_library_source_packages(&[source_package(
+        0,
+        "signature",
+        "1.0.0",
+        true,
+        &[],
+        "pub let identity(move value: i32): i32 = { value }\n",
+    )])
+    .expect("compile i32 signature");
+    let i64_ir = compile_library_source_packages(&[source_package(
+        0,
+        "signature",
+        "1.0.0",
+        true,
+        &[],
+        "pub let identity(move value: i64): i64 = { value }\n",
+    )])
+    .expect("compile i64 signature");
+    assert_ne!(
+        exported_function_symbols(&i32_ir),
+        exported_function_symbols(&i64_ir),
+        "incompatible declarations must not bind to one export"
+    );
+}
+
+fn exported_function_symbols(ir: &str) -> Vec<String> {
+    let exports = ir
+        .lines()
+        .filter_map(|line| {
+            let (_, suffix) = line.split_once("define ")?;
+            let (_, suffix) = suffix.split_once("@sali.export.")?;
+            let (suffix, _) = suffix.split_once('(')?;
+            Some(format!("sali.export.{suffix}"))
+        })
+        .collect::<Vec<_>>();
+    assert!(!exports.is_empty(), "expected an exported function:\n{ir}");
+    exports
 }
 
 #[test]

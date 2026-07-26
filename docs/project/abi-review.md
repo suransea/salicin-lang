@@ -4,8 +4,8 @@ Status: implemented representation audit for the native compiler target
 
 This document records the runtime representations emitted by the current
 compiler. It is evidence for the ABI milestone, not a source-language promise
-or a frozen 1.0 ABI. The native calling convention and exported-symbol
-contracts are defined by the following milestones.
+or a frozen 1.0 ABI. The [native calling convention](native-calling-convention.md)
+and [native linkage contract](native-linkage.md) build on this audit.
 
 ## Target Model
 
@@ -51,9 +51,9 @@ Aggregate returns are direct LLVM aggregate returns.
 
 Passing an owned value transfers cleanup responsibility to the callee.
 Borrowed parameters remain caller-owned. A successful by-value return
-transfers ownership to the caller. These are current whole-program lowering
-facts; `ABI-CALL-1` must make declaration agreement and separately compiled
-cleanup responsibility explicit.
+transfers ownership to the caller. These rules are now the native calling
+contract; exported definitions include their ownership modes in the linkage
+fingerprint.
 
 Effect rows have no standalone runtime argument in direct specialized calls.
 `Unsafe` is static authority. Algebraic effects are specialized into
@@ -62,17 +62,12 @@ continuation-bearing control flow. `Throws(Error)` uses the corresponding
 
 ## Module And Symbol Boundaries
 
-All source modules and local path dependencies are resolved and emitted into
-one LLVM module. Salicin functions, globals, type identities, drop glue, and
-generated adapters use deterministic compiler-private `sali.*` symbols;
-ordinary function definitions have LLVM `internal` linkage. Only the C
-`main` wrapper, declared foreign symbols, and the replaceable allocator ABI
-currently cross the linker boundary.
-
-Consequently, source `pub` visibility is not yet an exported native symbol.
-There is no separately compiled Salicin caller/callee agreement, generic
-specialization ownership rule, or duplicate export protocol. Those are the
-scope of `ABI-LINK-1`.
+The selected primary package's concrete `pub` functions and non-Unit globals
+receive package-qualified external symbols with ABI fingerprints. Other
+source and generated definitions retain deterministic compiler-private
+`sali.*` symbols and internal linkage. The
+[native linkage contract](native-linkage.md) defines declaration agreement,
+generic specialization ownership, and collision behavior.
 
 ## C Boundary
 
@@ -97,8 +92,8 @@ supported scalar/aggregate call surface belong to `ABI-C-1`.
   emission.
 - The 64-bit host-target assumption is explicit and must become a target
   descriptor before cross-compilation.
-- Native call ownership is implemented but not yet a separately compiled
+- Native call ownership participates in the separately emitted linkage
   contract.
-- Native export/linkage is intentionally absent; `pub` is source visibility.
+- Concrete primary-package `pub` definitions have experimental native exports.
 - The C surface is bounded and source-validated, but aggregate calls still
   require cross-language verification.

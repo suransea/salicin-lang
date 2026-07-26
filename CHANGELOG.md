@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+- Exported concrete primary-package `pub` functions and non-Unit globals with
+  package-qualified native symbols carrying ABI fingerprints for parameter
+  modes, normalized types, results, and effects. Stable `name@version`
+  identities now replace graph-local package numbers in dependency canonical
+  names; duplicate identities are rejected before code generation,
+  incompatible signatures cannot silently bind, and generic specializations
+  remain consumer-owned and internal. Native tests link independently emitted
+  library modules and verify identity stability across dependency graph order.
+
 ## 0.201.0 - 2026-07-26
 
 - Defined the experimental whole-program native calling convention: compile

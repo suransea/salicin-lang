@@ -45,6 +45,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   gaps.
 - [Native calling convention](project/native-calling-convention.md): parameter flattening,
   ownership transfer, cleanup, effects, and returns.
+- [Native linkage](project/native-linkage.md): package-qualified exports, ABI fingerprints,
+  generic ownership, and cross-module agreement.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

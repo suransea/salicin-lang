@@ -489,9 +489,15 @@ impl<'a> Emitter<'a> {
             let value = self.constants.get(&global.name).ok_or_else(|| {
                 Diagnostic::new(format!("constant `{}` was not evaluated", global.name))
             })?;
+            let exported = self.program.exported_globals.contains_key(&global.name);
             output.push_str(&format!(
-                "@{} = internal unnamed_addr constant {} {}\n",
-                global_symbol(&global.name),
+                "@{} = {}constant {} {}\n",
+                self.program.global_symbol(&global.name),
+                if exported {
+                    ""
+                } else {
+                    "internal unnamed_addr "
+                },
                 llvm_ty,
                 const_ir(value, &global.ty, self.program)?
             ));
@@ -542,13 +548,16 @@ impl<'a> Emitter<'a> {
         output.push_str("define i32 @main() {\nentry:\n");
         match main.result {
             Ty::Unit => {
-                output.push_str(&format!("  call void @{}()\n", function_symbol("main")));
+                output.push_str(&format!(
+                    "  call void @{}()\n",
+                    self.program.function_symbol("main")
+                ));
                 output.push_str("  ret i32 0\n");
             }
             Ty::I32 => {
                 output.push_str(&format!(
                     "  %status = call i32 @{}()\n",
-                    function_symbol("main")
+                    self.program.function_symbol("main")
                 ));
                 output.push_str("  ret i32 %status\n");
             }
@@ -759,7 +768,7 @@ impl<'a> Emitter<'a> {
         if let Some(method) = self.program.drop_methods.get(ty) {
             output.push_str(&format!(
                 "  call void @{}(ptr %value)\n",
-                function_symbol(method)
+                self.program.function_symbol(method)
             ));
         }
         if let Ty::Struct(name) = ty {
@@ -946,7 +955,7 @@ impl<'a> Emitter<'a> {
         };
         let mut output = format!(
             "define internal {result_ty} @{}(ptr %environment{input_parameter}) {{\nentry:\n",
-            function_symbol(&adapter.name)
+            self.program.function_symbol(&adapter.name)
         );
         let callable_ty = llvm_value_type(&adapter.callable_ty)?;
         output.push_str(&format!(
@@ -972,7 +981,7 @@ impl<'a> Emitter<'a> {
         }
         let call = format!(
             "call {result_ty} @{}({})",
-            function_symbol(&adapter.function),
+            self.program.function_symbol(&adapter.function),
             arguments.join(", ")
         );
         if adapter.output == Ty::Unit {
@@ -993,7 +1002,7 @@ impl<'a> Emitter<'a> {
         let name = format!("{}$drop", adapter.name);
         let mut output = format!(
             "define internal void @{}(ptr %environment) {{\nentry:\n",
-            function_symbol(&name)
+            self.program.function_symbol(&name)
         );
         if self.program.needs_drop(&adapter.callable_ty) {
             output.push_str(&format!(
@@ -1022,7 +1031,7 @@ impl<'a> Emitter<'a> {
         let continuation_llvm_ty = llvm_value_type(&continuation_ty)?;
         let mut output = format!(
             "define internal {result_ty} @{}(ptr %environment{input_parameter}, {continuation_llvm_ty} %continuation) {{\nentry:\n",
-            function_symbol(&adapter.name)
+            self.program.function_symbol(&adapter.name)
         );
         let callable_ty = llvm_value_type(&adapter.callable_ty)?;
         output.push_str(&format!(
@@ -1049,7 +1058,7 @@ impl<'a> Emitter<'a> {
         arguments.push(format!("{continuation_llvm_ty} %continuation"));
         let call = format!(
             "call {result_ty} @{}({})",
-            function_symbol(&adapter.function),
+            self.program.function_symbol(&adapter.function),
             arguments.join(", ")
         );
         if adapter.answer == Ty::Unit {
@@ -1070,7 +1079,7 @@ impl<'a> Emitter<'a> {
         let name = format!("{}$drop", adapter.name);
         let mut output = format!(
             "define internal void @{}(ptr %environment) {{\nentry:\n",
-            function_symbol(&name)
+            self.program.function_symbol(&name)
         );
         if self.program.needs_drop(&adapter.callable_ty) {
             output.push_str(&format!(
@@ -1177,9 +1186,18 @@ impl<'a> FunctionEmitter<'a> {
 
     fn emit(&mut self) -> Result<String, Diagnostic> {
         let result = llvm_return_type(&self.function.result)?;
+        let linkage = if self
+            .program
+            .exported_functions
+            .contains_key(&self.function.name)
+        {
+            ""
+        } else {
+            "internal "
+        };
         self.output.push_str(&format!(
-            "define internal {result} @{}(",
-            function_symbol(&self.function.name)
+            "define {linkage}{result} @{}(",
+            self.program.function_symbol(&self.function.name)
         ));
         let mut emitted_parameter_count = 0;
         for (index, parameter) in self.function.params.iter().enumerate() {
@@ -1988,7 +2006,7 @@ impl<'a> FunctionEmitter<'a> {
                 let ty = llvm_value_type(&expression.ty)?;
                 self.instruction(format!(
                     "{register} = load {ty}, ptr @{}",
-                    global_symbol(name)
+                    self.program.global_symbol(name)
                 ));
                 Ok(Operand {
                     ty: expression.ty.clone(),
@@ -2001,7 +2019,7 @@ impl<'a> FunctionEmitter<'a> {
                     "@{}",
                     self.program
                         .foreign_link_name(name)
-                        .map_or_else(|| function_symbol(name), ToOwned::to_owned)
+                        .map_or_else(|| self.program.function_symbol(name), ToOwned::to_owned)
                 )),
             }),
             HirExprKind::ConstructStruct { name, fields } => {
@@ -2297,7 +2315,7 @@ impl<'a> FunctionEmitter<'a> {
                     llvm_return_type(&expression.ty)?,
                     self.program
                         .foreign_link_name(function)
-                        .map_or_else(|| function_symbol(function), ToOwned::to_owned),
+                        .map_or_else(|| self.program.function_symbol(function), ToOwned::to_owned,),
                     emitted_arguments.join(", ")
                 );
                 if expression.ty == Ty::Unit {
@@ -2371,7 +2389,7 @@ impl<'a> FunctionEmitter<'a> {
                 let call = format!(
                     "call {} @{}({})",
                     llvm_return_type(result)?,
-                    function_symbol(function),
+                    self.program.function_symbol(function),
                     emitted_arguments.join(", ")
                 );
                 if *result == Ty::Unit {
@@ -2553,8 +2571,11 @@ impl<'a> FunctionEmitter<'a> {
                 let flag = self.entry_alloca("i1", "erased continuation active flag");
                 self.instruction(format!("store i1 true, ptr {flag}"));
                 let continuation_ty = llvm_value_type(&expression.ty)?;
-                let call_entry = format!("@{}", function_symbol(adapter));
-                let drop_entry = format!("@{}", function_symbol(&format!("{adapter}$drop")));
+                let call_entry = format!("@{}", self.program.function_symbol(adapter));
+                let drop_entry = format!(
+                    "@{}",
+                    self.program.function_symbol(&format!("{adapter}$drop"))
+                );
                 let first = self.fresh_register();
                 self.instruction(format!(
                     "{first} = insertvalue {continuation_ty} zeroinitializer, ptr {call_entry}, 0"
@@ -2670,8 +2691,11 @@ impl<'a> FunctionEmitter<'a> {
                 let flag = self.entry_alloca("i1", "erased effect-callable active flag");
                 self.instruction(format!("store i1 true, ptr {flag}"));
                 let action_ty = llvm_value_type(&expression.ty)?;
-                let call_entry = format!("@{}", function_symbol(adapter));
-                let drop_entry = format!("@{}", function_symbol(&format!("{adapter}$drop")));
+                let call_entry = format!("@{}", self.program.function_symbol(adapter));
+                let drop_entry = format!(
+                    "@{}",
+                    self.program.function_symbol(&format!("{adapter}$drop"))
+                );
                 let first = self.fresh_register();
                 self.instruction(format!(
                     "{first} = insertvalue {action_ty} zeroinitializer, ptr {call_entry}, 0"

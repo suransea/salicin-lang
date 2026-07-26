@@ -256,8 +256,8 @@ Implemented package features include:
 - package ownership and trait coherence boundaries.
 
 The C import boundary supports validated ASCII link names and the documented integer and raw-pointer
-subset. Foreign calls require `unsafe`. Stable exported aggregates, a frozen Salicin ABI, registry
-dependencies, workspaces, and a distribution format are not defined.
+subset. Foreign calls require `unsafe`. A frozen Salicin ABI, registry dependencies, workspaces,
+and a precompiled distribution format are not defined.
 
 The experimental native [ABI representation audit](abi-review.md) specifies
 the current 64-bit host-target mapping for every emitted first-class value.
@@ -265,15 +265,22 @@ Unit parameters are erased, borrows are pointers, owned values and aggregates
 pass directly, effect rows are specialized out of direct calls, `Throws` uses
 its `Result` return boundary, and compiler-owned continuation records contain
 entry, drop, environment, and active-flag pointers. Native calling agreement
-and exported Salicin linkage remain the active ABI milestones.
+is implemented.
 
 The experimental [native calling convention](native-calling-convention.md)
 defines flattened runtime groups, erased Unit and borrowed-Unit parameters,
 direct value or pointer passing, owned argument and return transfer, cleanup
 on every exit, static effect authority, algebraic continuation lowering, and
 `Result`-based `Throws` propagation. Unsized value parameters and returns are
-rejected at source declarations. Exported symbol and separate-object
-agreement are not yet implemented.
+rejected at source declarations.
+
+The experimental [native linkage contract](native-linkage.md) exports concrete
+primary-package `pub` functions and non-Unit globals under stable
+package-qualified identities with ABI fingerprints. Private, package-visible,
+dependency-owned, generic-specialization, and generated definitions remain
+internal. Package graph order does not affect nominal identities;
+incompatible signatures cannot bind to one symbol; independent LLVM modules
+link through the contract. Precompiled package interfaces remain undefined.
 
 ## Standard Library
 

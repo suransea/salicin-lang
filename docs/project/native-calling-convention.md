@@ -1,11 +1,11 @@
 # Experimental Native Calling Convention
 
-Status: current whole-program calling contract
+Status: implemented native calling contract
 
-This document defines calls between Salicin functions in one compiled program.
-It builds on the [ABI representation review](abi-review.md). Symbol export and
-separate compilation are deliberately deferred to the linkage milestone, so
-this is not a stable external ABI.
+This document defines calls between Salicin functions. It builds on the
+[ABI representation review](abi-review.md); the
+[native linkage contract](native-linkage.md) defines how separately emitted
+modules agree on this convention. Neither contract is a stable 1.0 ABI.
 
 ## Signature Lowering
 
@@ -99,6 +99,5 @@ guarantee.
 - Effects add no undocumented direct-call parameters.
 - `Throws` uses one explicit `Result` runtime return.
 - Unsupported unsized positions fail before LLVM emission.
-- Separate object agreement and exported symbols are intentionally not defined
-  here.
-
+- Separate objects select this agreement through the ABI fingerprint defined
+  by the native linkage contract.

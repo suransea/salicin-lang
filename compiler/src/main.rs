@@ -451,6 +451,8 @@ struct ProjectTarget {
 
 struct ResolvedPackage {
     id: PackageId,
+    name: String,
+    version: String,
     is_primary: bool,
     dependencies: BTreeMap<String, PackageId>,
     source: PathBuf,
@@ -601,6 +603,8 @@ fn resolve_project_packages(
             .collect();
         packages.push(ResolvedPackage {
             id: ids[&manifest.manifest_path],
+            name: manifest.package.name.clone(),
+            version: manifest.package.version.to_string(),
             is_primary,
             dependencies,
             source: root_source,
@@ -906,6 +910,8 @@ fn read_source_packages(target: &ResolvedTarget) -> Result<Vec<SourcePackage>, (
             }
             Ok(SourcePackage {
                 id: package.id,
+                name: package.name.clone(),
+                version: package.version.clone(),
                 is_primary: package.is_primary,
                 dependencies: package.dependencies.clone(),
                 sources,

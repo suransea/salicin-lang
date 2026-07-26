@@ -3,8 +3,8 @@ use std::fmt;
 use crate::ast::PassMode;
 
 use super::{
-    Analyzer, CallableKind, ConstructorTraitImplKey, FunctionInstanceKey, NominalInstanceKey,
-    NominalKind, TraitImplKey, Ty,
+    Analyzer, CallableKind, ConstructorTraitImplKey, FunctionInstanceKey, HirFunction,
+    NominalInstanceKey, NominalKind, TraitImplKey, Ty,
 };
 
 impl Analyzer {
@@ -333,6 +333,203 @@ pub(super) fn assumed_trait_method_name(
 
 pub(super) fn function_symbol(name: &str) -> String {
     format!("sali.fn.{}", hex_name(name))
+}
+
+pub(super) fn exported_function_symbol(
+    analyzer: &Analyzer,
+    name: &str,
+    function: &HirFunction,
+) -> String {
+    format!(
+        "sali.export.{}.{}.{}",
+        hex_name(&analyzer.primary_package_identity),
+        hex_name(name),
+        hex_name(&function_abi_encoding(analyzer, name, function))
+    )
+}
+
+pub(super) fn exported_global_symbol(analyzer: &Analyzer, name: &str, ty: &Ty) -> String {
+    format!(
+        "sali.export.{}.global.{}.{}",
+        hex_name(&analyzer.primary_package_identity),
+        hex_name(name),
+        hex_name(&value_abi_encoding(&analyzer.stable_abi_type(ty)))
+    )
+}
+
+fn function_abi_encoding(analyzer: &Analyzer, name: &str, function: &HirFunction) -> String {
+    let mut encoded = format!("params{}:", function.params.len());
+    for parameter in &function.params {
+        encoded.push_str(match parameter.mode {
+            PassMode::Inferred => "i",
+            PassMode::Copy => "c",
+            PassMode::Move => "m",
+            PassMode::Borrow => "b",
+            PassMode::MutBorrow => "u",
+        });
+        push_canonical_component(
+            &mut encoded,
+            &value_abi_encoding(&analyzer.stable_abi_type(&parameter.ty)),
+        );
+    }
+    push_canonical_component(
+        &mut encoded,
+        &value_abi_encoding(&analyzer.stable_abi_type(&function.result)),
+    );
+    if let Some(signature) = analyzer.signatures.get(name) {
+        encoded.push_str(if signature.unsafe_effect {
+            "unsafe:"
+        } else {
+            "pure:"
+        });
+        match &signature.throws_error {
+            Some(error) => {
+                encoded.push_str("throws:");
+                push_canonical_component(
+                    &mut encoded,
+                    &value_abi_encoding(&analyzer.stable_abi_type(error)),
+                );
+            }
+            None => encoded.push_str("nothrows:"),
+        }
+        encoded.push_str(&format!("effects{}:", signature.custom_effects.len()));
+        for effect in &signature.custom_effects {
+            push_canonical_component(&mut encoded, effect);
+        }
+    }
+    encoded
+}
+
+impl Analyzer {
+    fn stable_abi_type(&self, ty: &Ty) -> Ty {
+        match ty {
+            Ty::Tuple(fields) => Ty::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.stable_abi_type(field))
+                    .collect(),
+            ),
+            Ty::Pointer { pointee, mutable } => Ty::Pointer {
+                pointee: Box::new(self.stable_abi_type(pointee)),
+                mutable: *mutable,
+            },
+            Ty::Reference {
+                pointee, mutable, ..
+            } => Ty::Reference {
+                pointee: Box::new(self.stable_abi_type(pointee)),
+                mutable: *mutable,
+                region: None,
+            },
+            Ty::Array(element, length) => {
+                Ty::Array(Box::new(self.stable_abi_type(element)), *length)
+            }
+            Ty::Slice(element) => Ty::Slice(Box::new(self.stable_abi_type(element))),
+            Ty::Struct(name) => Ty::Struct(self.stable_abi_nominal_name(name)),
+            Ty::Enum(name) => Ty::Enum(self.stable_abi_nominal_name(name)),
+            Ty::Function(function) => {
+                let mut function = function.clone();
+                for group in &mut function.groups {
+                    for parameter in group {
+                        *parameter = self.stable_abi_type(parameter);
+                    }
+                }
+                function.throws_error = function
+                    .throws_error
+                    .map(|error| Box::new(self.stable_abi_type(&error)));
+                function.result = Box::new(self.stable_abi_type(&function.result));
+                Ty::Function(function)
+            }
+            Ty::Callable(callable) => {
+                let mut callable = callable.clone();
+                for capture in &mut callable.captures {
+                    capture.ty = self.stable_abi_type(&capture.ty);
+                }
+                for group in &mut callable.signature.groups {
+                    for parameter in group {
+                        *parameter = self.stable_abi_type(parameter);
+                    }
+                }
+                callable.signature.throws_error = callable
+                    .signature
+                    .throws_error
+                    .map(|error| Box::new(self.stable_abi_type(&error)));
+                callable.signature.result =
+                    Box::new(self.stable_abi_type(&callable.signature.result));
+                Ty::Callable(callable)
+            }
+            Ty::Continuation { input, output } => Ty::Continuation {
+                input: Box::new(self.stable_abi_type(input)),
+                output: Box::new(self.stable_abi_type(output)),
+            },
+            Ty::EffectCallable {
+                input,
+                output,
+                answer,
+            } => Ty::EffectCallable {
+                input: Box::new(self.stable_abi_type(input)),
+                output: Box::new(self.stable_abi_type(output)),
+                answer: Box::new(self.stable_abi_type(answer)),
+            },
+            Ty::EffectRow {
+                unsafe_effect,
+                throws_error,
+                custom_effects,
+            } => Ty::EffectRow {
+                unsafe_effect: *unsafe_effect,
+                throws_error: throws_error
+                    .as_ref()
+                    .map(|error| Box::new(self.stable_abi_type(error))),
+                custom_effects: custom_effects.clone(),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    fn stable_abi_nominal_name(&self, name: &str) -> String {
+        let package = self
+            .nominal_accesses
+            .get(name)
+            .map_or(self.primary_package, |access| access.origin.package);
+        let identity = self
+            .package_identities
+            .get(&package)
+            .unwrap_or(&self.primary_package_identity);
+        let local_name = name
+            .strip_prefix('@')
+            .and_then(|name| name.split_once("::"))
+            .map_or(name, |(_, local)| local);
+        format!("{identity}::{local_name}")
+    }
+}
+
+fn value_abi_encoding(ty: &Ty) -> String {
+    match ty {
+        Ty::Reference {
+            pointee, mutable, ..
+        } => {
+            let mut encoded = if *mutable { "mutref" } else { "ref" }.to_owned();
+            push_canonical_component(&mut encoded, &value_abi_encoding(pointee));
+            encoded
+        }
+        Ty::Tuple(fields) => {
+            let mut encoded = format!("tuple{}:", fields.len());
+            for field in fields {
+                push_canonical_component(&mut encoded, &value_abi_encoding(field));
+            }
+            encoded
+        }
+        Ty::Pointer { pointee, mutable } => {
+            let mut encoded = if *mutable { "mutptr" } else { "ptr" }.to_owned();
+            push_canonical_component(&mut encoded, &value_abi_encoding(pointee));
+            encoded
+        }
+        Ty::Array(element, length) => {
+            let mut encoded = format!("array{length}:");
+            push_canonical_component(&mut encoded, &value_abi_encoding(element));
+            encoded
+        }
+        _ => canonical_type_encoding(ty),
+    }
 }
 
 pub(super) fn drop_glue_symbol(ty: &Ty) -> String {
