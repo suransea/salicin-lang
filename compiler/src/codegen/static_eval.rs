@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BinaryOp, Expr, Function, PassMode, Pattern, PatternFields, StaticExpr, Stmt, Type, UnaryOp,
+    BinaryOp, CallArg, Expr, Function, PassMode, Pattern, PatternFields, StaticExpr, Stmt, Type,
+    UnaryOp,
 };
 
 use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
@@ -39,7 +40,7 @@ impl Analyzer {
     }
 
     fn evaluate_static_expression(
-        &self,
+        &mut self,
         expression: &StaticExpr,
         locals: &HashMap<String, CtfeValue>,
         fuel: &mut usize,
@@ -85,7 +86,7 @@ impl Analyzer {
     }
 
     fn evaluate_static_call(
-        &self,
+        &mut self,
         name: &str,
         arguments: &[CtfeValue],
         fuel: &mut usize,
@@ -129,7 +130,7 @@ impl Analyzer {
     }
 
     fn validate_static_function(
-        &self,
+        &mut self,
         function: &Function,
         arguments: &[CtfeValue],
     ) -> Result<Ty, String> {
@@ -207,7 +208,7 @@ impl Analyzer {
     }
 
     fn evaluate_static_body(
-        &self,
+        &mut self,
         expression: &Expr,
         expected: Option<&Ty>,
         locals: &mut HashMap<String, CtfeValue>,
@@ -347,6 +348,7 @@ impl Analyzer {
                 let layout = self
                     .struct_layouts
                     .get(&name)
+                    .cloned()
                     .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
                 if fields.len() != layout.fields.len() {
                     return Err(format!(
@@ -413,10 +415,25 @@ impl Analyzer {
                     },
                 }
             }
-            Expr::Name(name) => locals
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("unknown local `{name}` in ctfe function"))?,
+            Expr::Name(name) => {
+                if let Some((enum_name, variant)) =
+                    self.static_enum_variant(expression.unlocated(), expected, locals)?
+                {
+                    self.evaluate_static_enum_constructor(
+                        &enum_name,
+                        variant,
+                        &[],
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?
+                } else {
+                    locals
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown local `{name}` in ctfe function"))?
+                }
+            }
             Expr::Unary(UnaryOp::Neg, operand)
                 if matches!(operand.unlocated(), Expr::Integer(_)) =>
             {
@@ -470,94 +487,118 @@ impl Analyzer {
                 Self::evaluate_static_binary(left, *operator, right)?
             }
             Expr::Call(callee, arguments) => {
-                let Expr::Name(function_name) = callee.unlocated() else {
-                    return Err("ctfe calls must name a top-level function".to_owned());
-                };
-                if arguments.iter().any(|argument| argument.label.is_some()) {
-                    return Err("labeled ctfe calls are not supported yet".to_owned());
-                }
-                let function = self
-                    .functions
-                    .get(function_name)
-                    .or_else(|| self.function_templates.get(function_name))
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("unknown function `{function_name}` in static expression")
-                    })?;
-                if function.groups.len() != 1 || function.groups[0].len() != arguments.len() {
-                    return Err(format!(
+                if let Some((name, variant)) = self.static_enum_variant(callee, expected, locals)? {
+                    self.evaluate_static_enum_constructor(
+                        &name,
+                        variant,
+                        arguments,
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?
+                } else {
+                    let Expr::Name(function_name) = callee.unlocated() else {
+                        return Err("ctfe calls must name a top-level function".to_owned());
+                    };
+                    if arguments.iter().any(|argument| argument.label.is_some()) {
+                        return Err("labeled ctfe calls are not supported yet".to_owned());
+                    }
+                    let function = self
+                        .functions
+                        .get(function_name)
+                        .or_else(|| self.function_templates.get(function_name))
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!("unknown function `{function_name}` in static expression")
+                        })?;
+                    if function.groups.len() != 1 || function.groups[0].len() != arguments.len() {
+                        return Err(format!(
                         "ctfe function `{function_name}` must have one fully-applied parameter group"
                     ));
-                }
-                let arguments = arguments
-                    .iter()
-                    .zip(&function.groups[0])
-                    .map(|(argument, parameter)| {
-                        let parameter_ty =
-                            self.static_value_type(&parameter.ty).ok_or_else(|| {
-                                format!(
+                    }
+                    let arguments = arguments
+                        .iter()
+                        .zip(&function.groups[0])
+                        .map(|(argument, parameter)| {
+                            let parameter_ty =
+                                self.static_value_type(&parameter.ty).ok_or_else(|| {
+                                    format!(
                                     "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
                                     parameter.name,
                                     self.source_type_name(&parameter.ty)
                                 )
-                            })?;
-                        self.evaluate_static_body(
-                            &argument.value,
-                            Some(&parameter_ty),
-                            locals,
-                            fuel,
-                            active_calls,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.evaluate_static_call(function_name, &arguments, fuel, active_calls)?
+                                })?;
+                            self.evaluate_static_body(
+                                &argument.value,
+                                Some(&parameter_ty),
+                                locals,
+                                fuel,
+                                active_calls,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    self.evaluate_static_call(function_name, &arguments, fuel, active_calls)?
+                }
             }
             Expr::Member(base, member) => {
-                let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
-                let (index, field_ty) = match &base.ty {
-                    Ty::Tuple(fields) => {
-                        let index = member.parse::<usize>().map_err(|_| {
-                            format!(
+                if let Some((name, variant)) =
+                    self.static_enum_variant(expression.unlocated(), expected, locals)?
+                {
+                    self.evaluate_static_enum_constructor(
+                        &name,
+                        variant,
+                        &[],
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?
+                } else {
+                    let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
+                    let (index, field_ty) = match &base.ty {
+                        Ty::Tuple(fields) => {
+                            let index = member.parse::<usize>().map_err(|_| {
+                                format!(
                                 "ctfe tuple projection requires a decimal index, found `{member}`"
                             )
-                        })?;
-                        let field_ty = fields.get(index).ok_or_else(|| {
-                            format!(
+                            })?;
+                            let field_ty = fields.get(index).ok_or_else(|| {
+                                format!(
                                 "ctfe tuple index {index} is out of bounds for tuple of length {}",
                                 fields.len()
                             )
-                        })?;
-                        (index, field_ty)
-                    }
-                    Ty::Struct(name) => {
-                        let layout = self
-                            .struct_layouts
-                            .get(name)
-                            .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
-                        let index = layout
-                            .fields
-                            .iter()
-                            .position(|field| field.name == *member)
-                            .ok_or_else(|| {
-                                format!(
-                                    "unknown field `{member}` in ctfe struct `{}`",
-                                    layout.source_name
-                                )
                             })?;
-                        (index, &layout.fields[index].ty)
-                    }
-                    _ => {
-                        return Err(format!(
-                            "ctfe projection `{member}` requires a tuple or struct, found `{}`",
-                            base.ty
-                        ));
-                    }
-                };
-                let value = base
-                    .projection(index)
-                    .cloned()
-                    .ok_or_else(|| "invalid ctfe aggregate projection".to_owned())?;
-                Self::expect_static_type(value, field_ty, "ctfe aggregate projection")?
+                            (index, field_ty)
+                        }
+                        Ty::Struct(name) => {
+                            let layout = self
+                                .struct_layouts
+                                .get(name)
+                                .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
+                            let index = layout
+                                .fields
+                                .iter()
+                                .position(|field| field.name == *member)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "unknown field `{member}` in ctfe struct `{}`",
+                                        layout.source_name
+                                    )
+                                })?;
+                            (index, &layout.fields[index].ty)
+                        }
+                        _ => {
+                            return Err(format!(
+                                "ctfe projection `{member}` requires a tuple or struct, found `{}`",
+                                base.ty
+                            ));
+                        }
+                    };
+                    let value = base
+                        .projection(index)
+                        .cloned()
+                        .ok_or_else(|| "invalid ctfe aggregate projection".to_owned())?;
+                    Self::expect_static_type(value, field_ty, "ctfe aggregate projection")?
+                }
             }
             Expr::Index { base, index } => {
                 let base = self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
@@ -709,7 +750,7 @@ impl Analyzer {
     }
 
     fn static_binary_operand_type(
-        &self,
+        &mut self,
         left: &Expr,
         operator: BinaryOp,
         right: &Expr,
@@ -738,7 +779,7 @@ impl Analyzer {
     }
 
     fn static_expression_type_hint(
-        &self,
+        &mut self,
         expression: &Expr,
         locals: &HashMap<String, CtfeValue>,
     ) -> Option<Ty> {
@@ -758,17 +799,24 @@ impl Analyzer {
                     .and_then(|element| self.static_expression_type_hint(element, locals))?;
                 Some(Ty::Array(Box::new(element), elements.len() as u64))
             }
-            Expr::Member(base, member) => match self.static_expression_type_hint(base, locals)? {
-                Ty::Tuple(fields) => fields.get(member.parse::<usize>().ok()?).cloned(),
-                Ty::Struct(name) => self
-                    .struct_layouts
-                    .get(&name)?
-                    .fields
-                    .iter()
-                    .find(|field| field.name == *member)
-                    .map(|field| field.ty.clone()),
-                _ => None,
-            },
+            Expr::Member(base, member) => {
+                if let Ok(Some((name, _))) =
+                    self.static_enum_variant(expression.unlocated(), None, locals)
+                {
+                    return Some(Ty::Enum(name));
+                }
+                match self.static_expression_type_hint(base, locals)? {
+                    Ty::Tuple(fields) => fields.get(member.parse::<usize>().ok()?).cloned(),
+                    Ty::Struct(name) => self
+                        .struct_layouts
+                        .get(&name)?
+                        .fields
+                        .iter()
+                        .find(|field| field.name == *member)
+                        .map(|field| field.ty.clone()),
+                    _ => None,
+                }
+            }
             Expr::Index { base, .. } => {
                 let Ty::Array(element, _) = self.static_expression_type_hint(base, locals)? else {
                     return None;
@@ -791,6 +839,9 @@ impl Analyzer {
                     .or_else(|| self.static_expression_type_hint(right, locals)),
             },
             Expr::Call(callee, _) => {
+                if let Ok(Some((name, _))) = self.static_enum_variant(callee, None, locals) {
+                    return Some(Ty::Enum(name));
+                }
                 let Expr::Name(name) = callee.unlocated() else {
                     return None;
                 };
@@ -798,10 +849,8 @@ impl Analyzer {
                     .functions
                     .get(name)
                     .or_else(|| self.function_templates.get(name))?;
-                function
-                    .return_type
-                    .as_ref()
-                    .and_then(|source| self.static_value_type(source))
+                let source = function.return_type.clone()?;
+                self.static_value_type(&source)
             }
             Expr::StructLiteral { constructor, .. } => self
                 .static_struct_constructor_name(constructor, None)
@@ -824,7 +873,7 @@ impl Analyzer {
     }
 
     fn static_pattern_matches(
-        &self,
+        &mut self,
         pattern: &Pattern,
         value: &CtfeValue,
         locals: &mut HashMap<String, CtfeValue>,
@@ -860,11 +909,47 @@ impl Analyzer {
                 )),
             },
             Pattern::Wildcard => Ok(true),
+            Pattern::Binding(candidate)
+                if matches!(
+                    (&value.ty, &value.kind),
+                    (Ty::Enum(_), CtfeValueKind::Enum { .. })
+                ) =>
+            {
+                let (
+                    Ty::Enum(name),
+                    CtfeValueKind::Enum {
+                        variant: active, ..
+                    },
+                ) = (&value.ty, &value.kind)
+                else {
+                    unreachable!("enum binding-pattern guard")
+                };
+                let layout = self
+                    .enum_layouts
+                    .get(name)
+                    .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
+                if let Some(variant) = layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == *candidate && variant.fields.is_empty())
+                {
+                    Ok(*active == variant)
+                } else {
+                    locals.insert(candidate.clone(), value.clone());
+                    Ok(true)
+                }
+            }
             Pattern::Binding(name) => {
                 locals.insert(name.clone(), value.clone());
                 Ok(true)
             }
             Pattern::Constructor { path, fields } => {
+                if matches!(
+                    (&value.ty, &value.kind),
+                    (Ty::Enum(_), CtfeValueKind::Enum { .. })
+                ) {
+                    return self.static_enum_pattern_matches(path, fields, value, locals);
+                }
                 let (
                     Ty::Struct(name),
                     CtfeValueKind::Struct {
@@ -972,6 +1057,142 @@ impl Analyzer {
         }
     }
 
+    fn static_enum_pattern_matches(
+        &mut self,
+        path: &[String],
+        fields: &PatternFields,
+        value: &CtfeValue,
+        locals: &mut HashMap<String, CtfeValue>,
+    ) -> Result<bool, String> {
+        let (
+            Ty::Enum(name),
+            CtfeValueKind::Enum {
+                name: value_name,
+                variant: active,
+                fields: values,
+            },
+        ) = (&value.ty, &value.kind)
+        else {
+            return Err(format!(
+                "enum pattern cannot match ctfe value of type `{}`",
+                value.ty
+            ));
+        };
+        if name != value_name {
+            return Err("malformed ctfe enum value has inconsistent identity".to_owned());
+        }
+        let layout = self
+            .enum_layouts
+            .get(name)
+            .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
+        let variant_name = path
+            .last()
+            .ok_or_else(|| "empty enum constructor path during ctfe".to_owned())?;
+        let template_name = self
+            .nominal_instances
+            .get(name)
+            .map(|instance| instance.key.template.as_str())
+            .unwrap_or(name);
+        if path.len() > 2
+            || (path.len() == 2
+                && path[0] != *name
+                && path[0] != template_name
+                && path[0] != "self")
+        {
+            return Err(format!(
+                "ctfe pattern constructor `{}` does not belong to enum `{}`",
+                path.join("."),
+                self.diagnostic_type_name(&value.ty)
+            ));
+        }
+        let variant = layout
+            .variants
+            .iter()
+            .position(|variant| variant.name == *variant_name)
+            .ok_or_else(|| {
+                format!(
+                    "unknown ctfe pattern variant `{variant_name}` for `{}`",
+                    self.diagnostic_type_name(&value.ty)
+                )
+            })?;
+        if variant != *active {
+            return Ok(false);
+        }
+        let variant_layout = &layout.variants[variant];
+        if values.len() != variant_layout.fields.len() {
+            return Err("malformed ctfe enum value has invalid payload count".to_owned());
+        }
+        let patterns = match fields {
+            PatternFields::Unit => {
+                if !variant_layout.fields.is_empty() {
+                    return Err(format!(
+                        "ctfe enum pattern `{}.{variant_name}` requires {} fields",
+                        self.diagnostic_type_name(&value.ty),
+                        variant_layout.fields.len()
+                    ));
+                }
+                Vec::new()
+            }
+            PatternFields::Positional(patterns) => {
+                if patterns.len() != variant_layout.fields.len() {
+                    return Err(format!(
+                        "ctfe enum pattern `{}.{variant_name}` requires {} fields, found {}",
+                        self.diagnostic_type_name(&value.ty),
+                        variant_layout.fields.len(),
+                        patterns.len()
+                    ));
+                }
+                patterns.iter().enumerate().collect::<Vec<_>>()
+            }
+            PatternFields::Named(patterns) => {
+                if !variant_layout.named {
+                    return Err(format!(
+                        "ctfe enum pattern `{}.{variant_name}` has positional fields",
+                        self.diagnostic_type_name(&value.ty)
+                    ));
+                }
+                if patterns.len() != variant_layout.fields.len() {
+                    return Err(format!(
+                        "ctfe enum pattern `{}.{variant_name}` requires {} fields, found {}",
+                        self.diagnostic_type_name(&value.ty),
+                        variant_layout.fields.len(),
+                        patterns.len()
+                    ));
+                }
+                let mut seen = HashSet::new();
+                let mut ordered = Vec::with_capacity(patterns.len());
+                for field in patterns {
+                    let index = variant_layout
+                        .fields
+                        .iter()
+                        .position(|candidate| candidate.name == field.name)
+                        .ok_or_else(|| {
+                            format!(
+                                "unknown field `{}` in ctfe enum pattern `{}.{variant_name}`",
+                                field.name,
+                                self.diagnostic_type_name(&value.ty)
+                            )
+                        })?;
+                    if !seen.insert(index) {
+                        return Err(format!(
+                            "duplicate field `{}` in ctfe enum pattern `{}.{variant_name}`",
+                            field.name,
+                            self.diagnostic_type_name(&value.ty)
+                        ));
+                    }
+                    ordered.push((index, &field.pattern));
+                }
+                ordered
+            }
+        };
+        for (index, pattern) in patterns {
+            if !self.static_pattern_matches(pattern, &values[index], locals)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn evaluate_static_unary(operator: UnaryOp, operand: CtfeValue) -> Result<CtfeValue, String> {
         match operator {
             UnaryOp::Not if operand.ty == Ty::Bool => Ok(CtfeValue::bool(
@@ -1016,7 +1237,10 @@ impl Analyzer {
         if left.ty == right.ty
             && matches!(
                 &left.kind,
-                CtfeValueKind::Tuple(_) | CtfeValueKind::Array(_) | CtfeValueKind::Struct { .. }
+                CtfeValueKind::Tuple(_)
+                    | CtfeValueKind::Array(_)
+                    | CtfeValueKind::Struct { .. }
+                    | CtfeValueKind::Enum { .. }
             )
         {
             return match operator {
@@ -1068,8 +1292,223 @@ impl Analyzer {
         }
     }
 
+    fn static_enum_variant(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        locals: &HashMap<String, CtfeValue>,
+    ) -> Result<Option<(String, usize)>, String> {
+        if let Expr::Name(variant_name) = expression.unlocated() {
+            if locals.contains_key(variant_name) {
+                return Ok(None);
+            }
+            let Some(Ty::Enum(name)) = expected else {
+                return Ok(None);
+            };
+            let layout = self
+                .enum_layouts
+                .get(name)
+                .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
+            return Ok(layout
+                .variants
+                .iter()
+                .position(|variant| variant.name == *variant_name)
+                .map(|variant| (name.clone(), variant)));
+        }
+
+        let Expr::Member(type_head, variant_name) = expression.unlocated() else {
+            return Ok(None);
+        };
+        let mut groups = Vec::new();
+        let root = flatten_call(type_head, &mut groups);
+        let Expr::Name(source_name) = root.unlocated() else {
+            return Ok(None);
+        };
+        if locals.contains_key(source_name) {
+            return Ok(None);
+        }
+
+        let expected_name = match expected {
+            Some(Ty::Enum(name)) => {
+                let template_name = self
+                    .nominal_instances
+                    .get(name)
+                    .map(|instance| instance.key.template.as_str())
+                    .unwrap_or(name);
+                (source_name == name || source_name == template_name).then_some(name.clone())
+            }
+            _ => None,
+        };
+        let name = if let Some(name) = expected_name {
+            name
+        } else if groups.is_empty() && self.enum_layouts.contains_key(source_name) {
+            source_name.clone()
+        } else {
+            let Some(template) = self.enum_templates.get(source_name) else {
+                return Ok(None);
+            };
+            if groups.len() != template.compile_groups.len()
+                || groups
+                    .iter()
+                    .zip(&template.compile_groups)
+                    .any(|(arguments, parameters)| arguments.len() != parameters.len())
+            {
+                return Err(format!(
+                    "ctfe enum constructor `{source_name}` has invalid compile-time arguments"
+                ));
+            }
+            let mut source_arguments = Vec::new();
+            for (arguments, parameters) in groups.iter().zip(&template.compile_groups) {
+                for (argument, parameter) in arguments.iter().zip(parameters) {
+                    let source = self
+                        .probe_compile_argument_source(parameter, &argument.value, &HashMap::new())
+                        .ok_or_else(|| {
+                            format!(
+                                "ctfe enum constructor `{source_name}` has an unsupported compile-time argument"
+                            )
+                        })?;
+                    source_arguments.push(source);
+                }
+            }
+            match self.lower_source_type(&Type::Named(source_name.clone(), source_arguments)) {
+                Ty::Enum(name) if self.enum_layouts.contains_key(&name) => name,
+                _ => {
+                    return Err(format!(
+                        "concrete enum `{source_name}` was not materialized before ctfe"
+                    ));
+                }
+            }
+        };
+        let layout = self
+            .enum_layouts
+            .get(&name)
+            .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
+        let variant = layout
+            .variants
+            .iter()
+            .position(|variant| variant.name == *variant_name)
+            .ok_or_else(|| {
+                format!(
+                    "unknown ctfe enum variant `{variant_name}` for `{}`",
+                    self.diagnostic_type_name(&Ty::Enum(name.clone()))
+                )
+            })?;
+        Ok(Some((name, variant)))
+    }
+
+    fn evaluate_static_enum_constructor(
+        &mut self,
+        name: &str,
+        variant: usize,
+        arguments: &[CallArg],
+        locals: &mut HashMap<String, CtfeValue>,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
+        let ty = Ty::Enum(name.to_owned());
+        self.validate_static_value_type(&ty)?;
+        let layout = self
+            .enum_layouts
+            .get(name)
+            .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
+        let variant_layout = layout
+            .variants
+            .get(variant)
+            .cloned()
+            .ok_or_else(|| format!("unknown variant index {variant} for enum `{name}`"))?;
+        if arguments.len() != variant_layout.fields.len() {
+            return Err(format!(
+                "ctfe enum variant `{}.{}` expects {} fields, found {}",
+                self.diagnostic_type_name(&ty),
+                variant_layout.name,
+                variant_layout.fields.len(),
+                arguments.len()
+            ));
+        }
+        let labeled = arguments
+            .iter()
+            .filter(|argument| argument.label.is_some())
+            .count();
+        if labeled != 0 && labeled != arguments.len() {
+            return Err(format!(
+                "ctfe enum variant `{}.{}` cannot mix labeled and positional fields",
+                self.diagnostic_type_name(&ty),
+                variant_layout.name
+            ));
+        }
+        if labeled != 0 && !variant_layout.named {
+            return Err(format!(
+                "ctfe enum variant `{}.{}` has positional fields",
+                self.diagnostic_type_name(&ty),
+                variant_layout.name
+            ));
+        }
+        let mut values = vec![None; variant_layout.fields.len()];
+        for (source_index, argument) in arguments.iter().enumerate() {
+            let index = match argument.label.as_deref() {
+                Some(label) => variant_layout
+                    .fields
+                    .iter()
+                    .position(|field| field.name == label)
+                    .ok_or_else(|| {
+                        format!(
+                            "unknown field `{label}` in ctfe enum variant `{}.{}`",
+                            self.diagnostic_type_name(&ty),
+                            variant_layout.name
+                        )
+                    })?,
+                None => source_index,
+            };
+            if values[index].is_some() {
+                return Err(format!(
+                    "duplicate field `{}` in ctfe enum variant `{}.{}`",
+                    variant_layout.fields[index].name,
+                    self.diagnostic_type_name(&ty),
+                    variant_layout.name
+                ));
+            }
+            let value = self.evaluate_static_body(
+                &argument.value,
+                Some(&variant_layout.fields[index].ty),
+                locals,
+                fuel,
+                active_calls,
+            )?;
+            values[index] = Some(Self::expect_static_type(
+                value,
+                &variant_layout.fields[index].ty,
+                &format!(
+                    "ctfe enum variant field `{}`",
+                    variant_layout.fields[index].name
+                ),
+            )?);
+        }
+        let values = values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.ok_or_else(|| {
+                    format!(
+                        "missing field `{}` in ctfe enum variant `{}.{}`",
+                        variant_layout.fields[index].name,
+                        self.diagnostic_type_name(&ty),
+                        variant_layout.name
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CtfeValue {
+            ty,
+            kind: CtfeValueKind::Enum {
+                name: name.to_owned(),
+                variant,
+                fields: values,
+            },
+        })
+    }
+
     fn static_struct_constructor_name(
-        &self,
+        &mut self,
         constructor: &Expr,
         expected: Option<&Ty>,
     ) -> Result<String, String> {
@@ -1135,20 +1574,22 @@ impl Analyzer {
                 source_arguments.push(source);
             }
         }
-        match self.probe_source_ty(&Type::Named(source_name.clone(), source_arguments)) {
-            Some(Ty::Struct(name)) if self.struct_layouts.contains_key(&name) => Ok(name),
+        match self.lower_source_type(&Type::Named(source_name.clone(), source_arguments)) {
+            Ty::Struct(name) if self.struct_layouts.contains_key(&name) => Ok(name),
             _ => Err(format!(
                 "concrete struct `{source_name}` was not materialized before ctfe"
             )),
         }
     }
 
-    fn static_value_type(&self, source: &Type) -> Option<Ty> {
-        self.probe_source_ty(source)
+    fn static_value_type(&mut self, source: &Type) -> Option<Ty> {
+        let diagnostics = self.diagnostics.len();
+        let ty = self.lower_source_type(source);
+        (self.diagnostics.len() == diagnostics && ty != Ty::Error).then_some(ty)
     }
 
     fn source_type_name(&self, source: &Type) -> String {
-        self.static_value_type(source)
+        self.probe_source_ty(source)
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| format!("{source:?}"))
     }
@@ -1249,10 +1690,42 @@ impl Analyzer {
                 | Ty::USize
                 | Ty::Bool
                 | Ty::Unit => {}
-                Ty::Enum(_) => {
-                    return Err(format!(
-                        "ctfe enum value type `{ty}` is not supported until CTFE-6"
-                    ));
+                Ty::Enum(name) => {
+                    if depth >= MAX_CTFE_VALUE_NESTING {
+                        return Err(format!(
+                            "ctfe value exceeds the {MAX_CTFE_VALUE_NESTING}-level nesting limit"
+                        ));
+                    }
+                    if analyzer.type_has_custom_drop(ty) {
+                        return Err(format!(
+                            "ctfe value type `{ty}` implements `droppable` and requires runtime destruction"
+                        ));
+                    }
+                    if !visiting.insert(name.clone()) {
+                        return Err(format!(
+                            "ctfe value type `{ty}` has a recursive nominal layout"
+                        ));
+                    }
+                    let layout = analyzer
+                        .enum_layouts
+                        .get(name)
+                        .ok_or_else(|| format!("ctfe value references unknown enum `{name}`"))?;
+                    if layout.variants.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                        return Err(format!(
+                            "ctfe enum exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-variant limit"
+                        ));
+                    }
+                    for variant in &layout.variants {
+                        if variant.fields.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
+                            return Err(format!(
+                                "ctfe enum variant exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-field limit"
+                            ));
+                        }
+                        for field in &variant.fields {
+                            visit(analyzer, &field.ty, depth + 1, nodes, visiting)?;
+                        }
+                    }
+                    visiting.remove(name);
                 }
                 Ty::Pointer { .. }
                 | Ty::Reference { .. }

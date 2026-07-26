@@ -294,10 +294,10 @@ Alias expansion must terminate. Cyclic aliases and arity or sort mismatches are 
 Salicin does not require a second spelling such as `const fn` for compile-time functions. An
 ordinary function may be evaluated in a static context when its body is available, its effects are
 empty, and its inputs and result belong to the supported static subset. The current subset contains
-unit, `bool`, every integer width, tuples, fixed arrays, and fully instantiated structs. It admits
-immutable local bindings, checked operators, `if`, exhaustive supported `match` forms, field or
-tuple projection, bounds-checked `usize` array indexing, and calls to other eligible top-level
-functions.
+unit, `bool`, every integer width, tuples, fixed arrays, fully instantiated structs, and closed
+enums. It admits immutable local bindings, checked operators, `if`, exhaustive supported `match`
+forms and guards, field or tuple projection, bounds-checked `usize` array indexing, and calls to
+other eligible top-level functions.
 
 ```sc fragment
 let next(value: usize): usize = { value + 1 }
@@ -313,7 +313,10 @@ type lowering. The result therefore participates in type identity: `Buffer(i32)(
 bodyless functions are rejected in static evaluation. Checked overflow, division by zero, invalid
 shifts, or exhaustion of the implementation's evaluation budget are compile errors. Struct values
 retain canonical nominal identity and declaration-order fields. Unsized, address-dependent,
-allocating, recursively laid out, or `droppable` fields are rejected before construction.
+allocating, recursively laid out, or `droppable` fields are rejected before construction. Enum
+values retain canonical identity, source variant identity, and only the active declaration-order
+payload; matching never exposes or depends on a backend discriminant. Resource exclusion checks
+every possible variant of an enum before it becomes a CTFE value.
 
 ### 4.3 Borrow, Pointer, and Array Types
 

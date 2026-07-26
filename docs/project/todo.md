@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Composite Compile-Time Evaluation
 
-### Nominal values
-
-- [ ] **CTFE-6 — Enum values and matching.** Evaluate unit, tuple, and named
-  enum variants; payload construction and binding; exhaustive `match`; guards;
-  nested values; and standard `Option`/`Result` computations without exposing
-  backend discriminant layout as source semantics.
-
 ### Pure calls and consumers
 
 - [ ] **CTFE-7 — General pure function calls.** Extend CTFE calls to accepted

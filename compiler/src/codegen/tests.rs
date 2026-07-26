@@ -2916,6 +2916,108 @@ let main(): i32 = { 0 }
 }
 
 #[test]
+fn ctfe_evaluates_enum_values_guards_and_standard_fallible_types() {
+    let llvm = compile_text(
+        r#"
+let option = std.option
+let result = std.result
+
+let point = struct { value: usize }
+let choice(comptime value: type) = enum {
+  empty,
+  single(value),
+  named(left: value, right: usize),
+}
+
+let make(seed: usize): choice(point) = {
+  let value = choice(point).named(
+    right: seed + 1,
+    left: point { value: seed },
+  )
+  value
+}
+
+let evaluate(value: choice(point)): usize = {
+  match value
+    { choice.named(right: right, left: point(value: left)) if right > left ->
+        right
+    }
+    { choice.single(point(value: item)) -> item }
+    { choice.empty -> 0 }
+    { _ -> 0 }
+}
+
+let standard(seed: usize): usize = {
+  let present: option(usize) = option.some(seed)
+  let absent: option(usize) = option.none
+  let outcome: result(bool)(usize) = result.ok(
+    match present
+      { some(value) -> value }
+      { none -> 0 }
+  )
+  let selected: usize = match outcome
+    { ok(value) -> value }
+    { err(_) -> 0 }
+  let missing: usize = match absent
+    { some(value) -> value }
+    { none -> 0 }
+  selected + missing
+}
+
+let unit_value(seed: usize): usize = {
+  let value: choice(point) = choice(point).empty
+  evaluate(value) + seed
+}
+
+let positional(seed: usize): usize = {
+  evaluate(choice(point).single(point { value: seed }))
+}
+
+let read(
+  values: array(i32)(
+    evaluate(make(3)) + standard(2) + unit_value(1) + positional(1)
+  )
+): i32 = {
+  values[0]
+}
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("enum variants, guards, option, and result should evaluate during ctfe");
+    assert!(llvm.contains("[8 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_rejects_enum_payloads_that_require_runtime_destruction() {
+    let errors = compile_text(
+        r#"
+let box = std.boxed.box
+let choice = enum {
+  empty,
+  owned(box(usize)),
+}
+let invalid_length(): usize = {
+  let value: choice = choice.empty
+  match value
+    { empty -> 1 }
+    { owned(_) -> 2 }
+}
+let read(values: array(i32)(invalid_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        errors.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("implements `droppable` and requires runtime destruction")
+        }),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn ctfe_rejects_dynamic_array_indexes_out_of_bounds() {
     let errors = compile_unresolved_text(
         r#"

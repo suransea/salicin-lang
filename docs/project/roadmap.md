@@ -56,11 +56,11 @@ consumer behavior for this milestone.
 
 Dependent expressions and global constants now share one typed CTFE value and
 one exact scalar operation layer. Pure dependent calls support unit, `bool`,
-every target-width integer, tuples, and fixed arrays; global normalization
-and dependent evaluation both represent scalars, tuples, arrays, and concrete
-structs, while global normalization already represents enums. The remaining
-milestone work extends enum values through pure source calls and then replaces
-the two consumer-specific control paths with one evaluation boundary.
+every target-width integer, tuples, fixed arrays, concrete structs, and closed
+enums including standard `option` and `result`; global normalization represents
+the same value families. The remaining milestone work generalizes pure source
+calls and then replaces the two consumer-specific control paths with one
+evaluation boundary.
 
 Runtime `struct` and `enum` declarations remain runtime types; this milestone
 does not turn them into `sort`s. A value of such a type may be constructed,

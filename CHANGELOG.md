@@ -37,6 +37,13 @@ subset.
   unsized, address-dependent, allocation-backed, recursive, and
   custom-`droppable` storage before construction. Struct patterns now also
   complete ordinary runtime `match` lowering and LLVM emission.
+- Added closed enum CTFE for unit, positional, and named variants, including
+  generic instances materialized on first function-body use, declaration-order
+  payload normalization, nested payload binding, literal patterns, guards,
+  unit short patterns, and structural equality. Standard `option` and `result`
+  computations use the same evaluator. Normalized values retain source
+  variant identity instead of backend discriminants, and resource exclusion
+  checks every possible variant before construction.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.

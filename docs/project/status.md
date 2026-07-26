@@ -139,10 +139,20 @@ validation rejects slices and other unsized storage, pointers and borrows,
 allocation-backed or custom-`droppable` fields, callable/address-dependent
 values, recursive nominal layouts, and the existing aggregate budgets.
 
-Enums are not yet admitted as intermediate dependent-expression values.
-Global constant evaluation supports scalar and aggregate literals but cannot
-yet call ordinary source functions. Extending the shared evaluator to enums
-is the active roadmap boundary.
+Closed enums are intermediate dependent-expression values too. Unit,
+positional, and named variants preserve canonical enum identity, source
+variant position, and declaration-order payload fields rather than inspecting
+an LLVM tag or padding. Generic enum instances are materialized on first CTFE
+use even when they occur only in a function-body local. Exhaustive matches
+support payload binding, nested tuple/struct/enum patterns, literal tests,
+guards, unit short patterns, and structural equality. Standard `option` and
+`result` construction and matching execute through the same path. Resource
+exclusion recursively checks every possible variant before constructing even
+a resource-free unit variant.
+
+Global constant evaluation still cannot call ordinary source functions.
+Generalizing eligible calls and control flow before unifying the two
+consumer entry points is the active roadmap boundary.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,
