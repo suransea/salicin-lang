@@ -18,6 +18,7 @@ use salicin_lang::{
     check_library_source, check_library_source_packages, check_source, check_source_packages,
     compile_library_source, compile_library_source_packages, compile_source,
     compile_source_packages, compile_test_source, compile_test_source_packages,
+    formatter::format_source,
 };
 
 const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c");
@@ -28,6 +29,7 @@ Usage:
   salic build [path] [--bin <name>] [-o <path>]
   salic check [path] [--bin <name> | --lib]
   salic emit-ir [path] [--bin <name> | --lib] [-o <path>]
+  salic fmt [path] [--check]
   salic run [path] [--bin <name>] [-- <args>...]
   salic test [path] [--bin <name>]
   salic [path] [--bin <name>] [-o <path>]
@@ -36,11 +38,13 @@ Commands:
     build      Compile a Salicin binary target to a native executable
     check      Parse and type-check a source or package target
   emit-ir    Print LLVM IR, or write it to a file with -o
+  fmt        Format one source file or every source in the selected package
   run        Compile and run a program; arguments after -- go to the program
   test       Compile all test declarations into one runner and run it
 
 Options:
   -o, --output <path>  Select the output path
+      --check          Check formatting without writing (fmt only)
       --bin <name>     Select a binary target from salicin.toml
       --lib            Select the library target (check and emit-ir only)
   -h, --help           Print this help
@@ -70,6 +74,10 @@ enum Action {
         input: Option<PathBuf>,
         target: TargetSelection,
         output: Option<PathBuf>,
+    },
+    Format {
+        input: Option<PathBuf>,
+        check: bool,
     },
     Run {
         input: Option<PathBuf>,
@@ -141,7 +149,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if args.len() == 2
         && matches!(
             first.to_str(),
-            Some("build" | "check" | "emit-ir" | "run" | "test")
+            Some("build" | "check" | "emit-ir" | "fmt" | "run" | "test")
         )
         && (is(&args[1], "-h") || is(&args[1], "--help"))
     {
@@ -173,6 +181,10 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 output: parsed.output,
             }
         }
+        Some("fmt") => {
+            let (input, check) = parse_format_args(&args[1..])?;
+            Action::Format { input, check }
+        }
         Some("run") => parse_run(&args[1..])?,
         Some("test") => {
             let parsed = parse_compile_args("test", &args[1..], false, false)?;
@@ -199,6 +211,32 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     };
 
     Ok(ParsedArgs::Action(action))
+}
+
+fn parse_format_args(args: &[OsString]) -> Result<(Option<PathBuf>, bool), String> {
+    let mut input = None;
+    let mut check = false;
+    for argument in args {
+        if is(argument, "--check") {
+            if check {
+                return Err("'fmt' accepts '--check' only once".into());
+            }
+            check = true;
+        } else if starts_with_dash(argument) {
+            return Err(format!(
+                "unknown option '{}' for 'fmt'",
+                argument.to_string_lossy()
+            ));
+        } else if input.is_some() {
+            return Err(format!(
+                "'fmt' accepts at most one input path; unexpected argument '{}'",
+                argument.to_string_lossy()
+            ));
+        } else {
+            input = Some(PathBuf::from(argument));
+        }
+    }
+    Ok((input, check))
 }
 
 fn parse_compile_args(
@@ -379,6 +417,10 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
+        Action::Format { input, check } => match format_input(input.as_deref(), check) {
+            Ok(code) => code,
+            Err(message) => report_driver_error(message),
+        },
         Action::Run { input, bin, args } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -744,6 +786,88 @@ fn find_manifest_from_current_dir() -> Result<PathBuf, String> {
             ));
         }
     }
+}
+
+fn format_input(input: Option<&Path>, check: bool) -> Result<i32, String> {
+    let paths = resolve_format_paths(input)?;
+    let mut formatted = Vec::with_capacity(paths.len());
+    let mut invalid = false;
+    for path in paths {
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("could not read source file '{}': {error}", path.display()))?;
+        match format_source(&source) {
+            Ok(output) => formatted.push((path, source, output)),
+            Err(error) => {
+                eprintln!("{}:{error}", path.display());
+                invalid = true;
+            }
+        }
+    }
+    if invalid {
+        return Ok(1);
+    }
+
+    let changed = formatted
+        .iter()
+        .filter(|(_, source, output)| source != output)
+        .collect::<Vec<_>>();
+    if check {
+        for (path, _, _) in &changed {
+            eprintln!("salic: source is not formatted: {}", path.display());
+        }
+        return Ok(i32::from(!changed.is_empty()));
+    }
+    for (path, _, output) in changed {
+        fs::write(path, output).map_err(|error| {
+            format!(
+                "could not write formatted source '{}': {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(0)
+}
+
+fn resolve_format_paths(input: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+    if let Some(path) = input {
+        if path.extension() == Some(OsStr::new(SOURCE_FILE_EXTENSION)) {
+            return Ok(vec![path.to_path_buf()]);
+        }
+    }
+
+    let manifest_path = match input {
+        Some(path) if path.is_dir() => path.join(MANIFEST_FILE_NAME),
+        Some(path) if path.file_name() == Some(OsStr::new(MANIFEST_FILE_NAME)) => {
+            path.to_path_buf()
+        }
+        Some(path) if !path.exists() && path.extension().is_none() => path.join(MANIFEST_FILE_NAME),
+        Some(path) => {
+            return Err(format!(
+                "input '{}' must be a .sc file, a package directory, or {MANIFEST_FILE_NAME}",
+                path.display()
+            ));
+        }
+        None => find_manifest_from_current_dir()?,
+    };
+    let graph = load_dependency_graph(&manifest_path).map_err(|error| error.to_string())?;
+    let root = graph.root();
+    let mut paths = root
+        .targets()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    let source_root = root.package_root.join("src");
+    if source_root.is_dir() {
+        collect_sc_files(&source_root, &mut paths)?;
+    }
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err(format!(
+            "package '{}' contains no Salicin source files",
+            root.package.name
+        ));
+    }
+    Ok(paths)
 }
 
 fn select_manifest_target(

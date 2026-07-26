@@ -49,6 +49,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
   generic ownership, and cross-module agreement.
 - [C interoperability](project/c-interoperability.md): verified scalar calls, raw pointers,
   `struct(c)` layout, and rejected ABI categories.
+- [Source formatter](project/formatter.md): token-preserving layout invariants, CLI behavior,
+  idempotence, and deliberate limits.
 - [Initial async contract](project/async-contract.md): accepted cold-future, polling, cancellation,
   borrowing, and executor boundary for the active async milestone.
 - [Changelog](../CHANGELOG.md): release-by-release history.

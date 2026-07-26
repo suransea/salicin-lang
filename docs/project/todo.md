@@ -13,12 +13,11 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-The async and ABI milestones are complete. Tooling and package work now
-proceeds in listed order.
+The async, ABI, and formatter milestones are complete. Tooling and package
+work now proceeds in listed order.
 
-## P0: Tooling
+## P0: Editor Spans
 
-- [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**
 
 ## P1: Packages And Incremental Compilation

@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Added the conservative `salic fmt` formatter for individual files and root
+  packages, with `--check` and dependency isolation. Formatting preserves
+  every physical line and the complete logical token stream while normalizing
+  two-space brace indentation, trailing whitespace, LF endings, and final
+  newlines. Token-stream and reparsing guards prevent parenthesis-free calls
+  or comments from changing meaning; the complete passing fixture corpus is
+  idempotent.
+
 ## 0.203.0 - 2026-07-26
 
 - Verified the bounded C interoperability surface against the native host

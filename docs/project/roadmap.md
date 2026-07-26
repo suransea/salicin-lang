@@ -19,7 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Formatter Syntax Invariants
+## Current Milestone: Stable Editor Spans
 
 Async state machines now cover cold construction, explicit polling,
 cancellation, finite sequential and branch suspension, recurring loop
@@ -28,9 +28,10 @@ Unsupported recursive, self-referential, move-only backedge, effectful
 condition, and nested residual iteration shapes receive source diagnostics.
 
 The runtime representation audit, native calling convention, exported symbol
-contract, and bounded C interoperability are complete. The current milestone
-defines formatter-preserving syntax invariants before an LSP, workspace,
-registry identity, or incremental compilation work begins.
+contract, bounded C interoperability, and conservative formatter are
+complete. The current milestone exposes lossless parser and semantic spans
+for editor diagnostics before workspace, registry identity, or incremental
+compilation work begins.
 
 ## Test Throughput Foundation
 
@@ -123,11 +124,19 @@ containing integer, pointer, array, and nested aggregate fields. By-value
 arrays and aggregates, bool, borrows, and typed function pointers are rejected
 until target ABI lowering explicitly supports them.
 
+## Completed Formatter Invariants
+
+The [source formatter](formatter.md) preserves the lexer token-kind stream and
+all physical line boundaries, then validates the formatted parse. It
+normalizes only brace indentation, trailing whitespace, LF endings, and the
+final newline. `salic fmt` supports files and root packages; `--check`,
+invalid-source atomicity, dependency isolation, and corpus-wide idempotence
+are tested.
+
 ## Later Ecosystem Milestone
 
 Tooling and package compatibility follow verified C interoperability:
 
-- a formatter based on parser-preserving syntax invariants;
 - an LSP over stable parser and semantic spans;
 - workspaces and reproducible dependency resolution;
 - incremental compilation keyed by stable semantic inputs.

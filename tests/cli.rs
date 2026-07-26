@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use salicin_lang::modules::{PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
     check_library_source, check_source, compile_library_source_packages, compile_source,
-    compile_test_source_packages,
+    compile_test_source_packages, formatter::format_source,
 };
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -357,6 +357,114 @@ fn help_and_version_identify_salic() {
         .expect("run salic --version");
     assert!(version.status.success(), "{}", output_text(&version));
     assert!(String::from_utf8_lossy(&version.stdout).starts_with("salic "));
+}
+
+#[test]
+fn formatter_is_idempotent_checks_without_writing_and_formats_packages() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write(
+        "main.sc",
+        "let main(): i32 = {  \n// keep { here\nif true {\n42\n} else {\n0\n}\n}",
+    );
+    let original = fs::read_to_string(&source).expect("read unformatted source");
+    let check = salic()
+        .args(["fmt", "--check"])
+        .arg(&source)
+        .output()
+        .expect("check formatting");
+    assert_eq!(check.status.code(), Some(1), "{}", output_text(&check));
+    assert_eq!(fs::read_to_string(&source).unwrap(), original);
+
+    let formatted = salic()
+        .arg("fmt")
+        .arg(&source)
+        .output()
+        .expect("format source");
+    assert_eq!(
+        formatted.status.code(),
+        Some(0),
+        "{}",
+        output_text(&formatted)
+    );
+    let expected =
+        "let main(): i32 = {\n  // keep { here\n  if true {\n    42\n  } else {\n    0\n  }\n}\n";
+    assert_eq!(fs::read_to_string(&source).unwrap(), expected);
+    let checked = salic()
+        .args(["fmt", "--check"])
+        .arg(&source)
+        .output()
+        .expect("recheck formatting");
+    assert_eq!(checked.status.code(), Some(0), "{}", output_text(&checked));
+
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"fmt-dep\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    let dependency = workspace.write("dep/src/lib.sc", "pub let answer(): i32 = {\n42\n}\n");
+    workspace.write(
+        "app/salicin.toml",
+        "[package]\n\
+         name = \"fmt-app\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2026\"\n\
+         \n\
+         [dependencies]\n\
+         dep = { path = \"../dep\" }\n",
+    );
+    let main = workspace.write("app/src/main.sc", "let main(): i32 = {\ndep.answer()\n}\n");
+    let module = workspace.write(
+        "app/src/local.sc",
+        "pub(package) let value(): i32 = {\n1\n}\n",
+    );
+    let package = salic()
+        .arg("fmt")
+        .arg(workspace.join("app"))
+        .output()
+        .expect("format package");
+    assert_eq!(package.status.code(), Some(0), "{}", output_text(&package));
+    assert!(fs::read_to_string(main)
+        .unwrap()
+        .contains("\n  dep.answer()\n"));
+    assert!(fs::read_to_string(module).unwrap().contains("\n  1\n"));
+    assert_eq!(
+        fs::read_to_string(dependency).unwrap(),
+        "pub let answer(): i32 = {\n42\n}\n",
+        "formatting a package must not rewrite path dependencies"
+    );
+}
+
+#[test]
+fn formatter_rejects_invalid_source_without_writing() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("invalid.sc", "let main( = {\n");
+    let output = salic()
+        .arg("fmt")
+        .arg(&source)
+        .output()
+        .expect("reject invalid source");
+    assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+    assert_eq!(fs::read_to_string(source).unwrap(), "let main( = {\n");
+}
+
+#[test]
+fn formatter_is_idempotent_across_the_passing_fixture_corpus() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pass");
+    let mut paths = fs::read_dir(directory)
+        .expect("read pass fixtures")
+        .map(|entry| entry.expect("read pass fixture entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sc"))
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
+        let formatted = format_source(&source)
+            .unwrap_or_else(|error| panic!("format '{}': {error}", path.display()));
+        let repeated = format_source(&formatted)
+            .unwrap_or_else(|error| panic!("reformat '{}': {error}", path.display()));
+        assert_eq!(repeated, formatted, "{} was not idempotent", path.display());
+    }
 }
 
 #[test]

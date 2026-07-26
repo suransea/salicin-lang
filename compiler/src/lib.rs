@@ -6,6 +6,7 @@ pub mod ast;
 mod cleanup;
 pub mod codegen;
 pub mod core;
+pub mod formatter;
 pub mod lexer;
 pub mod lockfile;
 pub mod manifest;

@@ -331,6 +331,18 @@ Repository gates cover:
 - classified documentation examples;
 - formatting and warning-free Clippy.
 
+## Tooling
+
+The conservative [source formatter](formatter.md) provides `salic fmt` and
+`salic fmt --check` for individual files and root packages. It preserves the
+logical token stream and every physical line boundary while normalizing
+two-space brace indentation, trailing whitespace, LF line endings, and the
+final newline. Comments and dependencies remain source-owned; the passing
+fixture corpus is idempotent under repeated formatting.
+
+Lossless byte spans, trivia ownership, editor diagnostics, and an LSP remain
+the active tooling boundary.
+
 The `examples/inventory` package is the current nontrivial library acceptance program. It combines
 modules, owning strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
 
