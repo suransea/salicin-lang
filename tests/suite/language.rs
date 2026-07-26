@@ -687,25 +687,21 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
 }
 
 #[test]
-fn compile_time_argument_diagnostics_name_binders_kinds_and_groups() {
+fn compile_time_argument_diagnostics_name_binders_sorts_and_groups() {
     for (name, expected) in [
         (
             "infer_unconstrained.sc",
-            vec!["argument `T`", "kind `type`", "for `make`"],
+            vec!["argument `T`", "sort `type`", "for `make`"],
         ),
         (
             "infer_unconstrained_constructor.sc",
-            vec![
-                "argument `F`",
-                "kind `(1 type parameter): type`",
-                "for `make`",
-            ],
+            vec!["argument `F`", "sort `(type): type`", "for `make`"],
         ),
         (
             "generic_nominal_argument_count.sc",
             vec![
                 "argument count mismatch in group 1",
-                "`T` of kind `type`",
+                "`T` of sort `type`",
                 "found 2",
             ],
         ),
@@ -713,7 +709,7 @@ fn compile_time_argument_diagnostics_name_binders_kinds_and_groups() {
             "type_constructor_unknown_label.sc",
             vec![
                 "argument label `Element`",
-                "expected one of `T` of kind `type`",
+                "expected one of `T` of sort `type`",
             ],
         ),
     ] {

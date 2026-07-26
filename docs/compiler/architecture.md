@@ -42,8 +42,8 @@ The implementation lives under `compiler/src`:
     handler-aware lowering.
   - `coalesce.rs` owns `??` and custom `Coalesce` protocol type probing and lowering.
   - `cleanup_plan.rs` adapts HIR into verified cleanup plans before emission.
-  - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
-    identities, and compile-parameter shape helpers.
+  - `compile_time.rs` encodes compiler-visible compile-time sort values, source effect identities,
+    the compatibility adapter for typed `StaticValue`s, and compile-parameter shape helpers.
   - `control.rs` lowers loops, `break`, and `continue`, including loop backedge flow checks.
   - `constructors.rs` lowers struct literals, struct and enum construction, field argument
     validation, and context-sensitive short enum variant resolution.
@@ -92,6 +92,8 @@ The implementation lives under `compiler/src`:
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
+  - `static_eval.rs` evaluates the pure static-expression subset through ordinary source function
+    definitions before dependent types are lowered to runtime layouts.
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
     infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
     automatic throws propagation return-boundary wrappers.
@@ -100,6 +102,11 @@ The implementation lives under `compiler/src`:
     source/nominal type probes used by inference and expression lowering.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
+
+`static_semantics.rs` defines phase-independent `StaticValue`, `Constraint`, projection-equation,
+and `Goal` IR. The current monomorphizer still has a compatibility encoding for some static values
+inside source `Type` nodes; all new static evaluation and trait-goal work crosses that encoding
+through explicit adapters rather than adding new marker conventions.
 
 The current `Analyzer` is still intentionally oversized. Its next split should preserve the same
 pipeline boundaries rather than carve by syntax shape:

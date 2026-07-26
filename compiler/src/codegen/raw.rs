@@ -1,5 +1,6 @@
 use crate::ast::{CallArg, Expr, PassMode};
 
+use super::compile_time::access_mutability;
 use super::flow::{LoanKind, LowerCtx};
 use super::hir::{
     AccessKind, HirArgument, HirExpr, HirExprKind, LayoutQueryKind, LocalCapability, ParamSig, Ty,
@@ -339,8 +340,9 @@ impl Analyzer {
                     return error_expr();
                 };
                 let mutable = match &argument.value {
-                    Expr::Name(value) if value == "shared" => false,
-                    Expr::Name(value) if value == "mut" => true,
+                    Expr::Name(value) if access_mutability(value).is_some() => {
+                        access_mutability(value).expect("access member was checked")
+                    }
                     _ => {
                         self.error("`raw_borrow` access argument must be `shared` or `mut`");
                         return error_expr();
@@ -470,8 +472,9 @@ impl Analyzer {
                     return error_expr();
                 };
                 let mutable = match &argument.value {
-                    Expr::Name(value) if value == "shared" => false,
-                    Expr::Name(value) if value == "mut" => true,
+                    Expr::Name(value) if access_mutability(value).is_some() => {
+                        access_mutability(value).expect("access member was checked")
+                    }
                     _ => {
                         self.error("`raw_slice` access argument must be `shared` or `mut`");
                         return error_expr();
@@ -656,8 +659,9 @@ impl Analyzer {
                     return error_expr();
                 };
                 let mutable = match &argument.value {
-                    Expr::Name(value) if value == "shared" => false,
-                    Expr::Name(value) if value == "mut" => true,
+                    Expr::Name(value) if access_mutability(value).is_some() => {
+                        access_mutability(value).expect("access member was checked")
+                    }
                     _ => {
                         self.error("`raw_slice_at` access argument must be `shared` or `mut`");
                         return error_expr();
@@ -804,9 +808,9 @@ impl Analyzer {
                         label,
                         value: Expr::Name(name),
                     }] if label.as_deref().is_none_or(|label| label == "A")
-                        && matches!(name.as_str(), "shared" | "mut") =>
+                        && access_mutability(name).is_some() =>
                     {
-                        Some(name == "mut")
+                        access_mutability(name)
                     }
                     _ => None,
                 };
@@ -828,16 +832,18 @@ impl Analyzer {
                     self.error("`Ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 };
-                if label.as_deref().is_some_and(|label| label != "A")
-                    || !matches!(access.as_str(), "shared" | "mut")
-                {
+                let Some(mutable) = access_mutability(access) else {
+                    self.error("`Ptr` access argument must be `shared` or `mut`");
+                    return error_expr();
+                };
+                if label.as_deref().is_some_and(|label| label != "A") {
                     self.error("`Ptr` access argument must be `shared` or `mut`");
                     return error_expr();
                 }
                 let Some(pointee) = self.explicit_raw_pointee("Ptr", pointee, context) else {
                     return error_expr();
                 };
-                (access == "mut", Some(pointee), *runtime)
+                (mutable, Some(pointee), *runtime)
             }
             _ => {
                 self.error(

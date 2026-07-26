@@ -2,7 +2,7 @@
 pub let Unsafe = effect {}
 
 /// Runs an action that requires the unsafe authority effect.
-pub let unsafe(E: effect, T: type)
+pub let unsafe(E: effects, T: type)
   (move action: (): T with(core.unsafe.Unsafe, E)): T with(E) = {
   core.unsafe.Unsafe.handle
     action {

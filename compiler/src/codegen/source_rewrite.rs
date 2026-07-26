@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendMember, Function, Item,
-    MatchArm, Param, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitMember, Type,
+    Binding, CallArg, CompileParam, EnumDef, Expr, ExtendMember, Function, Item, MatchArm, Param,
+    PassMode, Pattern, PatternFields, Program, Sort, Stmt, StructDef, TraitMember, Type,
     VariantFields,
 };
 
 use super::compile_time::{
-    describe_compile_param_kind, effect_identity_sources, effect_row_from_source,
-    ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER,
-    PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
+    describe_compile_sort, effect_identity_sources, effect_row_from_source, ACCESS_MUT_MARKER,
+    ACCESS_SHARED_MARKER, EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER, PARAMETER_MODIFIER_COPY_MARKER,
+    PARAMETER_MODIFIER_MOVE_MARKER,
 };
 
 pub(super) fn normalize_labeled_type_arguments<const N: usize>(
@@ -26,7 +26,7 @@ pub(super) fn normalize_labeled_type_arguments<const N: usize>(
                 Item::Trait(definition) => (&definition.name, &definition.compile_groups),
                 Item::TypeAlias(definition) => (&definition.name, &definition.compile_groups),
                 Item::TypeForm(definition) => (&definition.name, &definition.compile_groups),
-                Item::Function(_) | Item::Global(_) | Item::Domain(_) | Item::Extend(_) => {
+                Item::Function(_) | Item::Global(_) | Item::Sort(_) | Item::Extend(_) => {
                     return None;
                 }
             };
@@ -207,7 +207,7 @@ fn normalize_item_labeled_type_arguments(
             diagnostics,
         ),
         Item::TypeForm(_) => {}
-        Item::Domain(_) => {}
+        Item::Sort(_) => {}
     }
 }
 
@@ -311,7 +311,7 @@ fn normalize_type_labeled_arguments(
             };
             if parameters
                 .iter()
-                .any(|parameter| parameter.kind != CompileParamKind::Type)
+                .any(|parameter| parameter.kind != Sort::Type)
             {
                 diagnostics.push(format!(
                     "type constructor `{name}` has non-type compile-time parameters and cannot be applied in a type position with labels"
@@ -349,9 +349,9 @@ fn normalize_type_labeled_arguments(
                     }
                     (None, _) => {
                         diagnostics.push(format!(
-                            "missing compile-time argument `{}` of kind {} for `{name}`",
+                            "missing compile-time argument `{}` of sort {} for `{name}`",
                             parameter.name,
-                            describe_compile_param_kind(parameter.kind.clone())
+                            describe_compile_sort(parameter.kind.clone())
                         ));
                         valid = false;
                     }
@@ -364,9 +364,9 @@ fn normalize_type_labeled_arguments(
                             .iter()
                             .map(|parameter| {
                                 format!(
-                                    "`{}` of kind {}",
+                                    "`{}` of sort {}",
                                     parameter.name,
-                                    describe_compile_param_kind(parameter.kind.clone())
+                                    describe_compile_sort(parameter.kind.clone())
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -835,7 +835,7 @@ fn expand_item_aliases(
                 expand_function_aliases(operation, aliases, diagnostics);
             }
         }
-        Item::Domain(_) => {}
+        Item::Sort(_) => {}
         Item::TypeForm(_) => {}
         Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
     }
@@ -1208,7 +1208,7 @@ pub(super) fn substitute_struct_types(
 pub(super) fn erase_region_parameters(program: &mut Program) {
     fn erase_groups(groups: &mut Vec<Vec<CompileParam>>) {
         for group in &mut *groups {
-            group.retain(|parameter| parameter.kind != CompileParamKind::Region);
+            group.retain(|parameter| parameter.kind != Sort::Region);
         }
         groups.retain(|group| !group.is_empty());
     }
@@ -1218,7 +1218,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
             .compile_groups
             .iter()
             .flatten()
-            .filter(|parameter| parameter.kind == CompileParamKind::Region)
+            .filter(|parameter| parameter.kind == Sort::Region)
             .enumerate()
             .map(|(index, parameter)| {
                 (
@@ -1263,7 +1263,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
             // Alias and GAT region parameters remain part of their
-            // compile-time constructor kind.
+            // compile-time constructor sort.
             Item::TypeAlias(_) => {}
             Item::TypeForm(definition) => erase_groups(&mut definition.compile_groups),
             Item::Effect(definition) => {
@@ -1272,7 +1272,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
                     erase_function(operation);
                 }
             }
-            Item::Domain(_) => {}
+            Item::Sort(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
             Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
             Item::Trait(definition) => {
@@ -2269,6 +2269,9 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
                 value: match length {
                     crate::ast::USizeConst::Literal(value) => Expr::Integer(u128::from(*value)),
                     crate::ast::USizeConst::Parameter(name) => Expr::Name(name.clone()),
+                    crate::ast::USizeConst::Expression(expression) => {
+                        source_static_expression(expression)
+                    }
                 },
             }],
         ),
@@ -2290,6 +2293,35 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
                 .map(|argument| CallArg {
                     label: argument.label.clone(),
                     value: source_type_expression(&argument.ty),
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn source_static_expression(expression: &crate::ast::StaticExpr) -> Expr {
+    match expression {
+        crate::ast::StaticExpr::USize(value) => Expr::Integer(u128::from(*value)),
+        crate::ast::StaticExpr::Bool(value) => Expr::Bool(*value),
+        crate::ast::StaticExpr::Name(name) => Expr::Name(name.clone()),
+        crate::ast::StaticExpr::Unary(operator, operand) => {
+            Expr::Unary(*operator, Box::new(source_static_expression(operand)))
+        }
+        crate::ast::StaticExpr::Binary(left, operator, right) => Expr::Binary(
+            Box::new(source_static_expression(left)),
+            *operator,
+            Box::new(source_static_expression(right)),
+        ),
+        crate::ast::StaticExpr::Call {
+            function,
+            arguments,
+        } => Expr::Call(
+            Box::new(Expr::Name(function.clone())),
+            arguments
+                .iter()
+                .map(|argument| crate::ast::CallArg {
+                    label: None,
+                    value: source_static_expression(argument),
                 })
                 .collect(),
         ),
@@ -2344,10 +2376,16 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
             element, length, ..
         } => {
             substitute_type_parameters(element, substitutions);
-            if let crate::ast::USizeConst::Parameter(name) = length {
-                if let Some(Type::CompileUSize(value)) = substitutions.get(name) {
-                    *length = crate::ast::USizeConst::Literal(*value);
+            match length {
+                crate::ast::USizeConst::Parameter(name) => {
+                    if let Some(Type::CompileUSize(value)) = substitutions.get(name) {
+                        *length = crate::ast::USizeConst::Literal(*value);
+                    }
                 }
+                crate::ast::USizeConst::Expression(expression) => {
+                    substitute_static_expression(expression, substitutions)
+                }
+                crate::ast::USizeConst::Literal(_) => {}
             }
         }
         Type::Function {
@@ -2426,6 +2464,32 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}
+    }
+}
+
+fn substitute_static_expression(
+    expression: &mut crate::ast::StaticExpr,
+    substitutions: &HashMap<String, Type>,
+) {
+    match expression {
+        crate::ast::StaticExpr::Name(name) => {
+            if let Some(Type::CompileUSize(value)) = substitutions.get(name) {
+                *expression = crate::ast::StaticExpr::USize(*value);
+            }
+        }
+        crate::ast::StaticExpr::Unary(_, operand) => {
+            substitute_static_expression(operand, substitutions)
+        }
+        crate::ast::StaticExpr::Binary(left, _, right) => {
+            substitute_static_expression(left, substitutions);
+            substitute_static_expression(right, substitutions);
+        }
+        crate::ast::StaticExpr::Call { arguments, .. } => {
+            for argument in arguments {
+                substitute_static_expression(argument, substitutions);
+            }
+        }
+        crate::ast::StaticExpr::USize(_) | crate::ast::StaticExpr::Bool(_) => {}
     }
 }
 
@@ -3195,7 +3259,7 @@ pub(super) fn normalize_source_call_groups(program: &mut Program) {
             }
             Item::Struct(_)
             | Item::Enum(_)
-            | Item::Domain(_)
+            | Item::Sort(_)
             | Item::TypeForm(_)
             | Item::TypeAlias(_) => {}
         }

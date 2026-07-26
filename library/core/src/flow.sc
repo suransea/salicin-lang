@@ -6,7 +6,7 @@ pub let Chain = trait {
   let Rebind(Value: type): type
 
   /// Applies `transform` to the successful payload or propagates the residual case.
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (Item): U with(E)): Rebind(U) with(E)
 }
@@ -17,7 +17,7 @@ pub let Coalesce = trait {
   let Item: type
 
   /// Returns the successful payload or evaluates `fallback`.
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): Item with(E)): Item with(E)
 }

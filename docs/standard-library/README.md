@@ -28,7 +28,7 @@ library/
     effect.sc
     async.sc
     unsafe.sc
-    domains.sc
+    sorts.sc
     borrow.sc
     memory.sc
     control.sc
@@ -58,7 +58,7 @@ let Result = std.Result
 
 Operator traits are aliased from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, generic
 handler contracts from `std.effect`, typed failure from `std.error`, asynchronous computation from
-`std.async`, unsafe authority from `std.unsafe`, compile-time domains from `std.domains`,
+`std.async`, unsafe authority from `std.unsafe`, compile-time sorts from `std.sorts`,
 compiler-lowered control contracts from `std.control`, algebra protocols from
 `std.algebra`, higher-kinded functional protocols from `std.functional`, iteration protocols from
 `std.iter`, and owning containers from `std.boxed` and `std.vec`. The underlying implementation is
@@ -87,8 +87,8 @@ named. Merely writing the corresponding operator token does not require importin
 target `core.control`. These contextual spellings do not inject module exports as ordinary
 unqualified names.
 Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
-such as `E: effect` remain ordinary parameter names.
-The `effect` compile-time domain, closed `access` type, and parameter modifier functions use
+such as `E: effects` remain ordinary parameter names.
+The `effect` identity sort, `effects` row sort, finite `access` sort, and parameter modifier functions use
 contextual names such as `pure`, `shared`, `mut`, `copy`, and `move` in parameter positions.
 `Semigroup` and `Monoid` require aliases from `std.algebra` when named.
 `Functor`, `Applicative`, and `Monad` require aliases from `std.functional` when named.

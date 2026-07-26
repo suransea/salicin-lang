@@ -11,9 +11,9 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use crate::ast::{
-    AssociatedKind, CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function,
-    FunctionEffects, Item, ItemOrigin, PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef,
-    VariantDef, VariantFields, Visibility,
+    AssociatedKind, CompileParam, CompileParamDefault, EnumDef, Function, FunctionEffects, Item,
+    ItemOrigin, PassMode, Program, Sort, TraitDef, TraitMember, Type, TypeFormDef, VariantDef,
+    VariantFields, Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -37,7 +37,7 @@ const EDITION_2026_OPS_INDEX: &str = include_str!("../../library/core/src/ops/in
 const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
 const EDITION_2026_UNSAFE: &str = include_str!("../../library/core/src/unsafe.sc");
 const EDITION_2026_ASYNC: &str = include_str!("../../library/core/src/async.sc");
-const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
+const EDITION_2026_SORTS: &str = include_str!("../../library/core/src/sorts.sc");
 const EDITION_2026_PASSING: &str = include_str!("../../library/core/src/passing.sc");
 const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
@@ -64,7 +64,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("effect", EDITION_2026_EFFECT),
     ("unsafe", EDITION_2026_UNSAFE),
     ("async", EDITION_2026_ASYNC),
-    ("domains", EDITION_2026_DOMAINS),
+    ("sorts", EDITION_2026_SORTS),
     ("passing", EDITION_2026_PASSING),
     ("borrow", EDITION_2026_BORROW),
     ("control", EDITION_2026_CONTROL),
@@ -124,14 +124,14 @@ pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
 
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (Item): U with(E)): Rebind(U) with(E)
 }
 pub let Coalesce = trait {
   let Item: type
 
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): Item with(E)): Item with(E)
 }
@@ -210,11 +210,14 @@ pub enum LangItemKind {
     UnsafeEffect,
     ThrowsEffect,
     AsyncEffect,
-    TypeDomain,
-    RegionDomain,
-    AccessType,
-    EffectDomain,
-    ParametersDomain,
+    TypeSort,
+    RegionSort,
+    AccessSort,
+    EffectSort,
+    EffectsSort,
+    ParametersSort,
+    StringSort,
+    AbiSort,
     CopyParameters,
     MoveParameters,
     BorrowTypeForm,
@@ -253,7 +256,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 100] = [
+    const ALL: [Self; 103] = [
         Self::Builtin,
         Self::Foreign,
         Self::Test,
@@ -314,11 +317,14 @@ impl LangItemKind {
         Self::UnsafeEffect,
         Self::ThrowsEffect,
         Self::AsyncEffect,
-        Self::TypeDomain,
-        Self::RegionDomain,
-        Self::AccessType,
-        Self::EffectDomain,
-        Self::ParametersDomain,
+        Self::TypeSort,
+        Self::RegionSort,
+        Self::AccessSort,
+        Self::EffectSort,
+        Self::EffectsSort,
+        Self::ParametersSort,
+        Self::StringSort,
+        Self::AbiSort,
         Self::CopyParameters,
         Self::MoveParameters,
         Self::BorrowTypeForm,
@@ -418,11 +424,14 @@ impl LangItemKind {
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
             Self::AsyncEffect => "Async",
-            Self::TypeDomain => "type",
-            Self::RegionDomain => "region",
-            Self::AccessType => "access",
-            Self::EffectDomain => "effect",
-            Self::ParametersDomain => "parameters",
+            Self::TypeSort => "type",
+            Self::RegionSort => "region",
+            Self::AccessSort => "access",
+            Self::EffectSort => "effect",
+            Self::EffectsSort => "effects",
+            Self::ParametersSort => "parameters",
+            Self::StringSort => "string",
+            Self::AbiSort => "abi",
             Self::CopyParameters => "copy",
             Self::MoveParameters => "move",
             Self::BorrowTypeForm => "borrow",
@@ -472,10 +481,15 @@ impl LangItemKind {
             | Self::BreakEffect
             | Self::ContinueEffect
             | Self::ReturnEffect => "effect",
-            Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
-                "domain"
-            }
-            Self::AccessType | Self::Bool => "enum",
+            Self::TypeSort
+            | Self::RegionSort
+            | Self::AccessSort
+            | Self::EffectSort
+            | Self::EffectsSort
+            | Self::ParametersSort
+            | Self::StringSort
+            | Self::AbiSort => "sort",
+            Self::Bool => "enum",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::SliceTypeForm
@@ -622,11 +636,14 @@ impl LangItemKind {
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::AsyncEffect
-            | Self::TypeDomain
-            | Self::RegionDomain
-            | Self::AccessType
-            | Self::EffectDomain
-            | Self::ParametersDomain
+            | Self::TypeSort
+            | Self::RegionSort
+            | Self::AccessSort
+            | Self::EffectSort
+            | Self::EffectsSort
+            | Self::ParametersSort
+            | Self::StringSort
+            | Self::AbiSort
             | Self::CopyParameters
             | Self::MoveParameters
             | Self::BorrowTypeForm
@@ -780,11 +797,14 @@ pub struct LangItems {
     unsafe_effect: LangItem,
     throws_effect: LangItem,
     async_effect: LangItem,
-    type_domain: LangItem,
-    region_domain: LangItem,
-    access_type: LangItem,
-    effect_domain: LangItem,
-    parameters_domain: LangItem,
+    type_sort: LangItem,
+    region_sort: LangItem,
+    access_sort: LangItem,
+    effect_sort: LangItem,
+    effects_sort: LangItem,
+    parameters_sort: LangItem,
+    string_sort: LangItem,
+    abi_sort: LangItem,
     borrow_type_form: LangItem,
     borrow_value_form: LangItem,
     array_type_form: LangItem,
@@ -982,20 +1002,23 @@ impl LangItems {
     pub const fn async_effect(&self) -> &LangItem {
         &self.async_effect
     }
-    pub const fn type_domain(&self) -> &LangItem {
-        &self.type_domain
+    pub const fn type_sort(&self) -> &LangItem {
+        &self.type_sort
     }
-    pub const fn region_domain(&self) -> &LangItem {
-        &self.region_domain
+    pub const fn region_sort(&self) -> &LangItem {
+        &self.region_sort
     }
-    pub const fn access_type(&self) -> &LangItem {
-        &self.access_type
+    pub const fn access_sort(&self) -> &LangItem {
+        &self.access_sort
     }
-    pub const fn effect_domain(&self) -> &LangItem {
-        &self.effect_domain
+    pub const fn effect_sort(&self) -> &LangItem {
+        &self.effect_sort
     }
-    pub const fn parameters_domain(&self) -> &LangItem {
-        &self.parameters_domain
+    pub const fn effects_sort(&self) -> &LangItem {
+        &self.effects_sort
+    }
+    pub const fn parameters_sort(&self) -> &LangItem {
+        &self.parameters_sort
     }
     pub const fn borrow_type_form(&self) -> &LangItem {
         &self.borrow_type_form
@@ -1134,11 +1157,14 @@ impl LangItems {
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::AsyncEffect => &self.async_effect,
-            LangItemKind::TypeDomain => &self.type_domain,
-            LangItemKind::RegionDomain => &self.region_domain,
-            LangItemKind::AccessType => &self.access_type,
-            LangItemKind::EffectDomain => &self.effect_domain,
-            LangItemKind::ParametersDomain => &self.parameters_domain,
+            LangItemKind::TypeSort => &self.type_sort,
+            LangItemKind::RegionSort => &self.region_sort,
+            LangItemKind::AccessSort => &self.access_sort,
+            LangItemKind::EffectSort => &self.effect_sort,
+            LangItemKind::EffectsSort => &self.effects_sort,
+            LangItemKind::ParametersSort => &self.parameters_sort,
+            LangItemKind::StringSort => &self.string_sort,
+            LangItemKind::AbiSort => &self.abi_sort,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::ArrayTypeForm => &self.array_type_form,
@@ -1209,7 +1235,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\nlet foreign(): Never = builtin()\nlet test(move body: (): bool): () = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\nlet foreign(ABI: abi): Never = builtin()\nlet test(name: string)(move body: (): bool): () = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1345,11 +1371,14 @@ impl CoreBundle {
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
             &mut lang_items.async_effect,
-            &mut lang_items.type_domain,
-            &mut lang_items.region_domain,
-            &mut lang_items.access_type,
-            &mut lang_items.effect_domain,
-            &mut lang_items.parameters_domain,
+            &mut lang_items.type_sort,
+            &mut lang_items.region_sort,
+            &mut lang_items.access_sort,
+            &mut lang_items.effect_sort,
+            &mut lang_items.effects_sort,
+            &mut lang_items.parameters_sort,
+            &mut lang_items.string_sort,
+            &mut lang_items.abi_sort,
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
             &mut lang_items.array_type_form,
@@ -1485,10 +1514,10 @@ pub const fn embedded_effects_source(edition: Edition) -> &'static str {
     }
 }
 
-/// Return the compile-time domain source compiled into this compiler.
-pub const fn embedded_domains_source(edition: Edition) -> &'static str {
+/// Return the compile-time sort source compiled into this compiler.
+pub const fn embedded_sorts_source(edition: Edition) -> &'static str {
     match edition {
-        Edition::Edition2026 => EDITION_2026_DOMAINS,
+        Edition::Edition2026 => EDITION_2026_SORTS,
     }
 }
 
@@ -1727,11 +1756,14 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
         async_effect: item(LangItemKind::AsyncEffect),
-        type_domain: item(LangItemKind::TypeDomain),
-        region_domain: item(LangItemKind::RegionDomain),
-        access_type: item(LangItemKind::AccessType),
-        effect_domain: item(LangItemKind::EffectDomain),
-        parameters_domain: item(LangItemKind::ParametersDomain),
+        type_sort: item(LangItemKind::TypeSort),
+        region_sort: item(LangItemKind::RegionSort),
+        access_sort: item(LangItemKind::AccessSort),
+        effect_sort: item(LangItemKind::EffectSort),
+        effects_sort: item(LangItemKind::EffectsSort),
+        parameters_sort: item(LangItemKind::ParametersSort),
+        string_sort: item(LangItemKind::StringSort),
+        abi_sort: item(LangItemKind::AbiSort),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
         borrow_value_form: item(LangItemKind::BorrowValueForm),
         array_type_form: item(LangItemKind::ArrayTypeForm),
@@ -1902,7 +1934,7 @@ fn validate_builtin_boundaries(
 
 fn validate_defer_support(function: &Function, diagnostics: &mut Vec<String>) {
     let effects = effect_parameter("E");
-    let valid = function.compile_groups == vec![vec![compile_effect_parameter("E")]]
+    let valid = function.compile_groups == vec![vec![compile_effects_parameter("E")]]
         && single_moved_callable(function, "action", Type::Unit, effects.clone())
         && function.return_type == Some(Type::Unit)
         && function.effects == effects
@@ -1912,7 +1944,7 @@ fn validate_defer_support(function: &Function, diagnostics: &mut Vec<String>) {
         && function.body.is_none();
     if !valid {
         diagnostics.push(
-            "compiler-owned support function `defer` must have shape `pub let defer(E: effect)(move action: (): () with(E)): () with(E) = builtin()`"
+            "compiler-owned support function `defer` must have shape `pub let defer(E: effects)(move action: (): () with(E)): () with(E) = builtin()`"
                 .to_owned(),
         );
     }
@@ -1925,7 +1957,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Struct(definition) => Some(&definition.name),
         Item::Enum(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
-        Item::Domain(definition) => Some(&definition.name),
+        Item::Sort(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
         Item::TypeForm(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
@@ -1954,7 +1986,7 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Struct(_) => "struct",
         Item::Enum(_) => "enum",
         Item::Effect(_) => "effect",
-        Item::Domain(_) => "domain",
+        Item::Sort(_) => "sort",
         Item::TypeAlias(_) => "type alias",
         Item::TypeForm(_) => "type form",
         Item::Trait(_) => "trait",
@@ -2001,7 +2033,7 @@ fn item_has_expected_kind(kind: LangItemKind, item: &Item) -> bool {
         "enum" => matches!(item, Item::Enum(_)),
         "struct" => matches!(item, Item::Struct(_)),
         "effect" => matches!(item, Item::Effect(_)),
-        "domain" => matches!(item, Item::Domain(_)),
+        "sort" => matches!(item, Item::Sort(_)),
         "type form" => matches!(item, Item::TypeForm(_)),
         "function" => matches!(item, Item::Function(_)),
         "trait" => matches!(item, Item::Trait(_)),
@@ -2054,23 +2086,20 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             Item::Effect(definition),
         ) => validate_control_effect(kind, definition, diagnostics),
         (
-            LangItemKind::TypeDomain
-            | LangItemKind::RegionDomain
-            | LangItemKind::EffectDomain
-            | LangItemKind::ParametersDomain,
-            Item::Domain(definition),
-        ) => validate_domain(kind, definition, diagnostics),
+            LangItemKind::TypeSort
+            | LangItemKind::RegionSort
+            | LangItemKind::AccessSort
+            | LangItemKind::EffectSort
+            | LangItemKind::EffectsSort
+            | LangItemKind::ParametersSort
+            | LangItemKind::StringSort
+            | LangItemKind::AbiSort,
+            Item::Sort(definition),
+        ) => validate_sort(kind, definition, diagnostics),
         (
             kind @ (LangItemKind::CopyParameters | LangItemKind::MoveParameters),
             Item::Function(function),
         ) => validate_parameter_modifier(kind.source_name(), function, diagnostics),
-        (LangItemKind::AccessType, Item::Enum(definition)) => validate_closed_enum(
-            "access",
-            &["shared", "mut"],
-            "pub let access = enum { shared, mut }",
-            definition,
-            diagnostics,
-        ),
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
@@ -2199,25 +2228,39 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
     }
 }
 
-fn validate_domain(
+fn validate_sort(
     kind: LangItemKind,
-    definition: &crate::ast::DomainDef,
+    definition: &crate::ast::SortDef,
     diagnostics: &mut Vec<String>,
 ) {
     let valid = match kind {
-        LangItemKind::TypeDomain
-        | LangItemKind::RegionDomain
-        | LangItemKind::EffectDomain
-        | LangItemKind::ParametersDomain => definition.members.is_none(),
-        _ => unreachable!("validate_domain called for non-domain lang item"),
+        LangItemKind::TypeSort
+        | LangItemKind::RegionSort
+        | LangItemKind::EffectSort
+        | LangItemKind::EffectsSort
+        | LangItemKind::ParametersSort
+        | LangItemKind::StringSort => definition.members.is_none(),
+        LangItemKind::AbiSort => matches!(
+            definition.members.as_deref(),
+            Some([c]) if c == "c"
+        ),
+        LangItemKind::AccessSort => matches!(
+            definition.members.as_deref(),
+            Some([shared, mutable]) if shared == "shared" && mutable == "mut"
+        ),
+        _ => unreachable!("validate_sort called for non-sort lang item"),
     };
     if !valid {
         let shape = match kind {
-            LangItemKind::TypeDomain => "pub let type: domain",
-            LangItemKind::RegionDomain => "pub let region: domain",
-            LangItemKind::EffectDomain => "pub let effect: domain",
-            LangItemKind::ParametersDomain => "pub let parameters: domain",
-            _ => unreachable!("validate_domain called for non-domain lang item"),
+            LangItemKind::TypeSort => "pub let type: sort",
+            LangItemKind::RegionSort => "pub let region: sort",
+            LangItemKind::EffectSort => "pub let effect: sort",
+            LangItemKind::EffectsSort => "pub let effects: sort",
+            LangItemKind::ParametersSort => "pub let parameters: sort",
+            LangItemKind::StringSort => "pub let string: sort",
+            LangItemKind::AbiSort => "pub let abi = sort { c }",
+            LangItemKind::AccessSort => "pub let access = sort { shared, mut }",
+            _ => unreachable!("validate_sort called for non-sort lang item"),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
@@ -2226,7 +2269,7 @@ fn validate_domain(
 fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mut Vec<String>) {
     let valid = function.compile_groups.len() == 1
         && function.compile_groups[0].len() == 1
-        && function.compile_groups[0][0].kind == CompileParamKind::Parameters
+        && function.compile_groups[0][0].kind == Sort::Parameters
         && function.groups.is_empty()
         && matches!(
             function.return_type.as_ref(),
@@ -2251,12 +2294,22 @@ fn validate_syntax_contract(
 ) {
     let valid = match kind {
         LangItemKind::Foreign => {
-            function.compile_groups.is_empty()
-                && function.groups == vec![Vec::new()]
+            function.compile_groups
+                == vec![vec![CompileParam {
+                    name: "ABI".to_owned(),
+                    kind: Sort::Named("abi".to_owned()),
+                    default: None,
+                }]]
+                && function.groups.is_empty()
                 && function.return_type == Some(named_type("Never"))
         }
         LangItemKind::Test => {
-            function.compile_groups.is_empty()
+            function.compile_groups
+                == vec![vec![CompileParam {
+                    name: "name".to_owned(),
+                    kind: Sort::String,
+                    default: None,
+                }]]
                 && single_moved_callable(function, "body", Type::Bool, FunctionEffects::default())
                 && function.return_type == Some(Type::Unit)
         }
@@ -2268,8 +2321,8 @@ fn validate_syntax_contract(
         && function.body.is_none();
     if !valid {
         let shape = match kind {
-            LangItemKind::Foreign => "let foreign(): Never = builtin()",
-            LangItemKind::Test => "let test(move body: (): bool): () = builtin()",
+            LangItemKind::Foreign => "let foreign(ABI: abi): Never = builtin()",
+            LangItemKind::Test => "let test(name: string)(move body: (): bool): () = builtin()",
             _ => unreachable!(),
         };
         diagnostics.push(format!(
@@ -2635,7 +2688,7 @@ fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type) (self) (transform: (Item): U with(E)): Rebind(U) with(E)`"
+            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effects, U: type) (self) (transform: (Item): U with(E)): Rebind(U) with(E)`"
                 .to_owned(),
         );
     }
@@ -2650,7 +2703,8 @@ fn valid_chain_method(function: &Function) -> bool {
     };
     let effects = effect_parameter("E");
     function.name == "chain"
-        && function.compile_groups == vec![vec![compile_effect_parameter("E"), type_parameter("U")]]
+        && function.compile_groups
+            == vec![vec![compile_effects_parameter("E"), type_parameter("U")]]
         && function.return_type == Some(Type::Named("Rebind".to_owned(), vec![named_type("U")]))
         && function.effects == effects
         && function.where_predicates.is_empty()
@@ -2682,7 +2736,7 @@ fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect) (self) (fallback: (): Item with(E)): Item with(E)`"
+            "lang item `Coalesce` must declare `Item` and `coalesce(E: effects) (self) (fallback: (): Item with(E)): Item with(E)`"
                 .to_owned(),
         );
     }
@@ -2697,7 +2751,7 @@ fn valid_coalesce_method(function: &Function) -> bool {
     };
     let effects = effect_parameter("E");
     function.name == "coalesce"
-        && function.compile_groups == vec![vec![compile_effect_parameter("E")]]
+        && function.compile_groups == vec![vec![compile_effects_parameter("E")]]
         && function.return_type == Some(named_type("Item"))
         && function.effects == effects
         && function.where_predicates.is_empty()
@@ -3012,7 +3066,7 @@ fn valid_do(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("T"),
@@ -3039,7 +3093,7 @@ fn valid_do_while(function: &Function) -> bool {
     function.compile_groups
         == vec![vec![CompileParam {
             name: "E".to_owned(),
-            kind: CompileParamKind::Effect,
+            kind: Sort::Effects,
             default: None,
         }]]
         && moved_callable_parameter(
@@ -3076,7 +3130,7 @@ fn valid_try(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "F".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("T"),
@@ -3116,7 +3170,7 @@ fn valid_unsafe(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("T"),
@@ -3135,7 +3189,7 @@ fn valid_loop(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("T"),
@@ -3167,7 +3221,7 @@ fn valid_while(function: &Function) -> bool {
     function.compile_groups
         == vec![vec![CompileParam {
             name: "E".to_owned(),
-            kind: CompileParamKind::Effect,
+            kind: Sort::Effects,
             default: None,
         }]]
         && moved_callable_parameter(condition, "condition", Type::Bool, effect_parameter("E"))
@@ -3197,7 +3251,7 @@ fn valid_if(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("T"),
@@ -3228,12 +3282,12 @@ fn valid_match(function: &Function) -> bool {
             type_parameter("Output"),
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             CompileParam {
                 name: "Cases".to_owned(),
-                kind: CompileParamKind::ParameterPack,
+                kind: Sort::ParameterPack,
                 default: None,
             },
         ]]
@@ -3286,7 +3340,7 @@ fn valid_for(function: &Function) -> bool {
         == vec![vec![
             CompileParam {
                 name: "E".to_owned(),
-                kind: CompileParamKind::Effect,
+                kind: Sort::Effects,
                 default: None,
             },
             type_parameter("Iterable"),
@@ -3372,7 +3426,7 @@ fn moved_callable_parameter(
 fn type_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::Type,
+        kind: Sort::Type,
         default: None,
     }
 }
@@ -3380,7 +3434,7 @@ fn type_parameter(name: &str) -> CompileParam {
 fn usize_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::USize,
+        kind: Sort::USize,
         default: None,
     }
 }
@@ -3388,7 +3442,7 @@ fn usize_parameter(name: &str) -> CompileParam {
 fn access_parameter(name: &str, default: Option<&str>) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::Named("access".to_owned()),
+        kind: Sort::Named("access".to_owned()),
         default: default.map(|value| CompileParamDefault::Name(value.to_owned())),
     }
 }
@@ -3396,7 +3450,7 @@ fn access_parameter(name: &str, default: Option<&str>) -> CompileParam {
 fn region_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::Region,
+        kind: Sort::Region,
         default: None,
     }
 }
@@ -3453,13 +3507,12 @@ fn region_borrow_type(mutable: bool, region: &str, pointee: Type) -> Type {
 }
 
 fn trait_has_default_self(definition: &TraitDef) -> bool {
-    definition.self_parameter.name == "Self"
-        && definition.self_parameter.kind == CompileParamKind::Type
+    definition.self_parameter.name == "Self" && definition.self_parameter.kind == Sort::Type
 }
 
 fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     let valid = definition.self_parameter.name == "Self"
-        && definition.self_parameter.kind == CompileParamKind::Effect
+        && definition.self_parameter.kind == Sort::Effect
         && definition.compile_groups.is_empty()
         && definition.where_predicates.is_empty()
         && matches!(
@@ -3477,7 +3530,7 @@ fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): parameters; let handle(Value: type, Answer: type, Rest: effect) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
+            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): parameters; let handle(Value: type, Answer: type, Rest: effects) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
                 .to_owned(),
         );
     }
@@ -3499,7 +3552,7 @@ fn valid_handle_method(function: &Function) -> bool {
             == vec![vec![
                 type_parameter("Value"),
                 type_parameter("Answer"),
-                compile_effect_parameter("Rest"),
+                compile_effects_parameter("Rest"),
             ]]
         && function.return_type == Some(named_type("Answer"))
         && function.effects == effect_parameter("Rest")
@@ -3520,10 +3573,10 @@ fn valid_handle_method(function: &Function) -> bool {
         && action.ty == function_type(vec![Vec::new()], named_type("Value"), action_effects)
 }
 
-fn compile_effect_parameter(name: &str) -> CompileParam {
+fn compile_effects_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::Effect,
+        kind: Sort::Effects,
         default: None,
     }
 }
@@ -3726,7 +3779,7 @@ fn validate_future(definition: &TraitDef, diagnostics: &mut Vec<String>) {
             && associated_types.is_empty()
     );
     let valid = trait_has_default_self(definition)
-        && definition.compile_groups == vec![vec![compile_effect_parameter("E")]]
+        && definition.compile_groups == vec![vec![compile_effects_parameter("E")]]
         && valid_supertrait
         && matches!(
             definition.members.as_slice(),
@@ -3759,7 +3812,7 @@ fn valid_future_poll(function: &Function) -> bool {
         && function.compile_groups
             == vec![vec![CompileParam {
                 name: "R".to_owned(),
-                kind: CompileParamKind::Region,
+                kind: Sort::Region,
                 default: None,
             }]]
         && receiver.name == "self"
@@ -3784,7 +3837,7 @@ fn validate_executor(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                     && function.body.is_none()
                     && function.compile_groups
                         == vec![vec![
-                            compile_effect_parameter("E"),
+                            compile_effects_parameter("E"),
                             type_parameter("F"),
                             type_parameter("T"),
                         ]]
@@ -3813,7 +3866,7 @@ fn validate_executor(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Executor` must declare `run(E: effect, F: type, T: type)` with `F: Future(E, Output = T)`"
+            "lang item `Executor` must declare `run(E: effects, F: type, T: type)` with `F: Future(E, Output = T)`"
                 .to_owned(),
         );
     }
@@ -3832,7 +3885,7 @@ fn validate_async_function(
             LangItemKind::AsyncFunction => {
                 definition.compile_groups
                     == vec![vec![
-                        compile_effect_parameter("E"),
+                        compile_effects_parameter("E"),
                         type_parameter("F"),
                         type_parameter("T"),
                     ]]
@@ -3850,7 +3903,7 @@ fn validate_async_function(
             LangItemKind::AwaitFunction => {
                 definition.compile_groups
                     == vec![vec![
-                        compile_effect_parameter("E"),
+                        compile_effects_parameter("E"),
                         type_parameter("F"),
                         type_parameter("T"),
                     ]]
@@ -4157,7 +4210,7 @@ pub let Index(Key: type) = trait {
             ("effect", EDITION_2026_EFFECT),
             ("unsafe", EDITION_2026_UNSAFE),
             ("async", EDITION_2026_ASYNC),
-            ("domains", EDITION_2026_DOMAINS),
+            ("sorts", EDITION_2026_SORTS),
             ("passing", EDITION_2026_PASSING),
             ("borrow", EDITION_2026_BORROW),
             ("control", EDITION_2026_CONTROL),
@@ -4256,16 +4309,19 @@ pub let Index(Key: type) = trait {
                 LangItemKind::UnsafeEffect => "core::unsafe::Unsafe".to_owned(),
                 LangItemKind::ThrowsEffect => "core::error::Throws".to_owned(),
                 LangItemKind::AsyncEffect => "core::async::Async".to_owned(),
-                LangItemKind::TypeDomain
-                | LangItemKind::RegionDomain
-                | LangItemKind::EffectDomain
-                | LangItemKind::ParametersDomain => {
-                    format!("core::domains::{}", kind.source_name())
+                LangItemKind::TypeSort
+                | LangItemKind::RegionSort
+                | LangItemKind::EffectSort
+                | LangItemKind::EffectsSort
+                | LangItemKind::ParametersSort
+                | LangItemKind::StringSort
+                | LangItemKind::AbiSort => {
+                    format!("core::sorts::{}", kind.source_name())
                 }
                 LangItemKind::CopyParameters | LangItemKind::MoveParameters => {
                     format!("core::passing::{}", kind.source_name())
                 }
-                LangItemKind::AccessType => {
+                LangItemKind::AccessSort => {
                     format!("core::borrow::{}", kind.source_name())
                 }
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => {
@@ -4371,12 +4427,15 @@ pub let Index(Key: type) = trait {
                 LangItemKind::UnsafeEffect => vec!["unsafe"],
                 LangItemKind::ThrowsEffect => vec!["error"],
                 LangItemKind::AsyncEffect => vec!["async"],
-                LangItemKind::TypeDomain
-                | LangItemKind::RegionDomain
-                | LangItemKind::EffectDomain
-                | LangItemKind::ParametersDomain => vec!["domains"],
+                LangItemKind::TypeSort
+                | LangItemKind::RegionSort
+                | LangItemKind::EffectSort
+                | LangItemKind::EffectsSort
+                | LangItemKind::ParametersSort
+                | LangItemKind::StringSort
+                | LangItemKind::AbiSort => vec!["sorts"],
                 LangItemKind::CopyParameters | LangItemKind::MoveParameters => vec!["passing"],
-                LangItemKind::AccessType => vec!["borrow"],
+                LangItemKind::AccessSort => vec!["borrow"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
                 | LangItemKind::SliceTypeForm
@@ -4460,15 +4519,29 @@ pub let Index(Key: type) = trait {
             (
                 "foreign",
                 EDITION_2026_LIB.replace(
+                    "let foreign(ABI: abi): Never = builtin()",
                     "let foreign(): Never = builtin()",
-                    "let foreign(): () = builtin()",
+                ),
+            ),
+            (
+                "foreign",
+                EDITION_2026_LIB.replace(
+                    "let foreign(ABI: abi): Never = builtin()",
+                    "let foreign(ABI: abi): () = builtin()",
                 ),
             ),
             (
                 "test",
                 EDITION_2026_LIB.replace(
+                    "let test(name: string)(move body: (): bool): () = builtin()",
                     "let test(move body: (): bool): () = builtin()",
-                    "let test(move body: (): i32): () = builtin()",
+                ),
+            ),
+            (
+                "test",
+                EDITION_2026_LIB.replace(
+                    "let test(name: string)(move body: (): bool): () = builtin()",
+                    "let test(name: string)(move body: (): i32): () = builtin()",
                 ),
             ),
         ] {
@@ -4743,8 +4816,8 @@ pub let Index(Key: type) = trait {
         }
 
         let malformed = EDITION_2026_UNSAFE.replace(
-            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)",
-            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(E)): T with(E)",
+            "pub let unsafe(E: effects, T: type)\n  (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)",
+            "pub let unsafe(E: effects, T: type)\n  (move action: (): T with(E)): T with(E)",
         );
         let modules = edition_2026_test_modules(&[("unsafe", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -4851,7 +4924,7 @@ pub let Index(Key: type) = trait {
             (
                 "Executor",
                 EDITION_2026_ASYNC.replace(
-                    "let run(E: effect, F: type, T: type)",
+                    "let run(E: effects, F: type, T: type)",
                     "let run(F: type, T: type)",
                 ),
             ),
@@ -4943,7 +5016,7 @@ pub let Index(Key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `Chain`")));
 
         let malformed = EDITION_2026_FLOW.replace(
-            "let coalesce(E: effect)\n    (self)\n    (fallback: (): Item with(E)): Item with(E)",
+            "let coalesce(E: effects)\n    (self)\n    (fallback: (): Item with(E)): Item with(E)",
             "let coalesce(move self)\n    (move fallback: (): Item): Item",
         );
         let modules = edition_2026_test_modules(&[("flow", &malformed)]);

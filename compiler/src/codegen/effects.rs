@@ -2,9 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{
-    Binding, CallArg, CompileParamKind, EffectDef, Expr, Function, FunctionEffects, Stmt, Type,
-};
+use crate::ast::{Binding, CallArg, EffectDef, Expr, Function, FunctionEffects, Sort, Stmt, Type};
 use crate::core::LangItemKind;
 
 use super::compile_time::{
@@ -382,9 +380,11 @@ impl Analyzer {
     ) -> HirExpr {
         let diagnostic_count = self.diagnostics.len();
         let handle_protocol = self.lang_item_name(LangItemKind::Handle).to_owned();
-        if !self.traits.get(&handle_protocol).is_some_and(|schema| {
-            schema.valid && schema.self_parameter.kind == CompileParamKind::Effect
-        }) {
+        if !self
+            .traits
+            .get(&handle_protocol)
+            .is_some_and(|schema| schema.valid && schema.self_parameter.kind == Sort::Effect)
+        {
             self.error(
                 "effect handler lowering requires the validated `core.effect.Handle` protocol",
             );

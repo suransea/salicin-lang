@@ -4,9 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::OnceLock;
 
-use crate::ast::{
-    CompileParamKind, Function, Item, PassMode, Program, StructDef, Type, Visibility,
-};
+use crate::ast::{Function, Item, PassMode, Program, Sort, StructDef, Type, Visibility};
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
@@ -413,7 +411,7 @@ fn generic_t(function: &Function) -> bool {
         function.compile_groups.as_slice(),
         [group]
             if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+                if parameter.name == "T" && parameter.kind == Sort::Type)
     )
 }
 
@@ -469,7 +467,7 @@ fn valid_box(definition: &StructDef) -> bool {
             definition.compile_groups.as_slice(),
             [group]
                 if matches!(group.as_slice(), [parameter]
-                    if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+                    if parameter.name == "T" && parameter.kind == Sort::Type)
         )
         && matches!(
             definition.fields.as_slice(),
@@ -579,9 +577,9 @@ fn valid_box_borrow(function: &Function) -> bool {
                 if access.name == "A"
                     && access.kind.is_access()
                     && region.name == "R"
-                    && region.kind == CompileParamKind::Region
+                    && region.kind == Sort::Region
                     && element.name == "T"
-                    && element.kind == CompileParamKind::Type))
+                    && element.kind == Sort::Type))
         && matches!(function.groups.as_slice(), [receiver]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "boxed"
@@ -606,7 +604,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
         extension.compile_groups.as_slice(),
         [group]
             if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+                if parameter.name == "T" && parameter.kind == Sort::Type)
     ) && extension.target == applied("Box", named("T"))
         && extension.trait_ref.is_none()
         && extension.where_predicates.is_empty()
@@ -683,7 +681,7 @@ fn valid_copy_box_extension(extension: &crate::ast::ExtendDef) -> bool {
         extension.compile_groups.as_slice(),
         [group]
             if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+                if parameter.name == "T" && parameter.kind == Sort::Type)
     ) && extension.target == applied("Box", named("T"))
         && extension.trait_ref.is_none()
         && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
@@ -729,7 +727,7 @@ fn valid_vec(definition: &StructDef) -> bool {
             definition.compile_groups.as_slice(),
             [group]
                 if matches!(group.as_slice(), [parameter]
-                    if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+                    if parameter.name == "T" && parameter.kind == Sort::Type)
         )
         && matches!(
             definition.fields.as_slice(),
@@ -822,9 +820,9 @@ fn valid_vec_at(function: &Function) -> bool {
                 if access.name == "A"
                     && access.kind.is_access()
                     && region.name == "R"
-                    && region.kind == CompileParamKind::Region
+                    && region.kind == Sort::Region
                     && element.name == "T"
-                    && element.kind == CompileParamKind::Type))
+                    && element.kind == Sort::Type))
         && matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "values"
@@ -1118,7 +1116,7 @@ fn valid_vec_swap_method(function: &Function) -> bool {
 fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref.is_none()
         && extension.where_predicates.is_empty()
@@ -1179,7 +1177,7 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
 fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref.is_none()
         && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
@@ -1193,7 +1191,7 @@ fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
 fn valid_vec_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref == Some(named("Drop"))
         && extension.where_predicates.is_empty()
@@ -1204,7 +1202,7 @@ fn valid_vec_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
 fn valid_vec_index_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref == Some(applied("Index", Type::U64))
         && extension.where_predicates.is_empty()
@@ -1220,7 +1218,7 @@ fn valid_vec_into_iter(definition: &StructDef) -> bool {
     definition.name == "VecIntoIter"
         && matches!(definition.compile_groups.as_slice(), [group]
             if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+                if parameter.name == "T" && parameter.kind == Sort::Type))
         && matches!(definition.fields.as_slice(), [pointer, next_index, length, capacity]
             if pointer.visibility == Visibility::Private
                 && pointer.name == "pointer"
@@ -1239,7 +1237,7 @@ fn valid_vec_into_iter(definition: &StructDef) -> bool {
 fn valid_vec_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("VecIntoIter", named("T"))
         && extension.trait_ref == Some(named("Iterator"))
         && extension.where_predicates.is_empty()
@@ -1259,7 +1257,7 @@ fn valid_vec_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
 fn valid_vec_iterator_next(function: &Function) -> bool {
     matches!(function.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "R" && parameter.kind == CompileParamKind::Region))
+            if parameter.name == "R" && parameter.kind == Sort::Region))
         && matches!(function.groups.as_slice(), [receiver, runtime]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "self"
@@ -1281,7 +1279,7 @@ fn valid_vec_iterator_next(function: &Function) -> bool {
 fn valid_vec_into_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref == Some(named("IntoIterator"))
         && extension.where_predicates.is_empty()
@@ -1308,7 +1306,7 @@ fn valid_vec_into_iterator_extension(extension: &crate::ast::ExtendDef) -> bool 
 fn valid_vec_into_iter_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
-            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+            if parameter.name == "T" && parameter.kind == Sort::Type))
         && extension.target == applied("VecIntoIter", named("T"))
         && extension.trait_ref == Some(named("Drop"))
         && extension.where_predicates.is_empty()

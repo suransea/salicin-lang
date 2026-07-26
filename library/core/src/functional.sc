@@ -5,7 +5,7 @@
 /// Type constructors whose contained values can be transformed.
 pub let Functor = trait(Self: (Value: type): type) {
   /// Applies `transform` to each contained value while preserving structure.
-  let map(E: effect, A: type, B: type)
+  let map(E: effects, A: type, B: type)
     (self: Self(A))
     (transform: (A): B with(E)): Self(B) with(E)
 }
@@ -18,7 +18,7 @@ where Self: Functor {
     (value: A): Self(A)
 
   /// Applies a contained function to a contained value.
-  let apply(E: effect, A: type, B: type)
+  let apply(E: effects, A: type, B: type)
     (self: Self((A): B with(E)))
     (value: Self(A)): Self(B) with(E)
 }
@@ -27,7 +27,7 @@ where Self: Functor {
 pub let Monad = trait(Self: (Value: type): type)
 where Self: Applicative {
   /// Sequences `self` into the next computation.
-  let flat_map(E: effect, A: type, B: type)
+  let flat_map(E: effects, A: type, B: type)
     (self: Self(A))
     (next: (A): Self(B) with(E)): Self(B) with(E)
 }

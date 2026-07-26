@@ -46,17 +46,17 @@ pub let return(): Never with(Return(())) = {
 }
 
 /// Runs `action` and preserves its effect row.
-pub let do(E: effect, T: type)
+pub let do(E: effects, T: type)
   (move action: (): T with(E)): T with(E) = {
   action()
 }
 
 /// Registers `action` to run when the current lexical scope exits.
-pub let defer(E: effect)
+pub let defer(E: effects)
   (move action: (): () with(E)): () with(E) = builtin()
 
 /// Runs `action` once, then repeats it while the lazy condition remains true.
-pub let do(E: effect)
+pub let do(E: effects)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))
   (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
   loop {
@@ -74,11 +74,11 @@ pub let do(E: effect)
 }
 
 /// Repeats `body` indefinitely until control exits through another construct.
-pub let loop(E: effect, T: type)
+pub let loop(E: effects, T: type)
   (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E) = builtin()
 
 /// Repeats `body` while the lazy condition remains true.
-pub let while(E: effect)
+pub let while(E: effects)
   (move condition: (): bool with(E))
   (move do: (): () with(E)): () with(E) = {
   loop {
@@ -91,7 +91,7 @@ pub let while(E: effect)
 }
 
 /// Selects one of two lazy branches from an eager boolean condition.
-pub let if(E: effect, T: type)
+pub let if(E: effects, T: type)
   (condition: bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E) = {
@@ -104,14 +104,14 @@ pub let if(E: effect, T: type)
 pub let match(
   Input: type,
   Output: type,
-  E: effect,
+  E: effects,
   ...Cases: parameters,
 )
   (move input: Input)
   ...Cases: Output with(E) = builtin()
 
 /// Iterates through `iterable`, passing each item to the lazy body.
-pub let for(E: effect, Iterable: type, Iter: type, Item: type)
+pub let for(E: effects, Iterable: type, Iter: type, Item: type)
   (move iterable: Iterable)
   (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
 where Iterable: core.iter.IntoIterator(IntoIter = Iter),

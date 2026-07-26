@@ -834,7 +834,7 @@ fn registers_source_backed_core_lang_items() {
         throw.compile_groups,
         vec![vec![CompileParam {
             name: "Error".to_owned(),
-            kind: CompileParamKind::Type,
+            kind: Sort::Type,
             default: None,
         }]]
     );
@@ -894,7 +894,7 @@ fn registers_source_backed_core_lang_items() {
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
             if access.name == "A" && access.kind.is_access()
-                && ty.name == "T" && ty.kind == CompileParamKind::Type)
+                && ty.name == "T" && ty.kind == Sort::Type)
     ));
     assert!(analyzer.function_templates.contains_key(&vec("vec_new")));
     assert!(analyzer
@@ -908,7 +908,7 @@ fn registers_source_backed_core_lang_items() {
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
             if access.name == "A" && access.kind.is_access()
-                && ty.name == "T" && ty.kind == CompileParamKind::Type)
+                && ty.name == "T" && ty.kind == Sort::Type)
     ));
     for name in [
         "vec_reserve",
@@ -1491,7 +1491,7 @@ fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
 let Result = std.Result
 let Throws = std.error.Throws
 
-let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = { action() }
+let invoke(E: effects)(action: (): i32 with(E))(): i32 with(E) = { action() }
 let fail(): i32 with(Throws(bool)) = { throw(true) }
 let forward(): i32 with(Throws(bool)) = { invoke(fail)() }
 let explicit(): i32 with(Throws(bool)) = { invoke(Throws(bool))(fail)() }
@@ -1639,7 +1639,7 @@ extend Boxed(i32): Choose {
 let main(): i32 = { Boxed(i32) { value: 0 }.choose(i32)(42) }
 "#,
     )
-    .expect("method type binders should compare by position and kind");
+    .expect("method type binders should compare by position and sort");
 
     compile_text(
         r#"
@@ -1663,11 +1663,11 @@ fn generic_trait_method_effect_usize_and_where_binders_are_alpha_equivalent() {
     compile_text(
         r#"
 let Run = trait {
-  let run(E: effect)(self: borrow(Self))(action: (): i32 with(E)): i32 with(E)
+  let run(E: effects)(self: borrow(Self))(action: (): i32 with(E)): i32 with(E)
 }
 let Runner = struct {}
 extend Runner: Run {
-  let run(F: effect)(self: borrow(Self))(action: (): i32 with(F)): i32 with(F) = {
+  let run(F: effects)(self: borrow(Self))(action: (): i32 with(F)): i32 with(F) = {
     action()
   }
 }
@@ -1862,7 +1862,7 @@ extend Selector: Choose {
 let main(): i32 = { 0 }
 "#,
     )
-    .expect_err("method binder kinds are part of the trait contract");
+    .expect_err("method binder sorts are part of the trait contract");
     assert!(errors.iter().any(|error| {
         error.message.contains("Choose.choose")
             && error.message.contains("compile-time parameter groups")
@@ -1966,7 +1966,7 @@ let Choice = enum { Present(i32), Missing }
 
 extend Choice: Coalesce {
   let Item = i32
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): i32 with(E)): i32 with(E) = {
 self match {
@@ -2022,7 +2022,7 @@ let Maybe(T: type) = enum { Some(T), None }
 extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
@@ -2077,7 +2077,7 @@ let main(): i32 = {
 }
 
 #[test]
-fn generic_associated_type_constructor_preserves_compile_parameter_kinds() {
+fn generic_associated_type_constructor_preserves_compile_parameter_sorts() {
     let program = resolve_text(
         r#"
 let Lend = trait {
@@ -2090,11 +2090,11 @@ let main(): i32 = { 0 }
     let analyzer = Analyzer::new(&program);
     let parameters = &analyzer.traits["Lend"].associated_type_parameters["Item"];
     assert_eq!(parameters.len(), 2);
-    assert_eq!(parameters[0].kind, CompileParamKind::Named("access".into()));
-    assert_eq!(parameters[1].kind, CompileParamKind::Region);
+    assert_eq!(parameters[0].kind, Sort::Named("access".into()));
+    assert_eq!(parameters[1].kind, Sort::Region);
     assert!(
         analyzer.diagnostics.is_empty(),
-        "unexpected GAT kind diagnostics: {:?}",
+        "unexpected GAT sort diagnostics: {:?}",
         analyzer.diagnostics
     );
 }
@@ -2115,7 +2115,7 @@ extend Boxed {
 extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
@@ -2174,7 +2174,7 @@ let Maybe(T: type) = enum { Some(T), None }
 extend(T: type) Maybe(T): Chain {
   let Item = T
   let Rebind = Maybe
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (T): U with(E)): Maybe(U) with(E) = {
 self match {
@@ -2282,7 +2282,7 @@ fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
             .message
             .contains("cannot infer compile-time argument")
             && diagnostic.message.contains("`E`")
-            && diagnostic.message.contains("kind `type`")
+            && diagnostic.message.contains("sort `type`")
             && diagnostic.message.contains("`core::result::Result`")
     }));
 }
@@ -2483,12 +2483,186 @@ fn reserves_compiler_provided_control_contracts_for_core() {
 }
 
 #[test]
-fn custom_domain_declarations_are_allowed() {
-    compile_unresolved_text(
-        "let Local = domain { one two }\n\
+fn finite_sorts_classify_compile_time_values() {
+    compile_text(
+        "let optimization = sort { size speed }\n\
+         let select(O: optimization)(value: i32): i32 = { value }\n\
+         let main(): i32 = { select(optimization.speed)(42) }\n",
+    )
+    .expect("finite sorts must classify their compile-time members");
+}
+
+#[test]
+fn core_access_is_a_finite_sort_with_shared_and_mut_aliases() {
+    compile_resolved_text(
+        "use core.borrow.access\n\
+         let select(A: access)(value: i32): i32 = { value }\n\
+         let main(): i32 = { select(access.mut)(0) + select(shared)(20) + select(mut)(22) }\n",
+    )
+    .expect("the shared and mut aliases must inhabit the access sort");
+}
+
+#[test]
+fn rejects_user_abstract_sorts_and_removed_domain_syntax() {
+    let errors = compile_unresolved_text(
+        "let Opaque: sort\n\
          let main(): i32 = { 0 }\n",
     )
-    .expect("ordinary source can declare domains");
+    .unwrap_err();
+    assert!(errors.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("abstract sort `Opaque` is compiler-owned")));
+
+    for source in [
+        "let Legacy: domain\nlet main(): i32 = { 0 }\n",
+        "let Legacy = domain { old }\nlet main(): i32 = { 0 }\n",
+    ] {
+        let error = crate::parser::parse(source).unwrap_err();
+        assert!(error.message.contains("`domain` was removed"));
+    }
+}
+
+#[test]
+fn constructor_sorts_preserve_parameter_group_boundaries_and_sorts() {
+    compile_unresolved_text(
+        r#"
+let Curried(Element: type)(Length: usize) = struct { value: Element }
+let accept(F: (Element: type)(Length: usize): type)(): i32 = { 42 }
+let main(): i32 = { accept(Curried)() }
+"#,
+    )
+    .expect("matching curried constructor sorts must be accepted");
+
+    let wrong_grouping = compile_unresolved_text(
+        r#"
+let Flat(Element: type, Length: usize) = struct { value: Element }
+let accept(F: (Element: type)(Length: usize): type)(): i32 = { 42 }
+let main(): i32 = { accept(Flat)() }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        wrong_grouping.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("expects sort `(type)(usize): type`")
+                && diagnostic
+                    .message
+                    .contains("constructor `Flat` has sort `(type, usize): type`")
+        }),
+        "{wrong_grouping:?}"
+    );
+
+    let wrong_parameter_sort = compile_unresolved_text(
+        r#"
+let ByType(Element: type)(Length: type) = struct { value: Element }
+let accept(F: (Element: type)(Length: usize): type)(): i32 = { 42 }
+let main(): i32 = { accept(ByType)() }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        wrong_parameter_sort.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("constructor `ByType` has sort `(type)(type): type`")
+        }),
+        "{wrong_parameter_sort:?}"
+    );
+}
+
+#[test]
+fn ordinary_pure_functions_evaluate_naturally_in_dependent_types() {
+    let llvm = compile_text(
+        r#"
+let next(value: usize): usize = { value + 1 }
+let factorial(value: usize): usize = {
+  if value == 0 { 1 } else { value * factorial(value - 1) }
+}
+let read(values: Array(i32)(next(2) * 2)): i32 = { values[0] }
+let read_factorial(values: Array(i32)(factorial(4))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("ordinary pure functions should be available to CTFE");
+    assert!(
+        llvm.contains("[6 x i32]"),
+        "dependent array length was not normalized by CTFE"
+    );
+    assert!(
+        llvm.contains("[24 x i32]"),
+        "structurally decreasing recursive CTFE did not normalize"
+    );
+}
+
+#[test]
+fn ctfe_normalizes_dependent_lengths_after_generic_substitution() {
+    let llvm = compile_text(
+        r#"
+let next(value: usize): usize = { value + 1 }
+let Buffer(Element: type)(Length: usize) = struct {
+  values: Array(Element)(next(Length)),
+}
+let main(): i32 = {
+  let buffer = Buffer(i32)(2) { values: [40, 1, 1] }
+  buffer.values[0]
+}
+"#,
+    )
+    .expect("dependent lengths should normalize after substituting generic static values");
+    assert!(llvm.contains("[3 x i32]"));
+}
+
+#[test]
+fn ctfe_rejects_runtime_mutation_and_reports_arithmetic_failures() {
+    let mutation = compile_unresolved_text(
+        r#"
+let increment(value: usize): usize = {
+  let mut result = value
+  result = result + 1
+  result
+}
+let read(values: Array(i32)(increment(2))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        mutation.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("mutable bindings are not permitted during CTFE")),
+        "{mutation:?}"
+    );
+
+    let division_by_zero = compile_unresolved_text(
+        r#"
+let divide(left: usize, right: usize): usize = { left / right }
+let read(values: Array(i32)(divide(4, 0))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        division_by_zero
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("division by zero during CTFE")),
+        "{division_by_zero:?}"
+    );
+
+    let nontermination = compile_unresolved_text(
+        r#"
+let repeat(value: usize): usize = { repeat(value) }
+let read(values: Array(i32)(repeat(1))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        nontermination.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("recursive CTFE call `repeat` repeated with the same arguments")),
+        "{nontermination:?}"
+    );
 }
 
 #[test]
@@ -5065,7 +5239,7 @@ fn custom_marker_effects_are_nominal_and_checked_at_calls() {
         r#"
 let UI = effect
 let render(): i32 with(UI) = { 42 }
-let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = { action() }
+let invoke(E: effects)(action: (): i32 with(E))(): i32 with(E) = { action() }
 let screen(): i32 with(UI) = { invoke(render)() }
 let main(): i32 = { 0 }
 "#,
@@ -5160,7 +5334,7 @@ let Ask = effect {
   let value(): i32
 }
 
-let forward(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
+let forward(E: effects)(move action: (): i32 with(E)): i32 with(E) = {
   action()
 }
 
@@ -5184,7 +5358,7 @@ let Tell = effect {
   let value(): i32
 }
 
-let forward(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
+let forward(E: effects)(move action: (): i32 with(E)): i32 with(E) = {
   action()
 }
 
@@ -5333,8 +5507,8 @@ fn effect_compile_parameters_select_pure_or_unsafe_instances() {
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let tagged(E: effect)(value: i32): i32 with(E) = { value }
-let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
+let tagged(E: effects)(value: i32): i32 with(E) = { value }
+let forward(E: effects)(value: i32): i32 with(E) = { tagged(E)(value) }
 let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(E: Unsafe)(2) } }
 "#,
     )
@@ -5344,7 +5518,7 @@ let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(E: Unsafe
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let identity(E: effect, T: type)(value: T): T with(E) = { value }
+let identity(E: effects, T: type)(value: T): T with(E) = { value }
 let main(): i32 = { identity(20) + unsafe { identity(E: Unsafe, T: i32)(22) } }
 "#,
     )
@@ -5354,8 +5528,8 @@ let main(): i32 = { identity(20) + unsafe { identity(E: Unsafe, T: i32)(22) } }
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let tagged(E: effect)(value: i32): i32 with(E) = { value }
-let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
+let tagged(E: effects)(value: i32): i32 with(E) = { value }
+let forward(E: effects)(value: i32): i32 with(E) = { tagged(E)(value) }
 let main(): i32 = { forward(Unsafe)(42) }
 "#,
     )
@@ -5371,7 +5545,7 @@ let main(): i32 = { forward(Unsafe)(42) }
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
+let read(E: effects)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
   unsafe { read(Unsafe)(Ptr(borrow(value))) }
@@ -5384,7 +5558,7 @@ let main(): i32 = {
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
+let read(E: effects)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow(value)))
@@ -5401,22 +5575,25 @@ let main(): i32 = {
 
     let errors = compile_text(
         r#"
-let tagged(E: effect)(value: i32): i32 with(E) = { value }
+let tagged(E: effects)(value: i32): i32 with(E) = { value }
 let main(): i32 = { tagged(E: copy)(42) }
 "#,
     )
     .unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|error| error.message.contains("argument `E`")
-            && error.message.contains("kind `effect`")
-            && error.message.contains("`tagged`")));
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("argument `E`")
+                && error.message.contains("sort `effects`")
+                && error.message.contains("`tagged`")),
+        "{errors:?}"
+    );
 
     let errors = compile_resolved_text(
         r#"
 let Unsafe = std.unsafe.Unsafe
 
-let always(E: effect)(value: i32): i32 with(Unsafe, E) = { value }
+let always(E: effects)(value: i32): i32 with(Unsafe, E) = { value }
 let main(): i32 = { always(pure)(42) }
 "#,
     )
@@ -5424,6 +5601,33 @@ let main(): i32 = { always(pure)(42) }
     assert!(errors
         .iter()
         .any(|error| error.message.contains("requires an `unsafe` handler")));
+}
+
+#[test]
+fn effect_identities_and_effect_rows_have_distinct_sorts() {
+    compile_resolved_text(
+        r#"
+let Audit = effect {}
+let require(Identity: effect)(value: i32): i32 with(Identity) = { value }
+let forward(Row: effects)(value: i32): i32 with(Row) = { value }
+let main(): i32 = { forward(pure)(42) }
+"#,
+    )
+    .expect("effect must classify identities while effects classifies rows");
+
+    let errors = compile_resolved_text(
+        r#"
+let require(Identity: effect)(value: i32): i32 with(Identity) = { value }
+let main(): i32 = { require(Identity: pure)(42) }
+"#,
+    )
+    .expect_err("the empty effect row must not inhabit the singular effect sort");
+    assert!(
+        errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("expects one `effect` identity, not an `effects` row")),
+        "{errors:?}"
+    );
 }
 
 #[test]
@@ -5439,7 +5643,7 @@ let main(): i32 = { make() }
         error
             .message
             .contains("cannot infer compile-time argument `F`")
-            && error.message.contains("kind `(1 type parameter): type`")
+            && error.message.contains("sort `(type): type`")
             && error.message.contains("for `make`")
     }));
 
@@ -5450,25 +5654,25 @@ let use(F: (T: type): type)(): i32 = { 42 }
 let main(): i32 = { use(F: Pair)() }
 "#,
     )
-    .expect_err("a constructor with the wrong kind must be rejected");
+    .expect_err("a constructor with the wrong sort must be rejected");
     assert!(wrong_arity.iter().any(|error| {
         error.message.contains("argument `F`")
-            && error.message.contains("kind `(1 type parameter): type`")
+            && error.message.contains("expects sort `(type): type`")
             && error
                 .message
-                .contains("constructor `Pair` has 2 type parameters")
+                .contains("constructor `Pair` has sort `(type, type): type`")
     }));
 
     let wrong_effect = compile_text(
         r#"
-let run(E: effect)(): i32 with(E) = { 42 }
+let run(E: effects)(): i32 with(E) = { 42 }
 let main(): i32 = { run(E: copy)() }
 "#,
     )
     .expect_err("a non-effect compile-time argument must be rejected");
     assert!(wrong_effect.iter().any(|error| {
         error.message.contains("argument `E`")
-            && error.message.contains("kind `effect`")
+            && error.message.contains("sort `effects`")
             && error.message.contains("in `run`")
     }));
 }
@@ -5481,7 +5685,7 @@ let Unsafe = std.unsafe.Unsafe
 
 let Value = struct { value: i32 }
 extend Value {
-  let tagged(E: effect)(self: borrow(Self))(): i32 with(E) = { self.value }
+  let tagged(E: effects)(self: borrow(Self))(): i32 with(E) = { self.value }
 }
 let main(): i32 = {
   let value = Value { value: 42 }
@@ -5981,7 +6185,7 @@ fn higher_kinded_trait_method_signatures_validate() {
     let program = crate::parser::parse(
         r#"
 		let Functor = trait(Self: (Value: type): type) {
-		  let map(E: effect, A: type, B: type)(
+		  let map(E: effects, A: type, B: type)(
 		    move self: Self(A),
 		  )(
 		    transform: (A): B with(E),
@@ -5990,7 +6194,7 @@ fn higher_kinded_trait_method_signatures_validate() {
 	let Chain = trait {
 	  let Item: type
 	  let Rebind(Value: type): type
-	  let chain(E: effect, U: type)(
+	  let chain(E: effects, U: type)(
 	    move self
 	  )(
 	    transform: (Item): U with(E)
@@ -6009,7 +6213,9 @@ fn higher_kinded_trait_method_signatures_validate() {
     );
     assert_eq!(
         analyzer.traits["Functor"].self_parameter.kind,
-        CompileParamKind::TypeConstructor { parameter_count: 1 }
+        Sort::TypeConstructor {
+            parameter_groups: vec![vec![Sort::Type]],
+        }
     );
 
     compile(&program).expect("higher-kinded trait declaration must compile");
@@ -6019,7 +6225,7 @@ fn higher_kinded_trait_method_signatures_validate() {
 fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
     let source = r#"
 	let Functor = trait(Self: (Value: type): type) {
-	  let map(E: effect, A: type, B: type)(
+	  let map(E: effects, A: type, B: type)(
 	    move self: Self(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6044,7 +6250,7 @@ let main(): i32 = { 0 }
     compile_text(
         r#"
 	let Functor = trait(Self: (Value: type): type) {
-	  let map(E: effect, A: type, B: type)(
+	  let map(E: effects, A: type, B: type)(
 	    move self: Self(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6059,7 +6265,7 @@ extend Carrier: Applicative {
 Carrier(A) { value: value }
   }}
 	extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
+  let map(E: effects, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6115,7 +6321,7 @@ let main(): i32 = { 0 }
         (
             r#"
 let Bad = trait {
-  let read(E: effect)(move value: E): ()
+  let read(E: effects)(move value: E): ()
 }
 let main(): i32 = { 0 }
 "#,
@@ -6192,7 +6398,7 @@ fn constructor_trait_implementation_methods_register_generic_templates() {
     let program = crate::parser::parse(
         r#"
 	let Functor = trait(Self: (Value: type): type) {
-	  let map(E: effect, A: type, B: type)(
+	  let map(E: effects, A: type, B: type)(
 	    move self: Self(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6200,7 +6406,7 @@ fn constructor_trait_implementation_methods_register_generic_templates() {
 	}
 let Carrier(T: type) = struct { value: T }
 	extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
+  let map(E: effects, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6251,7 +6457,7 @@ fn constructor_trait_receiver_methods_dispatch_from_instances() {
     let program = crate::parser::parse(
         r#"
 	let Functor = trait(Self: (Value: type): type) {
-	  let map(E: effect, A: type, B: type)(
+	  let map(E: effects, A: type, B: type)(
 	    move self: Self(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6259,7 +6465,7 @@ fn constructor_trait_receiver_methods_dispatch_from_instances() {
 	}
 let Carrier(T: type) = struct { value: T }
 	extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
+  let map(E: effects, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
 	    transform: (A): B with(E),
@@ -6382,12 +6588,21 @@ let Carrier(T: type) = struct { value: T }
 extend Carrier: Higher {}
 let main(): i32 = { 0 }
 "#,
-            "expects a constructor with 2",
+            "expects sort `(type, type): type`",
+        ),
+        (
+            r#"
+let Curried = trait(Self: (Left: type)(Right: type): type) {}
+let Flat(Left: type, Right: type) = struct { left: Left, right: Right }
+extend Flat: Curried {}
+let main(): i32 = { 0 }
+"#,
+            "has sort `(type, type): type`",
         ),
         (
             r#"
 	let Functor = trait(Self: (Value: type): type) {
-	  let map(E: effect, A: type, B: type)(
+	  let map(E: effects, A: type, B: type)(
 	    move self: Self(A),
 	  )(
 	    transform: (A): B with(E),
@@ -7521,7 +7736,7 @@ fn cold_async_future_polls_to_the_standard_ready_variant() {
 let Poll = std.async.Poll
 let Future = std.async.Future
 
-let poll_once(E: effect, F: type, T: type)
+let poll_once(E: effects, F: type, T: type)
   (future: borrow(mut)(F)): Poll(T) with(E)
 where F: Future(E, Output = T) = {
   future.poll()

@@ -1,5 +1,5 @@
 // First-order algebra protocols that do not depend on higher-kinded
-// constructor kinds. Law documentation lives in the standard library docs; the
+// constructor sorts. Law documentation lives in the standard library docs; the
 // compiler does not attempt to prove associativity or identity laws.
 /// Types with an associative binary combination operation.
 pub let Semigroup = trait {

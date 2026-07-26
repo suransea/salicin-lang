@@ -28,7 +28,7 @@ let consume_or_throw(move resource: Resource): i32 with(Throws(bool)) = {
   choose(true, resource.value)
 }
 
-let poll_once(E: effect, F: type, T: type)
+let poll_once(E: effects, F: type, T: type)
   (future: borrow(mut)(F)): Poll(T) with(E)
 where F: Future(E, Output = T) = {
   future.poll()

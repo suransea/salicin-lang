@@ -50,18 +50,20 @@ Implemented lexical and declaration features include:
 - logical newlines, semicolons, line comments, and nested block comments;
 - uniform `let` declarations and mutable local value bindings;
 - private, package, and public visibility;
-- contextual control, passing, kind, and borrow words;
-- abstract domains written `let Name: domain`;
-- defined domains written `let Name = domain { ... }`, including empty domains;
+- contextual control, passing, sort, and borrow words;
+- compiler-owned abstract sorts written `let Name: sort`;
+- defined sorts written `let Name = sort { ... }`, including empty sorts;
 - ordinary closed enums usable as compile-time value types;
 - explicit core-private `builtin()` initializers for compiler-owned
   functions, types, type constructors, and extension methods.
 - canonical private `builtin`, `foreign`, and `test` syntax declarations plus
-  identity-validated passing and control-exit contracts.
+  identity-validated passing and control-exit contracts;
+- explicit erased inputs for those syntax declarations: `foreign(ABI: abi)` selects the finite
+  `abi.c` value and `test(name: string)(body)` receives compiler-owned UTF-8 metadata.
 
-An abstract domain is distinct from a defined empty domain. Bare `let Name = domain` and the former
+An abstract sort is distinct from a defined empty sort. Bare `let Name = sort` and the former
 top-level `= type` forms are rejected. Primitive integer types use declarations such as
-`pub let i32: type = builtin()`; `type` is an abstract domain, not a
+`pub let i32: type = builtin()`; `type` is an abstract sort, not a
 type-construction expression. The marker is unavailable to user packages and
 is distinct from bodyless abstract interfaces.
 
@@ -75,7 +77,7 @@ Implemented type-system features include:
 - transparent type aliases and partially applied type constructors;
 - compile-time `type`, `usize`, `region`, `effect`, `access`, closed-value, constructor, and
   parameter-schema arguments;
-- source-level compile-time diagnostics that identify binder, kind, owner, and parameter group;
+- source-level compile-time diagnostics that identify binder, sort, owner, and parameter group;
 - curried compile-time and runtime parameter groups;
 - labeled arguments, overload selection, and trailing closures;
 - generic nominal types, aliases, inherent extensions, and trait implementations;
@@ -87,9 +89,13 @@ Implemented type-system features include:
   implementations;
 - static specialization of capturing callables passed to known higher-order callees.
 
-Generic associated constructors preserve parameter kinds and groups in trait declarations and
+Generic associated constructors preserve parameter sorts and groups in trait declarations and
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
+
+Ordinary pure `usize`/`bool` functions can be evaluated in dependent array-length expressions.
+The static expression IR excludes runtime-only operations, substitutes generic `usize` values
+before evaluation, checks arithmetic, and diagnoses nontermination through a bounded evaluator.
 
 The current static-abstraction surface is complete for the standard-library requirements tracked by
 the project roadmap.
@@ -319,7 +325,7 @@ The source library is split into:
 
 Implemented `core` facilities include:
 
-- primitive declarations and compile-time domains;
+- primitive declarations and compile-time sorts;
 - `borrow`, `Ptr`, `Array`, `Slice`, `size_of`, and `align_of`;
 - ownership markers and operator traits;
 - `Option`, `Result`, iteration, indexing, and flow protocols;

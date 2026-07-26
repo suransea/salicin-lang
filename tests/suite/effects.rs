@@ -192,13 +192,13 @@ fn generic_associated_constructors_lower_compile_time_kinds() {
         .arg("check")
         .arg(fixture("fail", "gat_constructor_kind_mismatch.sc"))
         .output()
-        .expect("check mismatched GAT constructor kind");
+        .expect("check mismatched GAT constructor sort");
     assert!(
         !output.status.success(),
-        "GAT kind mismatch unexpectedly passed"
+        "GAT sort mismatch unexpectedly passed"
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("expects kind `access`"),
+        String::from_utf8_lossy(&output.stderr).contains("expects sort `access`"),
         "{}",
         output_text(&output)
     );

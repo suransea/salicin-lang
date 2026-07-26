@@ -35,7 +35,7 @@ pub let Poll(T: type) = enum {
   Ready(T)
 }
 
-pub let Future(E: effect) = trait
+pub let Future(E: effects) = trait
 where Self: Move {
   let Output: type
   let poll(R: region)
@@ -43,7 +43,7 @@ where Self: Move {
 }
 
 pub let Executor = trait {
-  let run(E: effect, F: type)
+  let run(E: effects, F: type)
     (self: borrow(mut)(Self))
     (move future: F): F.Output with(E)
   where F: Future(E)

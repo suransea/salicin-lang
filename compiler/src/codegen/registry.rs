@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    CompileParam, CompileParamKind, EnumDef, ExtendMember, Function, Item, ItemOrigin, PassMode,
-    StructDef, Type,
+    CompileParam, EnumDef, ExtendMember, Function, Item, ItemOrigin, PassMode, Sort, StructDef,
+    Type,
 };
 use crate::core::LangItemKind;
 
@@ -167,6 +167,7 @@ pub(super) struct TypeConstructorImplTarget {
     pub(super) name: String,
     pub(super) kind: NominalKind,
     pub(super) parameter_count: usize,
+    pub(super) parameter_groups: Vec<Vec<Sort>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -196,7 +197,7 @@ pub(super) struct TraitSchema {
     pub(super) compile_parameters: Vec<CompileParam>,
     pub(super) where_predicates: Vec<crate::ast::WherePredicate>,
     pub(super) associated_types: Vec<String>,
-    pub(super) associated_type_kinds: HashMap<String, CompileParamKind>,
+    pub(super) associated_type_kinds: HashMap<String, Sort>,
     pub(super) associated_type_parameter_groups: HashMap<String, Vec<Vec<CompileParam>>>,
     pub(super) associated_type_parameters: HashMap<String, Vec<CompileParam>>,
     pub(super) associated_parameter_schemas: HashSet<String>,
@@ -497,7 +498,7 @@ pub(super) fn top_level_namespace(item: &Item) -> TopLevelNamespace {
         Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) | Item::TypeForm(_) => {
             TopLevelNamespace::Type
         }
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
+        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Sort(_) | Item::Extend(_) => {
             TopLevelNamespace::Other
         }
     }
@@ -723,6 +724,12 @@ fn impl_type_pattern(
                         crate::ast::USizeConst::Literal(value) => format!("$usize${value}"),
                         crate::ast::USizeConst::Parameter(name) => {
                             format!("$usize$parameter${name}")
+                        }
+                        crate::ast::USizeConst::Expression(expression) => {
+                            format!(
+                                "$usize$expression${}",
+                                super::compile_time::render_static_expression(expression)
+                            )
                         }
                     },
                     Vec::new(),

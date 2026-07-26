@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, CompileParamKind, Expr, ItemOrigin, Type, VariantFields, Visibility};
+use crate::ast::{CallArg, Expr, ItemOrigin, Sort, Type, VariantFields, Visibility};
 use crate::core::LangItemKind;
 
 use super::compile_time::closed_value_marker;
@@ -719,7 +719,7 @@ impl Analyzer {
             let mut arguments = Vec::new();
             for (index, parameter) in parameters.iter().enumerate() {
                 match parameter.kind {
-                    CompileParamKind::Type => {
+                    Sort::Type => {
                         let owner = format!("nominal::{template_name}");
                         let marker = generic_parameter_marker(&owner, index, &parameter.name);
                         self.abstract_type_parameters
@@ -727,7 +727,7 @@ impl Analyzer {
                         source_arguments.push(Type::Named(marker.clone(), Vec::new()));
                         arguments.push(Ty::Struct(marker));
                     }
-                    CompileParamKind::USize => {
+                    Sort::USize => {
                         let source = Type::CompileUSize(0);
                         let argument = self
                             .probe_compile_argument_ty(parameter, &source)
@@ -735,7 +735,7 @@ impl Analyzer {
                         source_arguments.push(source);
                         arguments.push(argument);
                     }
-                    CompileParamKind::Named(ref compile_type) => {
+                    Sort::Named(ref compile_type) => {
                         let Some(member) = self
                             .closed_type_values
                             .get(compile_type)
@@ -757,9 +757,9 @@ impl Analyzer {
                     }
                     _ => {
                         self.error(format!(
-                            "generic nominal `{template_name}` abstract validation does not yet support parameter `{}` of kind {}",
+                            "generic nominal `{template_name}` abstract validation does not yet support parameter `{}` of sort {}",
                             parameter.name,
-                            super::compile_time::describe_compile_param_kind(
+                            super::compile_time::describe_compile_sort(
                                 parameter.kind.clone()
                             )
                         ));

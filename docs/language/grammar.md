@@ -15,7 +15,7 @@ x | y       alternative
 ```
 
 Contextual words are represented as `IDENT` by the reference lexer and interpreted by the parser
-only in the corresponding position. This set includes compile-time kinds, passing modes, borrow
+only in the corresponding position. This set includes compile-time sorts, passing modes, borrow
 forms, and control-operation names.
 
 ## 1. Lexical Grammar
@@ -65,8 +65,8 @@ test_registration =
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
 identifier outside this top-level form. The edition-owned
-`let test(move body: (): bool): () = builtin()` declaration validates the
-body contract; the string is compile-time runner metadata.
+`let test(name: string)(move body: (): bool): () = builtin()` declaration validates both
+metadata and body contracts; the string is compile-time runner metadata.
 
 ### 2.1 Let Declarations
 
@@ -83,15 +83,15 @@ declaration_group = compile_parameter_group | runtime_parameter_group ;
 declaration_annotation =
     type_expr
   | contextual("type")
-  | contextual("domain")
-  | constructor_kind ;
+  | contextual("sort")
+  | constructor_sort ;
 
 initializer =
     builtin_initializer
   | foreign_initializer
   | expression
   | effect_decl
-  | domain_decl
+  | sort_decl
   | struct_decl
   | enum_decl
   | trait_decl ;
@@ -105,8 +105,9 @@ foreign_initializer =
     ")" ;
 ```
 
-`let Name: type` declares an opaque nominal type. `let Name: domain` declares an abstract domain.
-`let Name = domain { ... }` declares a domain with a known member set. Bare `= domain`, `= type`,
+`let Name: type` declares an opaque nominal type. Compiler-owned sources may declare an abstract
+sort with `let Name: sort`; user sources must declare finite sorts.
+`let Name = sort { ... }` declares a sort with a known member set. Bare `= sort`, `= type`,
 and `= type { ... }` are not productions.
 
 `builtin()` is a complete initializer available only to the embedded `core`
@@ -121,27 +122,31 @@ compile_parameter_group =
     "(", compile_parameter, { ",", compile_parameter }, [ "," ], ")" ;
 
 compile_parameter =
-    [ "..." ], compile_parameter_name, ":", compile_parameter_kind,
+    [ "..." ], compile_parameter_name, ":", compile_parameter_sort,
     [ "=", compile_parameter_default ] ;
 
 compile_parameter_name = IDENT | REGION ;
 
-compile_parameter_kind =
+compile_parameter_sort =
     contextual("type")
   | contextual("usize")
   | contextual("region")
   | contextual("effect")
+  | contextual("effects")
   | contextual("parameters")
   | IDENT
-  | constructor_kind ;
+  | constructor_sort ;
 
-constructor_kind =
-    "(", constructor_kind_parameter,
-    { ",", constructor_kind_parameter }, [ "," ], ")",
-    ":", contextual("type") ;
+constructor_sort =
+    constructor_sort_group, { constructor_sort_group },
+    ":", ( contextual("type") | contextual("effect") | contextual("parameters") ) ;
 
-constructor_kind_parameter =
-    IDENT, ":", ( contextual("type") | contextual("parameters") ) ;
+constructor_sort_group =
+    "(", constructor_sort_parameter,
+    { ",", constructor_sort_parameter }, [ "," ], ")" ;
+
+constructor_sort_parameter =
+    IDENT, ":", compile_parameter_sort ;
 ```
 
 Whether a parenthesized declaration group is compile-time or runtime is determined by its
@@ -174,11 +179,11 @@ Parameter modifiers are resolved against the source-backed passing declarations.
 ### 2.4 Data, Effects, and Traits
 
 ```ebnf
-domain_decl =
-    contextual("domain"), "{", separators,
-    { domain_member, separators }, "}" ;
+sort_decl =
+    contextual("sort"), "{", separators,
+    { sort_member, separators }, "}" ;
 
-domain_member = IDENT | contextual_word ;
+sort_member = IDENT | contextual_word ;
 
 effect_decl =
     contextual("effect"), "{", separators,
@@ -222,7 +227,7 @@ trait_decl =
     { trait_member, separators },
     "}" ;
 
-self_parameter = contextual("Self"), ":", compile_parameter_kind ;
+self_parameter = contextual("Self"), ":", compile_parameter_sort ;
 
 trait_member =
     "let", IDENT,
@@ -315,10 +320,10 @@ Trait requirements, effect operations, and user opaque types remain
 bodyless declarations rather than builtin definitions.
 
 The root `core` module also contains the private declarations
-`let foreign(): Never = builtin()` and
-`let test(move body: (): bool): () = builtin()`. They authorize the
+`let foreign(ABI: abi): Never = builtin()` and
+`let test(name: string)(move body: (): bool): () = builtin()`. They authorize the
 `foreign(c, ...)` initializer and top-level test registration respectively;
-ABI/link and test-name strings remain syntax metadata.
+`c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.
 
 ## 3. Types
 
@@ -343,11 +348,11 @@ postfix_type =
     { type_argument_group } ;
 
 primary_type =
-    path
+    array_type
+  | path
   | primitive_type
   | tuple_type
-  | borrow_type
-  | array_type ;
+  | borrow_type ;
 
 tuple_type =
     "(", type_expr, ",",
@@ -361,7 +366,10 @@ borrow_type =
     type_argument_group ;
 
 array_type =
-    "[", type_expr, ";", INTEGER, "]" ;
+    path, "(", type_expr, ")", "(", static_usize_expression, ")" ;
+
+static_usize_expression =
+    expression ;  (* restricted semantically to the pure static subset *)
 
 type_argument_group =
     "(", [ type_argument, { ",", type_argument }, [ "," ] ], ")" ;
@@ -377,7 +385,10 @@ effect_ref = path, [ type_argument_group ] ;
 ```
 
 `()` is unit, while `(T,)` is a one-element tuple. Curried constructor applications retain each
-argument group in the AST.
+argument group in the AST. The `array_type` production applies when `path` resolves to the
+edition's validated `Array` type form; other constructor arguments remain type expressions.
+`static_usize_expression` admits literals, static names, checked operators, and calls to eligible
+ordinary pure functions.
 
 ## 4. Expressions
 

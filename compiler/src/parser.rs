@@ -2,12 +2,11 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     default_trait_self_parameter, AssociatedKind, AssociatedTypeBinding, BinaryOp, Binding,
-    CallArg, CompileParam, CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef,
-    Expr, ExtendDef, ExtendMember, Field, ForeignAbi, ForeignFunction, Function, FunctionEffects,
-    Item, MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt,
-    StructDef, StructRepresentation, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
-    TypeFormDef, USizeConst, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
-    WherePredicate,
+    CallArg, CompileParam, CompileParamDefault, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember,
+    Field, ForeignAbi, ForeignFunction, Function, FunctionEffects, Item, MatchArm, Param, PassMode,
+    Pattern, PatternField, PatternFields, Program, Sort, SortDef, StaticExpr, Stmt, StructDef,
+    StructRepresentation, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef,
+    USizeConst, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -112,6 +111,8 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    /// Names that may occur in `with(...)`, including individual `effect`
+    /// identities and complete `effects` rows.
     effect_parameters_in_scope: HashSet<String>,
     next_control_binding: usize,
     async_depth: usize,
@@ -243,7 +244,7 @@ impl Parser {
         if !self.at(&TokenKind::Let)
             || !matches!(
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Ident(_))
+                Some(TokenKind::Ident(_) | TokenKind::Mut)
             )
             || !self.at_offset(2, &TokenKind::Equal)
         {
@@ -265,7 +266,7 @@ impl Parser {
         ) {
             if !matches!(
                 self.tokens.get(index + 1).map(|token| &token.kind),
-                Some(TokenKind::Ident(_) | TokenKind::Super)
+                Some(TokenKind::Ident(_) | TokenKind::Mut | TokenKind::Super)
             ) {
                 return false;
             }
@@ -288,7 +289,11 @@ impl Parser {
         visibility: Visibility,
     ) -> Result<UseDecl, ParseError> {
         self.expect(&TokenKind::Let, "`let`")?;
-        let alias = self.expect_ident("an alias name")?;
+        let alias = if self.take(&TokenKind::Mut) {
+            "mut".to_owned()
+        } else {
+            self.expect_ident("an alias name")?
+        };
         self.expect(&TokenKind::Equal, "`=` in alias declaration")?;
         let mut path = vec![self.expect_path_start("an alias target path")?];
         while self.take(&TokenKind::Dot) {
@@ -436,13 +441,22 @@ impl Parser {
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
                 Some(TokenKind::Ident(name)) if name == "domain"
             ) {
+                return Err(self.error_here(
+                    "`domain` was removed; user code must declare a finite sort with `let Name = sort { ... }` because abstract sorts are compiler-owned",
+                ));
+            }
+            if matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "sort"
+            ) {
                 if mutable || !compile_groups.is_empty() {
-                    return Err(self
-                        .error_here("abstract domain declarations cannot be mutable or generic"));
+                    return Err(
+                        self.error_here("abstract sort declarations cannot be mutable or generic")
+                    );
                 }
                 self.advance();
                 self.advance();
-                return Ok(Item::Domain(DomainDef {
+                return Ok(Item::Sort(SortDef {
                     name,
                     members: None,
                 }));
@@ -469,8 +483,8 @@ impl Parser {
                 while self.group_starts_with_compile_parameter() {
                     alias_groups.push(self.compile_parameter_group()?);
                 }
-                self.expect(&TokenKind::Colon, "`:` before type-constructor result kind")?;
-                self.expect(&TokenKind::Type, "`type` as type-constructor result kind")?;
+                self.expect(&TokenKind::Colon, "`:` before type-constructor result sort")?;
+                self.expect(&TokenKind::Type, "`type` as type-constructor result sort")?;
                 self.take_newlines_if_followed_by(&[TokenKind::Equal]);
                 return if self.at(&TokenKind::Equal) && self.builtin_initializer_follows(1) {
                     self.advance();
@@ -609,7 +623,7 @@ impl Parser {
 
         if self.at_context_ident("type") {
             return Err(self.error_here(
-                "`type` is an abstract domain and cannot appear as a declaration value; write `let Name: type`",
+                "`type` is an abstract sort and cannot appear as a declaration value; write `let Name: type`",
             ));
         }
 
@@ -631,6 +645,12 @@ impl Parser {
         }
 
         if self.at_context_ident("domain") {
+            return Err(self.error_here(
+                "`domain` was removed; declare a finite sort with `let Name = sort { ... }`",
+            ));
+        }
+
+        if self.at_context_ident("sort") {
             if mutable
                 || annotation.is_some()
                 || has_effect_group
@@ -639,16 +659,16 @@ impl Parser {
                 || !where_predicates.is_empty()
             {
                 return Err(self.error_here(
-                    "domain declarations cannot be mutable, generic, annotated, or have parameters",
+                    "sort declarations cannot be mutable, generic, annotated, or have parameters",
                 ));
             }
             self.advance();
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here(
-                    "abstract domains use `let Name: domain`; an empty defined domain uses `let Name = domain {}`",
+                    "abstract sorts use `let Name: sort`; an empty defined sort uses `let Name = sort {}`",
                 ));
             }
-            return self.domain_definition(name).map(Item::Domain);
+            return self.sort_definition(name).map(Item::Sort);
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -695,7 +715,7 @@ impl Parser {
                 && annotation.is_none()
                 && compile_groups.len() == 1
                 && compile_groups[0].len() == 1
-                && compile_groups[0][0].kind == CompileParamKind::ParameterModifier;
+                && compile_groups[0][0].kind == Sort::ParameterModifier;
             if transparent_modifier && !self.at(&TokenKind::LBrace) {
                 let body = self.expression(true)?;
                 return Ok(Item::Function(Function {
@@ -884,10 +904,7 @@ impl Parser {
         if compile_groups.iter().flatten().any(|parameter| {
             !matches!(
                 parameter.kind,
-                CompileParamKind::Type
-                    | CompileParamKind::Region
-                    | CompileParamKind::USize
-                    | CompileParamKind::Named(_)
+                Sort::Type | Sort::Region | Sort::USize | Sort::Named(_)
             )
         }) {
             return Err(self.error_here(
@@ -1006,15 +1023,15 @@ impl Parser {
         Ok(name)
     }
 
-    fn domain_definition(&mut self, name: String) -> Result<DomainDef, ParseError> {
+    fn sort_definition(&mut self, name: String) -> Result<SortDef, ParseError> {
         let members = if self.take(&TokenKind::LBrace) {
             self.skip_separators();
             let mut members = Vec::new();
             let mut seen = HashSet::new();
             while !self.take(&TokenKind::RBrace) {
-                let member = self.domain_member_name()?;
+                let member = self.sort_member_name()?;
                 if !seen.insert(member.clone()) {
-                    return Err(self.error_here(format!("duplicate domain member `{member}`")));
+                    return Err(self.error_here(format!("duplicate sort member `{member}`")));
                 }
                 members.push(member);
 
@@ -1025,10 +1042,10 @@ impl Parser {
         } else {
             None
         };
-        Ok(DomainDef { name, members })
+        Ok(SortDef { name, members })
     }
 
-    fn domain_member_name(&mut self) -> Result<String, ParseError> {
+    fn sort_member_name(&mut self) -> Result<String, ParseError> {
         let token = self.current().clone();
         let name = match token.kind {
             TokenKind::Ident(name) if name != "_" => name,
@@ -1043,7 +1060,7 @@ impl Parser {
                 return Err(self.error_at(
                     &token,
                     format!(
-                        "expected a domain member name, found {}",
+                        "expected a sort member name, found {}",
                         describe(&token.kind)
                     ),
                 ))
@@ -1351,12 +1368,13 @@ impl Parser {
             };
             match group {
                 HeaderGroup::Compile(params) => {
-                    self.effect_parameters_in_scope.extend(
-                        params
-                            .iter()
-                            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
-                            .map(|parameter| parameter.name.clone()),
-                    );
+                    self.effect_parameters_in_scope
+                        .extend(params.iter().filter_map(|parameter| {
+                            parameter
+                                .kind
+                                .is_effect_classifier()
+                                .then(|| parameter.name.clone())
+                        }));
                     compile_groups.push(params);
                 }
                 HeaderGroup::Runtime(params) => {
@@ -1387,7 +1405,7 @@ impl Parser {
             };
             if matches!(&schema, Type::Named(_, arguments) if arguments.is_empty()) {
                 let declared = compile_groups.iter().flatten().any(|parameter| {
-                    parameter.name == pack && parameter.kind == CompileParamKind::ParameterPack
+                    parameter.name == pack && parameter.kind == Sort::ParameterPack
                 });
                 if !declared {
                     return Err(self.error_here(format!(
@@ -1479,7 +1497,7 @@ impl Parser {
                         Some(TokenKind::Ident(kind)) if kind == "parameters"
                     )
             } else {
-                self.at_offset(2, &TokenKind::Colon) && self.compile_parameter_kind_starts_at(3)
+                self.at_offset(2, &TokenKind::Colon) && self.compile_parameter_sort_starts_at(3)
             }
     }
 
@@ -1488,10 +1506,10 @@ impl Parser {
             self.current().kind,
             TokenKind::Ident(_) | TokenKind::RegionName(_)
         ) && self.at_offset(1, &TokenKind::Colon)
-            && self.compile_parameter_kind_starts_at(2)
+            && self.compile_parameter_sort_starts_at(2)
     }
 
-    fn compile_parameter_kind_starts_at(&self, offset: usize) -> bool {
+    fn compile_parameter_sort_starts_at(&self, offset: usize) -> bool {
         let conventionally_compile_time = matches!(
             self.tokens
                 .get(self.index + offset.saturating_sub(2))
@@ -1501,19 +1519,19 @@ impl Parser {
         );
         self.at_offset(offset, &TokenKind::Type)
             || self.at_offset(offset, &TokenKind::Region)
-            || self.constructor_compile_parameter_kind_starts_at(offset)
+            || self.constructor_compile_parameter_sort_starts_at(offset)
             || matches!(
                 self.tokens.get(self.index + offset).map(|token| &token.kind),
                 Some(TokenKind::Ident(name))
                     if conventionally_compile_time
                         || matches!(
                             name.as_str(),
-                            "access" | "effect" | "parameters"
+                            "access" | "effect" | "effects" | "parameters" | "string"
                         )
             )
     }
 
-    fn constructor_compile_parameter_kind_starts_at(&self, offset: usize) -> bool {
+    fn constructor_compile_parameter_sort_starts_at(&self, offset: usize) -> bool {
         let mut index = self.index + offset;
         let mut groups = 0;
         while matches!(
@@ -1538,9 +1556,10 @@ impl Parser {
                 }
                 index += 1;
                 if !self.kind_at(index, &TokenKind::Type)
+                    && !self.kind_at(index, &TokenKind::Region)
                     && !matches!(
                         self.tokens.get(index).map(|token| &token.kind),
-                        Some(TokenKind::Ident(name)) if name == "parameters"
+                        Some(TokenKind::Ident(_))
                     )
                 {
                     return false;
@@ -1586,12 +1605,12 @@ impl Parser {
             )
     }
 
-    fn compile_parameter_kind(
+    fn compile_parameter_sort(
         &mut self,
         name_token: &Token,
         name: &str,
         region_name: bool,
-    ) -> Result<CompileParamKind, ParseError> {
+    ) -> Result<Sort, ParseError> {
         if region_name {
             return Err(self.error_at(
                 name_token,
@@ -1624,7 +1643,7 @@ impl Parser {
                     ),
                 ));
             }
-            return Ok(CompileParamKind::Type);
+            return Ok(Sort::Type);
         }
 
         if let TokenKind::Ident(kind) = self.current().kind.clone() {
@@ -1642,14 +1661,16 @@ impl Parser {
                     ));
                 }
                 self.advance();
-                return Ok(CompileParamKind::Region);
+                return Ok(Sort::Region);
             }
             let parameter_kind = match kind.as_str() {
-                "usize" => Some(CompileParamKind::USize),
-                "access" => Some(CompileParamKind::Named("access".to_owned())),
-                "effect" => Some(CompileParamKind::Effect),
-                "parameters" => Some(CompileParamKind::Parameters),
-                _ => Some(CompileParamKind::Named(kind)),
+                "usize" => Some(Sort::USize),
+                "string" => Some(Sort::String),
+                "access" => Some(Sort::Named("access".to_owned())),
+                "effect" => Some(Sort::Effect),
+                "effects" => Some(Sort::Effects),
+                "parameters" => Some(Sort::Parameters),
+                _ => Some(Sort::Named(kind)),
             };
             if let Some(parameter_kind) = parameter_kind {
                 self.advance();
@@ -1682,12 +1703,12 @@ impl Parser {
                     ),
                 ));
             }
-            return self.constructor_compile_parameter_kind();
+            return self.constructor_compile_parameter_sort();
         }
 
         self.expect(
             &TokenKind::Region,
-            "`type`, `usize`, `access`, `effect`, `parameters`, a constructor kind, or `region`",
+            "`type`, `usize`, `access`, `effect`, `effects`, `parameters`, a constructor sort, or `region`",
         )?;
         if name == "static" {
             return Err(self.error_at(
@@ -1701,47 +1722,44 @@ impl Parser {
                 "region compile-time parameters must use ordinary uppercase names like `R: region`; region literals use names like `'r`",
             ));
         }
-        Ok(CompileParamKind::Region)
+        Ok(Sort::Region)
     }
 
-    fn constructor_compile_parameter_kind(&mut self) -> Result<CompileParamKind, ParseError> {
-        let mut parameter_count = 0;
-        let mut parameter_kinds = Vec::new();
+    fn constructor_compile_parameter_sort(&mut self) -> Result<Sort, ParseError> {
+        let mut parameter_groups = Vec::new();
         while self.at(&TokenKind::LParen) {
-            let kinds = self.constructor_kind_parameter_group()?;
-            parameter_count += kinds.len();
-            parameter_kinds.extend(kinds);
+            parameter_groups.push(self.constructor_sort_parameter_group()?);
         }
-        self.expect(&TokenKind::Colon, "`:` before constructor result kind")?;
+        self.expect(&TokenKind::Colon, "`:` before constructor result sort")?;
         if self.take(&TokenKind::Type) {
-            return Ok(CompileParamKind::TypeConstructor { parameter_count });
+            return Ok(Sort::TypeConstructor { parameter_groups });
         }
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "effect") {
             self.advance();
-            return Ok(CompileParamKind::EffectConstructor { parameter_count });
+            return Ok(Sort::EffectConstructor { parameter_groups });
         }
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "parameters") {
             self.advance();
-            if parameter_kinds == [CompileParamKind::Parameters] {
-                return Ok(CompileParamKind::ParameterModifier);
+            if parameter_groups == [vec![Sort::Parameters]] {
+                return Ok(Sort::ParameterModifier);
             }
             return Err(self.error_here(
-                "parameter modifier kinds must have the exact shape `(P: parameters): parameters`",
+                "parameter modifier sorts must have the exact shape `(P: parameters): parameters`",
             ));
         }
-        Err(self.error_here("expected constructor result kind `type`, `effect`, or `parameters`"))
+        Err(self.error_here("expected constructor result sort `type`, `effect`, or `parameters`"))
     }
 
-    fn constructor_kind_parameter_group(&mut self) -> Result<Vec<CompileParamKind>, ParseError> {
-        self.expect(&TokenKind::LParen, "`(` in constructor kind")?;
+    fn constructor_sort_parameter_group(&mut self) -> Result<Vec<Sort>, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` in constructor sort")?;
         if self.take(&TokenKind::RParen) {
-            return Err(self.error_here("constructor kind parameter groups cannot be empty"));
+            return Err(self.error_here("constructor sort parameter groups cannot be empty"));
         }
 
         let mut parameter_kinds = Vec::new();
         loop {
             let name_token = self.current().clone();
-            let name = self.expect_ident("a constructor kind parameter name")?;
+            let name = self.expect_ident("a constructor sort parameter name")?;
             if matches!(
                 name.as_str(),
                 "_" | "i8"
@@ -1762,33 +1780,22 @@ impl Parser {
                 return Err(self.error_at(
                     &name_token,
                     format!(
-                        "reserved type name `{name}` cannot be used as a constructor kind parameter"
+                        "reserved type name `{name}` cannot be used as a constructor sort parameter"
                     ),
                 ));
             }
             self.expect(
                 &TokenKind::Colon,
-                "`:` after constructor kind parameter name",
+                "`:` after constructor sort parameter name",
             )?;
-            let kind = if self.take(&TokenKind::Type) {
-                CompileParamKind::Type
-            } else if matches!(&self.current().kind, TokenKind::Ident(kind) if kind == "parameters")
-            {
-                self.advance();
-                CompileParamKind::Parameters
-            } else {
-                return Err(self.error_here(
-                    "constructor kind parameters currently must have kind `type` or `parameters`",
-                ));
-            };
-            parameter_kinds.push(kind);
+            parameter_kinds.push(self.compile_parameter_sort(&name_token, &name, false)?);
 
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
                     break;
                 }
             } else {
-                self.expect(&TokenKind::RParen, "`)` after constructor kind parameters")?;
+                self.expect(&TokenKind::RParen, "`)` after constructor sort parameters")?;
                 break;
             }
         }
@@ -1808,13 +1815,13 @@ impl Parser {
                 self.expect(&TokenKind::Colon, "`:` after parameter-pack name")?;
                 if !matches!(&self.current().kind, TokenKind::Ident(kind) if kind == "parameters") {
                     return Err(self.error_here(
-                        "`...` compile-time packs currently require kind `parameters`",
+                        "`...` compile-time packs currently require sort `parameters`",
                     ));
                 }
                 self.advance();
                 params.push(CompileParam {
                     name,
-                    kind: CompileParamKind::ParameterPack,
+                    kind: Sort::ParameterPack,
                     default: None,
                 });
                 self.take(&TokenKind::Comma);
@@ -1839,7 +1846,7 @@ impl Parser {
                 _ => unreachable!("compile parameter start was checked"),
             };
             self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
-            let kind = self.compile_parameter_kind(&name_token, &name, region_name)?;
+            let kind = self.compile_parameter_sort(&name_token, &name, region_name)?;
             let default = self.compile_parameter_default(kind.clone())?;
             params.push(CompileParam {
                 name,
@@ -1862,29 +1869,29 @@ impl Parser {
 
     fn compile_parameter_default(
         &mut self,
-        kind: CompileParamKind,
+        kind: Sort,
     ) -> Result<Option<CompileParamDefault>, ParseError> {
         if !self.take(&TokenKind::Equal) {
             return Ok(None);
         }
 
         let default = match kind {
-            CompileParamKind::Effect => {
+            Sort::Effect | Sort::Effects => {
                 CompileParamDefault::Name(self.compile_parameter_default_name("an effect default")?)
             }
-            CompileParamKind::Parameters => {
+            Sort::Parameters => {
                 return Err(self
                     .error_here("defaults for parameter-schema parameters are not supported yet"));
             }
-            CompileParamKind::ParameterPack => {
+            Sort::ParameterPack => {
                 return Err(self.error_here("parameter packs cannot have defaults"));
             }
-            CompileParamKind::ParameterModifier => {
+            Sort::ParameterModifier => {
                 return Err(self.error_here(
                     "defaults for parameter modifier functions are not supported yet",
                 ));
             }
-            CompileParamKind::Region => {
+            Sort::Region => {
                 let token = self.current().clone();
                 let TokenKind::RegionName(name) = token.kind else {
                     return Err(self.error_at(
@@ -1895,15 +1902,20 @@ impl Parser {
                 self.advance();
                 CompileParamDefault::Region(name)
             }
-            CompileParamKind::Type
-            | CompileParamKind::USize
-            | CompileParamKind::TypeConstructor { .. }
-            | CompileParamKind::EffectConstructor { .. } => {
+            Sort::String => {
+                return Err(self.error_here(
+                    "defaults for compile-time string parameters are not supported yet",
+                ));
+            }
+            Sort::Type
+            | Sort::USize
+            | Sort::TypeConstructor { .. }
+            | Sort::EffectConstructor { .. } => {
                 return Err(self.error_here(
                     "defaults for type and constructor parameters are not supported yet",
                 ));
             }
-            CompileParamKind::Named(_) => CompileParamDefault::Name(
+            Sort::Named(_) => CompileParamDefault::Name(
                 self.compile_parameter_default_name("a compile-time value default")?,
             ),
         };
@@ -2329,11 +2341,11 @@ impl Parser {
             let group = self.compile_parameter_group()?;
             let [parameter] = group.as_slice() else {
                 return Err(
-                    self.error_here("trait self kind must declare exactly one `Self` parameter")
+                    self.error_here("trait self sort must declare exactly one `Self` parameter")
                 );
             };
             if parameter.name != "Self" {
-                return Err(self.error_here("trait self kind parameter must be named `Self`"));
+                return Err(self.error_here("trait self sort parameter must be named `Self`"));
             }
             parameter.clone()
         } else {
@@ -2348,10 +2360,10 @@ impl Parser {
         let mut member_effect_parameters = compile_groups
             .iter()
             .flatten()
-            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+            .filter(|parameter| parameter.kind.is_effect_classifier())
             .map(|parameter| parameter.name.clone())
             .collect::<Vec<_>>();
-        if self_parameter.kind == CompileParamKind::Effect {
+        if self_parameter.kind.is_effect_classifier() {
             member_effect_parameters.push(self_parameter.name.clone());
         }
 
@@ -2528,7 +2540,7 @@ impl Parser {
                                 && !matches!(
                                     self.tokens.get(self.index + 2).map(|token| &token.kind),
                                     Some(TokenKind::Ident(kind))
-                                        if matches!(kind.as_str(), "access" | "effect")
+                                        if matches!(kind.as_str(), "access" | "effect" | "effects")
                                 ) {
                                 labeled += 1;
                                 let label = self.expect_ident("an effect argument label")?;
@@ -2790,25 +2802,19 @@ impl Parser {
                     "`_` compile-time argument inference has been removed; provide an explicit array length",
                 ));
             }
-            let length = match length_token.kind {
-                TokenKind::Integer(length) => {
-                    let length = u64::try_from(length).map_err(|_| {
-                        self.error_at(
-                            &length_token,
-                            "array length must fit in an unsigned 64-bit integer",
-                        )
-                    })?;
-                    USizeConst::Literal(length)
-                }
-                TokenKind::Ident(name) => USizeConst::Parameter(name),
-                _ => {
-                    return Err(self.error_at(
+            let length_expression = self.expression(false)?;
+            let static_expression =
+                Self::static_expression(&length_expression).map_err(|message| {
+                    self.error_at(
                         &length_token,
-                        "array length must be a non-negative decimal integer or `usize` parameter",
-                    ));
-                }
+                        format!("invalid compile-time array length: {message}"),
+                    )
+                })?;
+            let length = match static_expression {
+                StaticExpr::USize(length) => USizeConst::Literal(length),
+                StaticExpr::Name(name) => USizeConst::Parameter(name),
+                expression => USizeConst::Expression(Box::new(expression)),
             };
-            self.advance();
             self.take(&TokenKind::Comma);
             self.expect(&TokenKind::RParen, "`)` after array length")?;
             return Ok(Type::ArrayApplication {
@@ -2891,6 +2897,42 @@ impl Parser {
                 name,
                 arguments.into_iter().map(|argument| argument.ty).collect(),
             ))
+        }
+    }
+
+    fn static_expression(expression: &Expr) -> Result<StaticExpr, &'static str> {
+        match expression.unlocated() {
+            Expr::Integer(value) => u64::try_from(*value)
+                .map(StaticExpr::USize)
+                .map_err(|_| "integer values must fit in `usize`"),
+            Expr::Bool(value) => Ok(StaticExpr::Bool(*value)),
+            Expr::Name(name) => Ok(StaticExpr::Name(name.clone())),
+            Expr::Unary(operator, operand) if !matches!(operator, UnaryOp::Deref) => Ok(
+                StaticExpr::Unary(*operator, Box::new(Self::static_expression(operand)?)),
+            ),
+            Expr::Binary(left, operator, right) => Ok(StaticExpr::Binary(
+                Box::new(Self::static_expression(left)?),
+                *operator,
+                Box::new(Self::static_expression(right)?),
+            )),
+            Expr::Call(callee, arguments) => {
+                let Expr::Name(function) = callee.unlocated() else {
+                    return Err("static calls must name a top-level pure function");
+                };
+                if arguments.iter().any(|argument| argument.label.is_some()) {
+                    return Err("static calls do not support labeled arguments yet");
+                }
+                Ok(StaticExpr::Call {
+                    function: function.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| Self::static_expression(&argument.value))
+                        .collect::<Result<_, _>>()?,
+                })
+            }
+            _ => Err(
+                "expected a pure expression using literals, names, operators, and top-level calls",
+            ),
         }
     }
 
@@ -4771,6 +4813,10 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
+            TokenKind::Mut => {
+                self.advance();
+                Ok("mut".to_owned())
+            }
             _ => Err(self.error_at(
                 &token,
                 format!(
@@ -4903,7 +4949,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                     validate_function_scopes(operation, &regions, &accesses, &empty)?;
                 }
             }
-            Item::Domain(_) => {}
+            Item::Sort(_) => {}
             Item::TypeForm(definition) => {
                 let mut names = HashSet::new();
                 for parameter in definition.compile_groups.iter().flatten() {
@@ -4980,10 +5026,10 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                     .compile_groups
                     .iter()
                     .flatten()
-                    .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+                    .filter(|parameter| parameter.kind.is_effect_classifier())
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
-                if definition.self_parameter.kind == CompileParamKind::Effect {
+                if definition.self_parameter.kind.is_effect_classifier() {
                     effects.insert(definition.self_parameter.name.clone());
                 }
                 for member in &mut definition.members {
@@ -5083,7 +5129,7 @@ fn reject_effect_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result
     if groups
         .iter()
         .flatten()
-        .any(|parameter| parameter.kind == CompileParamKind::Effect)
+        .any(|parameter| parameter.kind.is_effect_classifier())
     {
         Err(format!(
             "{owner} cannot declare an `effect` parameter; effect parameters belong to functions"
@@ -5116,7 +5162,7 @@ fn declared_regions(
 ) -> Result<HashSet<String>, String> {
     let mut regions = outer.clone();
     for parameter in groups.iter().flatten() {
-        if parameter.kind != CompileParamKind::Region {
+        if parameter.kind != Sort::Region {
             continue;
         }
         if parameter.name == "static" {
@@ -5144,7 +5190,7 @@ fn validate_function_scopes(
         .compile_groups
         .iter()
         .flatten()
-        .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+        .filter(|parameter| parameter.kind.is_effect_classifier())
     {
         if !effects.insert(parameter.name.clone()) {
             return Err(format!("duplicate effect parameter `{}`", parameter.name));
@@ -6635,7 +6681,7 @@ mod tests {
         assert_eq!(identity.compile_groups.len(), 1);
         assert_eq!(identity.compile_groups[0].len(), 1);
         assert_eq!(identity.compile_groups[0][0].name, "T");
-        assert_eq!(identity.compile_groups[0][0].kind, CompileParamKind::Type);
+        assert_eq!(identity.compile_groups[0][0].kind, Sort::Type);
         assert_eq!(identity.groups.len(), 1);
         assert_eq!(
             identity.groups[0][0].ty,
@@ -6709,7 +6755,7 @@ mod tests {
         let Item::Enum(maybe) = &program.items[1] else {
             panic!("expected generic enum");
         };
-        assert_eq!(maybe.compile_groups[0][0].kind, CompileParamKind::Type);
+        assert_eq!(maybe.compile_groups[0][0].kind, Sort::Type);
         assert!(matches!(
             &maybe.variants[0].fields,
             VariantFields::Positional(types)
@@ -6902,11 +6948,8 @@ mod tests {
             panic!("expected generic associated type");
         };
         assert_eq!(compile_groups.len(), 2);
-        assert_eq!(
-            compile_groups[0][0].kind,
-            CompileParamKind::Named("access".into())
-        );
-        assert_eq!(compile_groups[1][0].kind, CompileParamKind::Region);
+        assert_eq!(compile_groups[0][0].kind, Sort::Named("access".into()));
+        assert_eq!(compile_groups[1][0].kind, Sort::Region);
     }
 
     #[test]
@@ -8048,6 +8091,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_pure_static_expressions_in_dependent_array_lengths() {
+        let program = parse(
+            "let next(value: usize): usize = { value + 1 }\n\
+             let consume(values: Array(i32)(next(2) * 2)): i32 = { values[0] }\n",
+        )
+        .unwrap();
+        let Item::Function(consume) = &program.items[1] else {
+            panic!("expected consume function");
+        };
+        assert_eq!(
+            consume.groups[0][0].ty,
+            Type::ArrayApplication {
+                constructor: "Array".into(),
+                element: Box::new(Type::I32),
+                length: USizeConst::Expression(Box::new(StaticExpr::Binary(
+                    Box::new(StaticExpr::Call {
+                        function: "next".into(),
+                        arguments: vec![StaticExpr::USize(2)],
+                    }),
+                    BinaryOp::Mul,
+                    Box::new(StaticExpr::USize(2)),
+                ))),
+            }
+        );
+    }
+
+    #[test]
     fn indexed_places_can_be_assigned_and_borrowed() {
         let program = parse(
             "let main(): i32 = {\n\
@@ -8148,7 +8218,7 @@ mod tests {
             panic!("expected function");
         };
         assert_eq!(function.compile_groups[0][0].name, "R");
-        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Region);
+        assert_eq!(function.compile_groups[0][0].kind, Sort::Region);
         assert_eq!(
             function.groups[0][0].ty,
             Type::Borrow {
@@ -8220,12 +8290,30 @@ mod tests {
         };
         assert!(matches!(
             &function.compile_groups[0][0].kind,
-            CompileParamKind::Named(name) if name == "bool"
+            Sort::Named(name) if name == "bool"
         ));
         assert!(matches!(
             &function.compile_groups[0][1].kind,
-            CompileParamKind::Named(name) if name == "optimization"
+            Sort::Named(name) if name == "optimization"
         ));
+    }
+
+    #[test]
+    fn parses_metadata_string_compile_parameters() {
+        let program =
+            parse("let register(name: string)(move body: (): bool): () = builtin()\n").unwrap();
+        let [Item::Function(function)] = program.items.as_slice() else {
+            panic!("expected one metadata function");
+        };
+        assert_eq!(
+            function.compile_groups,
+            vec![vec![CompileParam {
+                name: "name".to_owned(),
+                kind: Sort::String,
+                default: None,
+            }]]
+        );
+        assert_eq!(function.groups.len(), 1);
     }
 
     #[test]
@@ -8264,24 +8352,21 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(
-            function.compile_groups[0][0].kind,
-            CompileParamKind::ParameterModifier
-        );
+        assert_eq!(function.compile_groups[0][0].kind, Sort::ParameterModifier);
         assert_eq!(function.groups[0][0].modifiers, ["M"]);
     }
 
     #[test]
     fn parses_effect_parameters_in_with_clauses() {
         let program = parse(
-            "let tagged(E: effect)(value: i32): i32 with(E) = { value }\n\
-             let combined(E: effect)(value: i32): i32 with(Unsafe, E) = { value }\n",
+            "let tagged(E: effects)(value: i32): i32 with(E) = { value }\n\
+             let combined(E: effects)(value: i32): i32 with(Unsafe, E) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Effect);
+        assert_eq!(function.compile_groups[0][0].kind, Sort::Effects);
         assert_eq!(function.effects.parameters, vec!["E"]);
         let Item::Function(combined) = &program.items[1] else {
             panic!("expected function");
@@ -8292,15 +8377,15 @@ mod tests {
         );
         assert_eq!(combined.effects.parameters, vec!["E"]);
 
-        let error = parse("let Box(E: effect) = struct { value: i32 }\n").unwrap_err();
+        let error = parse("let Box(E: effects) = struct { value: i32 }\n").unwrap_err();
         assert!(error
             .message
             .contains("effect parameters belong to functions"));
 
-        let error = parse("let bad(E: effect)(value: E): i32 with(E) = { 0 }\n").unwrap_err();
+        let error = parse("let bad(E: effects)(value: E): i32 with(E) = { 0 }\n").unwrap_err();
         assert!(error.message.contains("cannot be used as a runtime type"));
 
-        let error = parse("let old(E: effect)(value: i32): i32(E) = { value }\n").unwrap_err();
+        let error = parse("let old(E: effects)(value: i32): i32(E) = { value }\n").unwrap_err();
         assert!(
             error
                 .message
@@ -8316,7 +8401,7 @@ mod tests {
         let program = parse(
             "let Handle = trait(Self: effect) {\n\
                let Clauses(Value: type, Answer: type): parameters\n\
-               let handle(Value: type, Answer: type, Rest: effect) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
+               let handle(Value: type, Answer: type, Rest: effects) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
              }\n",
         )
         .unwrap();
@@ -8352,20 +8437,21 @@ mod tests {
     }
 
     #[test]
-    fn parses_compiler_provided_domain_and_control_contract_declarations() {
+    fn parses_compiler_provided_sort_and_control_contract_declarations() {
         let program = parse(
             "pub let Unsafe = effect {}\n\
              pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
-             pub let type: domain\n\
-             pub let effect: domain\n\
-             pub let Empty = domain {}\n\
-             pub let access = enum {\n\
+             pub let type: sort\n\
+             pub let effect: sort\n\
+             pub let effects: sort\n\
+             pub let Empty = sort {}\n\
+             pub let access = sort {\n\
                /// Shared read-only access.\n\
-               shared,\n\
+               shared\n\
                /// Exclusive mutable access.\n\
                mut\n\
              }\n\
-             pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)\n",
+             pub let do(E: effects, T: type)(move action: (): T with(E)): T with(E)\n",
         )
         .unwrap();
         assert!(matches!(
@@ -8378,24 +8464,29 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[2],
-            Item::Domain(domain) if domain.name == "type" && domain.members.is_none()
+            Item::Sort(sort) if sort.name == "type" && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[3],
-            Item::Domain(domain) if domain.name == "effect" && domain.members.is_none()
+            Item::Sort(sort) if sort.name == "effect" && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[4],
-            Item::Domain(domain) if domain.name == "Empty" && domain.members == Some(Vec::new())
+            Item::Sort(sort) if sort.name == "effects" && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[5],
-            Item::Enum(definition) if definition.name == "access"
-                && definition.variants.iter().map(|variant| variant.name.as_str())
-                    .eq(["shared", "mut"])
+            Item::Sort(sort) if sort.name == "Empty" && sort.members == Some(Vec::new())
         ));
         assert!(matches!(
             &program.items[6],
+            Item::Sort(sort) if sort.name == "access"
+                && sort.members.as_ref().is_some_and(|members| members.iter().map(String::as_str)
+                    .eq(["shared", "mut"])
+                )
+        ));
+        assert!(matches!(
+            &program.items[7],
             Item::Function(function) if function.name == "do" && function.body.is_none()
         ));
     }
@@ -8467,7 +8558,7 @@ mod tests {
             "pub let match(\n\
                Input: type,\n\
                Output: type,\n\
-               E: effect,\n\
+               E: effects,\n\
                ...Cases: parameters,\n\
              )\n\
                (move input: Input)\n\
@@ -8482,22 +8573,22 @@ mod tests {
             vec![vec![
                 CompileParam {
                     name: "Input".to_owned(),
-                    kind: CompileParamKind::Type,
+                    kind: Sort::Type,
                     default: None,
                 },
                 CompileParam {
                     name: "Output".to_owned(),
-                    kind: CompileParamKind::Type,
+                    kind: Sort::Type,
                     default: None,
                 },
                 CompileParam {
                     name: "E".to_owned(),
-                    kind: CompileParamKind::Effect,
+                    kind: Sort::Effects,
                     default: None,
                 },
                 CompileParam {
                     name: "Cases".to_owned(),
-                    kind: CompileParamKind::ParameterPack,
+                    kind: Sort::ParameterPack,
                     default: None,
                 },
             ]]
@@ -8522,7 +8613,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_type_forms_and_closed_enums_from_the_type_domain() {
+    fn parses_type_forms_and_closed_enums_from_the_type_sort() {
         let program = parse("pub let i32: type\npub let bool = enum { false, true }\n").unwrap();
         assert!(matches!(
             &program.items[0],
@@ -8544,14 +8635,14 @@ mod tests {
     #[test]
     fn rejects_removed_type_value_syntax_and_duplicate_enum_variants() {
         let error = parse("let i32 = type\n").unwrap_err();
-        assert!(error.message.contains("abstract domain"));
+        assert!(error.message.contains("abstract sort"));
 
         let error = parse("let bool = type { false, true }\n").unwrap_err();
-        assert!(error.message.contains("abstract domain"));
+        assert!(error.message.contains("abstract sort"));
 
-        let error = parse("let kind = domain\n").unwrap_err();
-        assert!(error.message.contains("let Name: domain"));
-        assert!(error.message.contains("domain {}"));
+        let error = parse("let kind = sort\n").unwrap_err();
+        assert!(error.message.contains("let Name: sort"));
+        assert!(error.message.contains("sort {}"));
 
         let error = parse("let bool = enum { false, false }\n").unwrap_err();
         assert!(error.message.contains("duplicate enum variant `false`"));
@@ -8673,7 +8764,7 @@ mod tests {
     #[test]
     fn parses_effects_as_part_of_callable_signatures() {
         let program = parse(
-            "let apply(E: effect)(action: (i32): i32 with(E))(value: i32): i32 with(E) = { value }\n",
+            "let apply(E: effects)(action: (i32): i32 with(E))(value: i32): i32 with(E) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -8688,7 +8779,7 @@ mod tests {
         ));
 
         let old =
-            parse("let apply(E: effect)(action: (i32): i32(E))(value: i32): i32 = { value }\n")
+            parse("let apply(E: effects)(action: (i32): i32(E))(value: i32): i32 = { value }\n")
                 .unwrap_err();
         assert!(
             old.message
@@ -8861,9 +8952,19 @@ mod tests {
     }
 
     #[test]
-    fn array_length_must_be_a_non_negative_decimal_integer() {
-        let error = parse("let main(values: Array(i32)(-1)): i32 = { 0 }\n").unwrap_err();
-        assert!(error.message.contains("non-negative decimal integer"));
+    fn array_length_must_be_a_restricted_static_expression() {
+        let error =
+            parse("let main(values: Array(i32)(borrow(value))): i32 = { 0 }\n").unwrap_err();
+        assert!(
+            error.message.contains("invalid compile-time array length"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("expected a pure expression"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -8882,12 +8983,12 @@ mod tests {
             vec![
                 vec![CompileParam {
                     name: "T".to_owned(),
-                    kind: CompileParamKind::Type,
+                    kind: Sort::Type,
                     default: None,
                 }],
                 vec![CompileParam {
                     name: "L".to_owned(),
-                    kind: CompileParamKind::USize,
+                    kind: Sort::USize,
                     default: None,
                 }]
             ]
@@ -9050,7 +9151,7 @@ mod tests {
         assert_eq!(binding.name, "Item");
         assert_eq!(binding.compile_groups.len(), 2);
         assert!(binding.compile_groups[0][0].kind.is_access());
-        assert_eq!(binding.compile_groups[1][0].kind, CompileParamKind::Region);
+        assert_eq!(binding.compile_groups[1][0].kind, Sort::Region);
         assert_eq!(
             binding.ty,
             Type::Borrow {
@@ -9187,12 +9288,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_constructor_compile_parameter_kinds() {
+    fn parses_constructor_compile_parameter_sorts() {
         let program = parse(
             "let Use(F: (Element: type): type)(move value: F(i32)): F(i32) = { value }\n\
+             let Curried(F: (Element: type)(Length: usize): type)(): i32 = { 0 }\n\
              let Effects(E: (Error: type): effect)(move action: (): i32 with(E(bool))): i32 with(E(bool)) = { action() }\n\
              let Functor = trait(Self: (Value: type): type) {\n\
-               let map(E: effect, A: type, B: type)(move self: Self(A))(move transform: (A): B with(E)): Self(B) with(E)\n\
+               let map(E: effects, A: type, B: type)(move self: Self(A))(move transform: (A): B with(E)): Self(B) with(E)\n\
              }\n\
              let Applicative = trait(Self: (Value: type): type)\n\
              where Self: Functor {\n\
@@ -9205,35 +9307,51 @@ mod tests {
         };
         assert_eq!(
             function.compile_groups[0][0].kind,
-            CompileParamKind::TypeConstructor { parameter_count: 1 }
+            Sort::TypeConstructor {
+                parameter_groups: vec![vec![Sort::Type]],
+            }
         );
         assert_eq!(
             function.groups[0][0].ty,
             Type::Named("F".into(), vec![Type::I32])
         );
 
-        let Item::Function(effects) = &program.items[1] else {
+        let Item::Function(curried) = &program.items[1] else {
+            panic!("expected curried constructor function");
+        };
+        assert_eq!(
+            curried.compile_groups[0][0].kind,
+            Sort::TypeConstructor {
+                parameter_groups: vec![vec![Sort::Type], vec![Sort::USize]],
+            }
+        );
+
+        let Item::Function(effects) = &program.items[2] else {
             panic!("expected effect-constructor function");
         };
         assert_eq!(
             effects.compile_groups[0][0].kind,
-            CompileParamKind::EffectConstructor { parameter_count: 1 }
+            Sort::EffectConstructor {
+                parameter_groups: vec![vec![Sort::Type]],
+            }
         );
         assert_eq!(
             effects.effects.custom,
             vec![Type::Named("E".into(), vec![Type::Bool])]
         );
 
-        let Item::Trait(trait_def) = &program.items[2] else {
+        let Item::Trait(trait_def) = &program.items[3] else {
             panic!("expected trait");
         };
         assert_eq!(
             trait_def.self_parameter.kind,
-            CompileParamKind::TypeConstructor { parameter_count: 1 }
+            Sort::TypeConstructor {
+                parameter_groups: vec![vec![Sort::Type]],
+            }
         );
         assert!(trait_def.compile_groups.is_empty());
 
-        let Item::Trait(applicative) = &program.items[3] else {
+        let Item::Trait(applicative) = &program.items[4] else {
             panic!("expected inherited trait");
         };
         assert_eq!(applicative.where_predicates.len(), 1);

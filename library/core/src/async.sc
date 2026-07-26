@@ -11,7 +11,7 @@ pub let Poll(T: type) = enum {
 }
 
 /// A cold asynchronous computation with residual effect row `E`.
-pub let Future(E: effect) = trait
+pub let Future(E: effects) = trait
 where Self: Move {
   let Output: type
 
@@ -22,7 +22,7 @@ where Self: Move {
 
 /// Explicit executor protocol. Creating a future never selects an executor.
 pub let Executor = trait {
-  let run(E: effect, F: type, T: type)
+  let run(E: effects, F: type, T: type)
     (self: borrow(mut)(Self))
     (move future: F): T with(E)
   where F: Future(E, Output = T)
@@ -32,7 +32,7 @@ pub let Executor = trait {
 pub let Spin = struct {}
 
 extend Spin: Executor {
-  let run(E: effect, F: type, T: type)
+  let run(E: effects, F: type, T: type)
     (self: borrow(mut)(Self))
     (move future: F): T with(E)
   where F: Future(E, Output = T) = {
@@ -46,12 +46,12 @@ extend Spin: Executor {
 }
 
 /// Constructs a cold compiler-generated future without running `action`.
-pub let async(E: effect, F: type, T: type)
+pub let async(E: effects, F: type, T: type)
   (move action: (): T with(core.async.Async, E)): F
 where F: Future(E, Output = T) = builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
-pub let await(E: effect, F: type, T: type)
+pub let await(E: effects, F: type, T: type)
   (move future: F): T with(core.async.Async, E)
 where F: Future(E, Output = T) = {
   let mut current = future

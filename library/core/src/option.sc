@@ -14,7 +14,7 @@ extend(T: type) Option(T): core.flow.Chain {
   let Rebind = Option
 
   /// Applies `transform` to `Some` and propagates `None`.
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (T): U with(E)): Option(U) with(E) = {
     match self
@@ -29,7 +29,7 @@ extend(T: type) Option(T): core.flow.Coalesce {
   let Item = T
 
   /// Extracts `Some` or evaluates `fallback` for `None`.
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): T with(E)): T with(E) = {
     match self
@@ -52,7 +52,7 @@ extend(T: type) Option(T): core.flow.Unwrap {
 /// Implements `Functor` for `Option`.
 extend Option: core.functional.Functor {
   /// Maps `Some` through `transform` and preserves `None`.
-  let map(E: effect, A: type, B: type)
+  let map(E: effects, A: type, B: type)
     (self: Option(A))
     (transform: (A): B with(E)): Option(B) with(E) = {
     match self
@@ -70,7 +70,7 @@ extend Option: core.functional.Applicative {
   }
 
   /// Applies a `Some` function to a `Some` value and otherwise returns `None`.
-  let apply(E: effect, A: type, B: type)
+  let apply(E: effects, A: type, B: type)
     (self: Option((A): B with(E)))
     (value: Option(A)): Option(B) with(E) = {
     match self
@@ -84,7 +84,7 @@ extend Option: core.functional.Applicative {
 /// Implements `Monad` for `Option`.
 extend Option: core.functional.Monad {
   /// Runs `next` for `Some` and propagates `None`.
-  let flat_map(E: effect, A: type, B: type)
+  let flat_map(E: effects, A: type, B: type)
     (self: Option(A))
     (next: (A): Option(B) with(E)): Option(B) with(E) = {
     match self

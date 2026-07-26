@@ -5,7 +5,7 @@ pub let Throws(Error: type) = effect {
 }
 
 /// Handles `Throws(E)` from `action` and returns a `Result`.
-pub let try(F: effect, T: type, E: type)
+pub let try(F: effects, T: type, E: type)
   (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F) = {
   core.error.Throws(E).handle
     raise { (error) -> core.Result.Err(error) }

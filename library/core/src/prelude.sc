@@ -21,3 +21,5 @@ pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of
 pub let copy = core.passing.copy
 pub let move = core.passing.move
+pub let mut = core.borrow.mut
+pub let shared = core.borrow.shared

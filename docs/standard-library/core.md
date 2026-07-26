@@ -16,10 +16,11 @@ primitives remain ordinary Salicin definitions: the core implementation does
 not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
-`let foreign(): Never = builtin()` and
-`let test(move body: (): bool): () = builtin()`. These are canonical syntax
-contracts for foreign initializers and test registrations; their ABI/link and
-registration-name strings are compile-time metadata.
+`let foreign(ABI: abi): Never = builtin()` and
+`let test(name: string)(move body: (): bool): () = builtin()`. These are canonical syntax
+contracts for foreign initializers and test registrations. `c` is the member of the finite
+`abi` sort selected by `foreign(c, ...)`; registration names inhabit the compiler-owned
+`string` sort. ABI/link and registration-name metadata is erased before runtime lowering.
 
 ## Modules
 
@@ -144,7 +145,7 @@ pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
 
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (Item): U with(E)): Rebind(U) with(E)
 }
@@ -152,7 +153,7 @@ pub let Chain = trait {
 pub let Coalesce = trait {
   let Item: type
 
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): Item with(E)): Item with(E)
 }
@@ -161,8 +162,8 @@ pub let Coalesce = trait {
 The protocols use the same trait and generic-associated-constructor syntax as user declarations.
 The compiler lowers GAT references in trait method signatures and supports direct constructor
 implementations such as `let Rebind = Maybe` plus partially applied type aliases. GAT parameters
-may carry `type`, `access`, `region`, `usize`, and closed-value kinds; implementation constructors
-must match those kinds, not merely their arity. `??` dispatches non-`Option`/`Result` nominal
+may carry `type`, `access`, `region`, `usize`, and closed-value sorts; implementation constructors
+must match those sorts and parameter-group boundaries, not merely their arity. `??` dispatches non-`Option`/`Result` nominal
 values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
@@ -189,7 +190,7 @@ the same source-level effect forms as user code. `Throws.raise` is an ordinary `
 effect operation and can be handled with a normal abort clause such as `raise: { (error) -> ... }`.
 Standard and user effect identities use type-like nominal spelling: effect declarations and the
 final segment of a `with(...)` effect path must start with an uppercase letter. Effect row parameters
-such as `E: effect` are still resolved as parameters rather than nominal effects.
+such as `E: effects` are still resolved as parameters rather than nominal effects.
 Source `throw(error)` targets this ordinary operation when the current effect row has exactly one
 active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(Error)(T)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
@@ -200,22 +201,33 @@ probeable and the escaping error type is unique. `Async` currently exposes only 
 async/Future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
 
-`core.domains` owns standard compile-time domains, also outside the prelude:
+`core.sorts` owns standard compile-time sorts, also outside the prelude:
 
 ```sc fragment
-pub let type: domain
-pub let region: domain
-pub let effect: domain
-pub let parameters: domain
+pub let type: sort
+pub let region: sort
+pub let effect: sort
+pub let effects: sort
+pub let parameters: sort
+pub let string: sort
+pub let abi = sort {
+  c
+}
 ```
 
-`core.borrow` owns the closed access type:
+`effect` classifies one nominal effect identity; `effects` classifies a normalized zero-or-more
+effect row. `string` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
+calling-convention sort whose first supported value is `c`.
+
+`core.borrow` owns the finite access sort and its unqualified aliases:
 
 ```sc fragment
-pub let access = enum {
-  shared,
+pub let access = sort {
+  shared
   mut
 }
+pub let mut = access.mut
+pub let shared = access.shared
 ```
 
 `core.passing` owns the parameter modifier functions:
@@ -226,8 +238,8 @@ pub let move(P: parameters): parameters
 ```
 
 Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
-`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the closed access type; generic
-passing modifiers use the `(P: parameters): parameters` function kind.
+`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the finite access sort; generic
+passing modifiers use the `(P: parameters): parameters` function sort.
 
 `core.memory` declares the fixed-size `Array(T)(L)`, unsized `Slice(T)`, and
 `Ptr(A: access = shared)(T)` raw-pointer family. `Slice(T)` is never a first-class stored value:
@@ -268,7 +280,7 @@ pub let Continuation(Input: type, Output: type): type
 pub let EffectCallable(Input: type, Output: type, Answer: type): type
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): parameters
-  let handle(Value: type, Answer: type, Rest: effect)
+  let handle(Value: type, Answer: type, Rest: effects)
     ...Clauses(Value, Answer)
     (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
@@ -324,9 +336,9 @@ Output agrees. Each branch retains its own linear locals across suspension; a br
 is an immediate Ready future. Loop suspension remains compiler work.
 
 ```sc fragment
-pub let do(E: effect, T: type)
+pub let do(E: effects, T: type)
   (move action: (): T with(E)): T with(E)
-pub let do(E: effect)
+pub let do(E: effects)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))
   (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
   loop {
@@ -336,18 +348,18 @@ pub let do(E: effect)
     if while() { continue() } else { break() }
   }
 }
-pub let try(F: effect, T: type, E: type)
+pub let try(F: effects, T: type, E: type)
   (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)
   (move error: Error): Never with(core.error.Throws(Error))
-pub let unsafe(E: effect, T: type)
+pub let unsafe(E: effects, T: type)
   (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)
-pub let loop(E: effect, T: type)
+pub let loop(E: effects, T: type)
   (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
-pub let while(E: effect)
+pub let while(E: effects)
   (move condition: (): bool with(E))
   (move do: (): () with(E)): () with(E)
-pub let if(E: effect, T: type)
+pub let if(E: effects, T: type)
   (condition: bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E) = {
@@ -355,10 +367,10 @@ pub let if(E: effect, T: type)
     { true -> then() }
     { false -> else() }
 }
-pub let match(Input: type, Output: type, E: effect, ...Cases: parameters)
+pub let match(Input: type, Output: type, E: effects, ...Cases: parameters)
   (move input: Input)
   ...Cases: Output with(E)
-pub let for(E: effect, Iterable: type, Iter: type, Item: type)
+pub let for(E: effects, Iterable: type, Iter: type, Item: type)
   (move iterable: Iterable)
   (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
 where Iterable: core.iter.IntoIterator(IntoIter = Iter),
@@ -372,12 +384,12 @@ only the selected lazy branch or case. The source definitions that do not requir
 lowering remain intentionally simple:
 
 ```sc fragment
-pub let do(E: effect, T: type)
+pub let do(E: effects, T: type)
   (move action: (): T with(E)): T with(E) = {
   action()
 }
 
-pub let try(F: effect, T: type, E: type)
+pub let try(F: effects, T: type, E: type)
   (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F) = {
   core.error.Throws(E).handle raise { (error) -> core.Result.Err(error) } done { (value) -> core.Result.Ok(value) } action {
     action()
@@ -457,7 +469,7 @@ part of the prelude:
 
 ```sc fragment
 pub let Functor = trait(Self: (Value: type): type) {
-  let map(E: effect, A: type, B: type)
+  let map(E: effects, A: type, B: type)
     (self: Self(A))
     (transform: (A): B with(E)): Self(B) with(E)
 }
@@ -467,20 +479,20 @@ where Self: Functor {
   let pure(A: type)
     (value: A): Self(A)
 
-  let apply(E: effect, A: type, B: type)
+  let apply(E: effects, A: type, B: type)
     (self: Self((A): B with(E)))
     (value: Self(A)): Self(B) with(E)
 }
 
 pub let Monad = trait(Self: (Value: type): type)
 where Self: Applicative {
-  let flat_map(E: effect, A: type, B: type)
+  let flat_map(E: effects, A: type, B: type)
     (self: Self(A))
     (next: (A): Self(B) with(E)): Self(B) with(E)
 }
 ```
 
-These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,
+These declarations use constructor sorts such as `(Value: type): type` on the trait `Self` subject,
 not as ordinary trait parameters. Traits with a matching constructor subject can be implemented for
 generic nominal constructors. Method implementations are registered as generic function templates
 and validated, for example `extend Carrier: Functor{let map(E, A, B)...}`. Receiver methods

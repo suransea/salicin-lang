@@ -15,7 +15,7 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Chain {
   let Rebind = Result(Error)
 
   /// Applies `transform` to `Ok` and propagates `Err`.
-  let chain(E: effect, U: type)
+  let chain(E: effects, U: type)
     (self)
     (transform: (T): U with(E)): Result(Error)(U) with(E) = {
     match self
@@ -30,7 +30,7 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Coalesce {
   let Item = T
 
   /// Extracts `Ok` or evaluates `fallback` for `Err`.
-  let coalesce(E: effect)
+  let coalesce(E: effects)
     (self)
     (fallback: (): T with(E)): T with(E) = {
     match self
@@ -65,7 +65,7 @@ extend(E: type, T: type) Result(E)(T): core.flow.Raise {
 /// Implements `Functor` for `Result(Error)`.
 extend(Error: type) Result(Error): core.functional.Functor {
   /// Maps `Ok` through `transform` and preserves `Err`.
-  let map(E: effect, A: type, B: type)
+  let map(E: effects, A: type, B: type)
     (self: Result(Error)(A))
     (transform: (A): B with(E)): Result(Error)(B) with(E) = {
     match self
@@ -83,7 +83,7 @@ extend(Error: type) Result(Error): core.functional.Applicative {
   }
 
   /// Applies an `Ok` function to an `Ok` value and propagates the first `Err`.
-  let apply(E: effect, A: type, B: type)
+  let apply(E: effects, A: type, B: type)
     (self: Result(Error)((A): B with(E)))
     (value: Result(Error)(A)): Result(Error)(B) with(E) = {
     match self
@@ -97,7 +97,7 @@ extend(Error: type) Result(Error): core.functional.Applicative {
 /// Implements `Monad` for `Result(Error)`.
 extend(Error: type) Result(Error): core.functional.Monad {
   /// Runs `next` for `Ok` and propagates `Err`.
-  let flat_map(E: effect, A: type, B: type)
+  let flat_map(E: effects, A: type, B: type)
     (self: Result(Error)(A))
     (next: (A): Result(Error)(B) with(E)): Result(Error)(B) with(E) = {
     match self

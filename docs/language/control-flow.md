@@ -22,7 +22,7 @@ requires it.
 Conceptually, `if` has this shape:
 
 ```sc fragment
-let if(E: effect, T: type)
+let if(E: effects, T: type)
   (condition: bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E)

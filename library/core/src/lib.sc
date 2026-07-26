@@ -2,11 +2,11 @@
 // the compiler. Semantic validation gives each use its declaration annotation.
 let builtin() = builtin()
 
-// Private syntax contracts. `foreign(c, ...)` supplies ABI metadata to a
-// declaration, while `test("name") { ... }` supplies compile-time runner
-// metadata around a pure boolean action.
-let foreign(): Never = builtin()
-let test(move body: (): bool): () = builtin()
+// Private syntax contracts. Their leading groups are erased metadata:
+// `c` is a member of the `abi` sort and test names inhabit the compiler-owned
+// `string` sort. The boolean action is the only runtime-shaped test argument.
+let foreign(ABI: abi): Never = builtin()
+let test(name: string)(move body: (): bool): () = builtin()
 
 pub let Never = core.never.Never
 pub let Move = core.marker.Move

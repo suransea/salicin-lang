@@ -2,16 +2,17 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{
-    CallArg, CompileParam, CompileParamKind, Expr, FunctionEffects, Type, USizeConst, VariantFields,
+    CallArg, CompileParam, Expr, FunctionEffects, Sort, Type, USizeConst, VariantFields,
 };
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    closed_value_from_marker, closed_value_marker, describe_compile_param_kind,
-    effect_identity_sources, effect_row_from_marker, effect_row_from_source, effect_row_source,
-    is_compile_value_marker, source_effect_identity, type_constructor_from_marker,
-    type_constructor_marker, usize_value_from_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER, PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
+    access_mutability, closed_value_from_marker, closed_value_marker, closed_value_member,
+    describe_compile_sort, effect_identity_sources, effect_row_from_marker, effect_row_from_source,
+    effect_row_source, is_access_sort_name, is_compile_value_marker, source_effect_identity,
+    type_constructor_from_marker, type_constructor_marker, usize_value_from_marker,
+    usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PARAMETER_MODIFIER_COPY_MARKER,
+    PARAMETER_MODIFIER_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -161,25 +162,30 @@ impl Analyzer {
                     ));
                     return Ty::Error;
                 }
-                let USizeConst::Literal(length) = length else {
-                    self.error(format!(
-                        "array length parameter `{}` was not resolved during generic instantiation",
-                        match length {
-                            USizeConst::Parameter(name) => name,
-                            USizeConst::Literal(_) => unreachable!(),
-                        }
-                    ));
-                    return Ty::Error;
+                let length = match length {
+                    USizeConst::Literal(length) => *length,
+                    USizeConst::Expression(expression) => {
+                        let Some(length) = self.evaluate_static_usize(expression) else {
+                            return Ty::Error;
+                        };
+                        length
+                    }
+                    USizeConst::Parameter(name) => {
+                        self.error(format!(
+                            "array length parameter `{name}` was not resolved during generic instantiation"
+                        ));
+                        return Ty::Error;
+                    }
                 };
                 let element = self.lower_source_type(element);
-                if *length > i32::MAX as u64 {
+                if length > i32::MAX as u64 {
                     self.error(format!(
                         "array length {length} exceeds the first-version limit of {}",
                         i32::MAX
                     ));
                     Ty::Error
                 } else {
-                    Ty::Array(Box::new(element), *length)
+                    Ty::Array(Box::new(element), length)
                 }
             }
             Type::CompileUSize(value) => {
@@ -265,16 +271,13 @@ impl Analyzer {
                         return Ty::Error;
                     }
                 };
-                if !matches!(
-                    access,
-                    "shared" | "mut" | ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER
-                ) {
+                let Some(mutable) = access_mutability(access) else {
                     self.error("`Ptr` access must be `shared` or `mut`");
                     return Ty::Error;
-                }
+                };
                 Ty::Pointer {
                     pointee: Box::new(self.lower_source_type(pointee)),
-                    mutable: matches!(access, "mut" | ACCESS_MUT_MARKER),
+                    mutable,
                 }
             }
             Type::Named(name, arguments)
@@ -378,7 +381,7 @@ impl Analyzer {
                 let mut arguments = Vec::new();
                 for (parameter, source) in parameters.iter().zip(source_arguments) {
                     let argument = match parameter.kind {
-                        CompileParamKind::Type => self.lower_source_type(source),
+                        Sort::Type => self.lower_source_type(source),
                         _ => self
                             .probe_compile_argument_ty(parameter, source)
                             .unwrap_or(Ty::Error),
@@ -386,7 +389,7 @@ impl Analyzer {
                     if argument == Ty::Error {
                         self.error(format!(
                             "invalid {} argument `{}` for generic type `{name}`",
-                            describe_compile_param_kind(parameter.kind.clone()),
+                            describe_compile_sort(parameter.kind.clone()),
                             parameter.name
                         ));
                         return Ty::Error;
@@ -787,7 +790,7 @@ impl Analyzer {
                                 ) else {
                                     self.error(format!(
                                         "invalid {} argument `{}` for generic type `{name}`",
-                                        describe_compile_param_kind(parameter.kind.clone()),
+                                        describe_compile_sort(parameter.kind.clone()),
                                         parameter.name
                                     ));
                                     return None;
@@ -823,14 +826,17 @@ impl Analyzer {
     pub(super) fn type_constructor_argument_from_expr(
         &mut self,
         expression: &Expr,
-        parameter_count: usize,
+        parameter_groups: &[Vec<Sort>],
         owner: &str,
         parameter: &str,
     ) -> Option<String> {
+        let expected = Sort::TypeConstructor {
+            parameter_groups: parameter_groups.to_vec(),
+        };
         let Expr::Name(name) = expression else {
             self.error(format!(
-                "compile-time argument `{parameter}` in `{owner}` expects kind {}, found a non-constructor expression",
-                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count })
+                "compile-time argument `{parameter}` in `{owner}` expects sort {}, found a non-constructor expression",
+                describe_compile_sort(expected)
             ));
             return None;
         };
@@ -838,21 +844,30 @@ impl Analyzer {
             self.type_constructor_impl_target(&Type::Named(name.clone(), Vec::new()))
         else {
             self.error(format!(
-                "compile-time argument `{parameter}` in `{owner}` expects kind {}, but `{name}` is not a generic type constructor",
-                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count })
+                "compile-time argument `{parameter}` in `{owner}` expects sort {}, but `{name}` is not a generic type constructor",
+                describe_compile_sort(expected)
             ));
             return None;
         };
-        if target.parameter_count != parameter_count {
+        let actual_groups = self.type_constructor_parameter_groups(&target);
+        if actual_groups != parameter_groups {
             self.error(format!(
-                "compile-time argument `{parameter}` in `{owner}` expects kind {}, but constructor `{name}` has {} type parameter{}",
-                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count }),
-                target.parameter_count,
-                if target.parameter_count == 1 { "" } else { "s" }
+                "compile-time argument `{parameter}` in `{owner}` expects sort {}, but constructor `{name}` has sort {}",
+                describe_compile_sort(expected),
+                describe_compile_sort(Sort::TypeConstructor {
+                    parameter_groups: actual_groups,
+                })
             ));
             return None;
         }
         Some(name.clone())
+    }
+
+    fn type_constructor_parameter_groups(
+        &self,
+        target: &super::registry::TypeConstructorImplTarget,
+    ) -> Vec<Vec<Sort>> {
+        target.parameter_groups.clone()
     }
 
     pub(super) fn probe_type_argument_source(
@@ -970,98 +985,111 @@ impl Analyzer {
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
         match parameter.kind.clone() {
-            CompileParamKind::Type => self.probe_type_argument_source(expression, substitutions),
-            CompileParamKind::USize => match expression {
+            Sort::Type => self.probe_type_argument_source(expression, substitutions),
+            Sort::USize => match expression {
                 Expr::Integer(value) => Some(Type::CompileUSize(u64::try_from(*value).ok()?)),
                 Expr::Name(name) => substitutions.get(name).and_then(|value| {
                     matches!(value, Type::CompileUSize(_)).then(|| value.clone())
                 }),
                 _ => None,
             },
-            CompileParamKind::Effect => match expression {
-                Expr::Name(name) if name == "pure" => Some(effect_row_source(false, None, &[])),
-                Expr::Name(name) if name == self.lang_item_name(LangItemKind::UnsafeEffect) => {
-                    Some(effect_row_source(true, None, &[]))
-                }
-                Expr::Name(name) if self.effects.contains(name) => {
-                    Some(effect_row_source(false, None, std::slice::from_ref(name)))
-                }
-                Expr::Name(name) if effect_row_from_marker(name).is_some() => {
-                    Some(Type::Named(name.clone(), Vec::new()))
-                }
-                Expr::Call(callee, arguments)
-                    if matches!(
-                        callee.as_ref(),
-                        Expr::Name(name)
-                            if name == self.lang_item_name(LangItemKind::UnsafeEffect)
-                                && arguments.is_empty()
-                    ) =>
-                {
-                    Some(effect_row_source(true, None, &[]))
-                }
-                Expr::Call(callee, arguments)
-                    if matches!(
-                        callee.as_ref(),
-                        Expr::Name(name) if self.effects.contains(name)
-                    ) =>
-                {
-                    let Expr::Name(name) = callee.as_ref() else {
-                        unreachable!()
-                    };
-                    let mut source_arguments = Vec::new();
-                    for argument in arguments {
-                        if argument.label.is_some() {
-                            return None;
-                        }
-                        source_arguments
-                            .push(self.probe_type_argument_source(&argument.value, substitutions)?);
-                    }
-                    let effect = Type::Named(name.clone(), source_arguments);
-                    if self.is_standard_unsafe_effect_source(&effect) {
+            Sort::Effect | Sort::Effects => {
+                let source = match expression {
+                    Expr::Name(name) if name == "pure" => Some(effect_row_source(false, None, &[])),
+                    Expr::Name(name) if name == self.lang_item_name(LangItemKind::UnsafeEffect) => {
                         Some(effect_row_source(true, None, &[]))
-                    } else {
-                        Some(effect_row_source(
-                            false,
-                            None,
-                            &[source_effect_identity(&effect)],
-                        ))
                     }
-                }
-                Expr::Call(callee, arguments)
-                    if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
-                        && arguments.len() <= 1
-                        && arguments.iter().all(|argument| argument.label.is_none()) =>
-                {
-                    let Expr::Name(marker) = callee.as_ref() else {
-                        unreachable!()
-                    };
-                    let error = match arguments.first() {
-                        Some(argument) => {
-                            Some(self.probe_type_argument_source(&argument.value, substitutions)?)
+                    Expr::Name(name) if self.effects.contains(name) => {
+                        Some(effect_row_source(false, None, std::slice::from_ref(name)))
+                    }
+                    Expr::Name(name) if effect_row_from_marker(name).is_some() => {
+                        Some(Type::Named(name.clone(), Vec::new()))
+                    }
+                    Expr::Call(callee, arguments)
+                        if matches!(
+                            callee.as_ref(),
+                            Expr::Name(name)
+                                if name == self.lang_item_name(LangItemKind::UnsafeEffect)
+                                    && arguments.is_empty()
+                        ) =>
+                    {
+                        Some(effect_row_source(true, None, &[]))
+                    }
+                    Expr::Call(callee, arguments)
+                        if matches!(
+                            callee.as_ref(),
+                            Expr::Name(name) if self.effects.contains(name)
+                        ) =>
+                    {
+                        let Expr::Name(name) = callee.as_ref() else {
+                            unreachable!()
+                        };
+                        let mut source_arguments = Vec::new();
+                        for argument in arguments {
+                            if argument.label.is_some() {
+                                return None;
+                            }
+                            source_arguments.push(
+                                self.probe_type_argument_source(&argument.value, substitutions)?,
+                            );
                         }
-                        None => None,
-                    };
-                    Some(Type::Named(marker.clone(), error.into_iter().collect()))
+                        let effect = Type::Named(name.clone(), source_arguments);
+                        if self.is_standard_unsafe_effect_source(&effect) {
+                            Some(effect_row_source(true, None, &[]))
+                        } else {
+                            Some(effect_row_source(
+                                false,
+                                None,
+                                &[source_effect_identity(&effect)],
+                            ))
+                        }
+                    }
+                    Expr::Call(callee, arguments)
+                        if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
+                            && arguments.len() <= 1
+                            && arguments.iter().all(|argument| argument.label.is_none()) =>
+                    {
+                        let Expr::Name(marker) = callee.as_ref() else {
+                            unreachable!()
+                        };
+                        let error = match arguments.first() {
+                            Some(argument) => Some(
+                                self.probe_type_argument_source(&argument.value, substitutions)?,
+                            ),
+                            None => None,
+                        };
+                        Some(Type::Named(marker.clone(), error.into_iter().collect()))
+                    }
+                    _ => None,
+                }?;
+                if parameter.kind == Sort::Effect {
+                    let (unsafe_effect, throws, custom) = effect_row_from_source(&source)?;
+                    (usize::from(unsafe_effect) + usize::from(throws.is_some()) + custom.len() == 1)
+                        .then_some(source)
+                } else {
+                    Some(source)
                 }
-                _ => None,
-            },
-            CompileParamKind::TypeConstructor { parameter_count } => {
+            }
+            Sort::TypeConstructor { parameter_groups } => {
                 let Expr::Name(name) = expression else {
                     return None;
                 };
                 let source = Type::Named(name.clone(), Vec::new());
                 self.type_constructor_impl_target(&source)
-                    .filter(|target| target.parameter_count == parameter_count)
+                    .filter(|target| {
+                        self.type_constructor_parameter_groups(target) == parameter_groups
+                    })
                     .map(|_| source)
             }
-            CompileParamKind::ParameterModifier => {
+            Sort::ParameterModifier => {
                 self.probe_parameter_modifier_source(expression, substitutions)
             }
-            CompileParamKind::Region
-            | CompileParamKind::Parameters
-            | CompileParamKind::ParameterPack
-            | CompileParamKind::EffectConstructor { .. } => None,
-            CompileParamKind::Named(compile_type) => match expression {
+            Sort::String
+            | Sort::Region
+            | Sort::Parameters
+            | Sort::ParameterPack
+            | Sort::EffectConstructor { .. } => None,
+            Sort::Named(compile_type) => match expression {
                 Expr::Bool(value)
                     if self
                         .closed_type_values
@@ -1080,13 +1108,30 @@ impl Analyzer {
                     ))
                 }
                 Expr::Name(name)
-                    if self
-                        .closed_type_values
-                        .get(&compile_type)
-                        .is_some_and(|members| members.contains(name)) =>
+                    if (compile_type == "access" && access_mutability(name).is_some())
+                        || self
+                            .closed_type_values
+                            .get(&compile_type)
+                            .is_some_and(|members| {
+                                closed_value_member(&compile_type, name, members).is_some()
+                            }) =>
                 {
+                    let member = if compile_type == "access" {
+                        if access_mutability(name).expect("access member guard matched") {
+                            "mut"
+                        } else {
+                            "shared"
+                        }
+                    } else {
+                        closed_value_member(
+                            &compile_type,
+                            name,
+                            &self.closed_type_values[&compile_type],
+                        )
+                        .expect("closed member guard matched")
+                    };
                     Some(Type::Named(
-                        closed_value_marker(&compile_type, name),
+                        closed_value_marker(&compile_type, member),
                         Vec::new(),
                     ))
                 }
@@ -1105,6 +1150,22 @@ impl Analyzer {
                             .is_some_and(|(owner, _)| owner == compile_type))
                     .then(|| value.clone())
                 }),
+                Expr::Member(owner, member)
+                    if matches!(
+                        owner.unlocated(),
+                        Expr::Name(owner)
+                            if owner == &compile_type
+                                || (compile_type == "access" && is_access_sort_name(owner))
+                    ) && self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(member)) =>
+                {
+                    Some(Type::Named(
+                        closed_value_marker(&compile_type, member),
+                        Vec::new(),
+                    ))
+                }
                 _ => None,
             },
         }
@@ -1116,7 +1177,7 @@ impl Analyzer {
         source: &Type,
     ) -> Option<Ty> {
         match parameter.kind.clone() {
-            CompileParamKind::TypeConstructor { parameter_count } => {
+            Sort::TypeConstructor { parameter_groups } => {
                 let Type::Named(name, arguments) = source else {
                     return None;
                 };
@@ -1124,21 +1185,24 @@ impl Analyzer {
                     return None;
                 }
                 self.type_constructor_impl_target(source)
-                    .filter(|target| target.parameter_count == parameter_count)
+                    .filter(|target| {
+                        self.type_constructor_parameter_groups(target) == parameter_groups
+                    })
                     .map(|_| Ty::Struct(type_constructor_marker(name)))
             }
-            CompileParamKind::Type | CompileParamKind::Effect | CompileParamKind::Named(_) => {
+            Sort::Type | Sort::Effect | Sort::Effects | Sort::Named(_) => {
                 self.probe_source_ty(source)
             }
-            CompileParamKind::USize => match source {
+            Sort::USize => match source {
                 Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
                 _ => None,
             },
-            CompileParamKind::Region
-            | CompileParamKind::Parameters
-            | CompileParamKind::ParameterPack
-            | CompileParamKind::ParameterModifier
-            | CompileParamKind::EffectConstructor { .. } => None,
+            Sort::String
+            | Sort::Region
+            | Sort::Parameters
+            | Sort::ParameterPack
+            | Sort::ParameterModifier
+            | Sort::EffectConstructor { .. } => None,
         }
     }
 
@@ -1188,7 +1252,7 @@ impl Analyzer {
     ) -> bool {
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Type)
+            .all(|parameter| parameter.kind == Sort::Type)
         {
             return arguments.iter().all(|argument| {
                 (unit_is_type && matches!(argument.value, Expr::Unit))
@@ -1197,7 +1261,7 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::USize)
+            .all(|parameter| parameter.kind == Sort::USize)
         {
             return arguments.iter().all(|argument| {
                 matches!(argument.value, Expr::Integer(_))
@@ -1234,7 +1298,7 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Effect)
+            .all(|parameter| parameter.kind.is_effect_classifier())
         {
             return arguments
                 .iter()
@@ -1306,29 +1370,30 @@ impl Analyzer {
         unit_is_type: bool,
     ) -> bool {
         match parameter.kind.clone() {
-            CompileParamKind::Type => {
+            Sort::Type => {
                 (unit_is_type && matches!(expression, Expr::Unit))
                     || self.expression_is_explicit_type_argument(expression, context)
             }
-            CompileParamKind::USize => {
+            Sort::USize => {
                 matches!(expression, Expr::Integer(_))
                     || matches!(expression, Expr::Name(name)
                     if context.type_substitutions.get(name).is_some_and(
                         |value| matches!(value, Type::CompileUSize(_))
                     ))
             }
-            CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
-            CompileParamKind::TypeConstructor { parameter_count } => {
-                self.expression_is_explicit_type_constructor_argument(expression, parameter_count)
+            Sort::Effect | Sort::Effects => self.expression_is_explicit_effect_argument(expression),
+            Sort::TypeConstructor { parameter_groups } => {
+                self.expression_is_explicit_type_constructor_argument(expression, &parameter_groups)
             }
-            CompileParamKind::Region => false,
-            CompileParamKind::Parameters => false,
-            CompileParamKind::ParameterPack => false,
-            CompileParamKind::ParameterModifier => self
+            Sort::Region => false,
+            Sort::String => false,
+            Sort::Parameters => false,
+            Sort::ParameterPack => false,
+            Sort::ParameterModifier => self
                 .probe_parameter_modifier_source(expression, &context.type_substitutions)
                 .is_some(),
-            CompileParamKind::EffectConstructor { .. } => false,
-            CompileParamKind::Named(compile_type) => match expression {
+            Sort::EffectConstructor { .. } => false,
+            Sort::Named(compile_type) => match expression {
                 Expr::Bool(value) => {
                     self.closed_type_values
                         .get(&compile_type)
@@ -1341,9 +1406,13 @@ impl Analyzer {
                         })
                 }
                 Expr::Name(name) => {
-                    self.closed_type_values
-                        .get(&compile_type)
-                        .is_some_and(|members| members.contains(name))
+                    (compile_type == "access" && access_mutability(name).is_some())
+                        || self
+                            .closed_type_values
+                            .get(&compile_type)
+                            .is_some_and(|members| {
+                                closed_value_member(&compile_type, name, members).is_some()
+                            })
                         || closed_value_from_marker(name)
                             .is_some_and(|(owner, _)| owner == compile_type)
                         || context.type_substitutions.get(name).is_some_and(|value| {
@@ -1356,6 +1425,17 @@ impl Analyzer {
                             )
                         })
                 }
+                Expr::Member(owner, member) => {
+                    matches!(
+                        owner.unlocated(),
+                        Expr::Name(owner)
+                            if owner == &compile_type
+                                || (compile_type == "access" && is_access_sort_name(owner))
+                    ) && self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(member))
+                }
                 _ => false,
             },
         }
@@ -1364,14 +1444,18 @@ impl Analyzer {
     fn expression_is_explicit_type_constructor_argument(
         &self,
         expression: &Expr,
-        parameter_count: usize,
+        _parameter_groups: &[Vec<Sort>],
     ) -> bool {
         let Expr::Name(name) = expression else {
             return false;
         };
         let source = Type::Named(name.clone(), Vec::new());
-        self.type_constructor_impl_target(&source)
-            .is_some_and(|target| target.parameter_count == parameter_count)
+        // Any known constructor makes this syntactically a compile-time group.
+        // Exact group and parameter-sort validation belongs to
+        // `type_constructor_argument_from_expr`, where it can issue the useful
+        // expected/actual Sort diagnostic instead of misclassifying the group
+        // as a runtime call.
+        self.type_constructor_impl_target(&source).is_some()
     }
 
     pub(super) fn probe_parameter_modifier_source(
@@ -1586,15 +1670,10 @@ impl Analyzer {
                     }
                     _ => return None,
                 };
-                if !matches!(
-                    access,
-                    "shared" | "mut" | ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER
-                ) {
-                    return None;
-                }
+                let mutable = access_mutability(access)?;
                 Some(Ty::Pointer {
                     pointee: Box::new(self.probe_source_ty(pointee)?),
-                    mutable: matches!(access, "mut" | ACCESS_MUT_MARKER),
+                    mutable,
                 })
             }
             Type::Named(name, arguments)

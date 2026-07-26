@@ -9,10 +9,10 @@ use std::fmt;
 
 use crate::alloc::AllocBundle;
 use crate::ast::{
-    AssociatedKind, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef,
-    Expr, ExtendDef, ExtendMember, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param,
-    PassMode, Pattern, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
-    VariantFields, Visibility, WherePredicate,
+    AssociatedKind, BinaryOp, Binding, CallArg, CompileParam, EffectDef, EnumDef, Expr, ExtendDef,
+    ExtendMember, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param, PassMode, Pattern,
+    Program, Sort, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields,
+    Visibility, WherePredicate,
 };
 use crate::core::{
     copy_trait_has_required_shape, drop_trait_has_required_shape, move_trait_has_required_shape,
@@ -21,6 +21,7 @@ use crate::core::{
 };
 use crate::manifest::Edition;
 use crate::modules::PackageId;
+use crate::static_semantics::{Constraint, Goal, GoalResult};
 
 mod access;
 mod arrays;
@@ -56,6 +57,7 @@ mod raw;
 mod references;
 mod registry;
 mod source_rewrite;
+mod static_eval;
 mod throws;
 mod types;
 
@@ -73,6 +75,19 @@ pub use pipeline::{check, check_library, compile, compile_library};
 
 fn primitive_scalar_type(ty: &Ty) -> bool {
     ty.is_integer() || *ty == Ty::Bool
+}
+
+fn remaining_sort_groups(groups: &[Vec<Sort>], mut consumed: usize) -> Vec<Vec<Sort>> {
+    let mut remaining = Vec::new();
+    for group in groups {
+        if consumed >= group.len() {
+            consumed -= group.len();
+            continue;
+        }
+        remaining.push(group[consumed..].to_vec());
+        consumed = 0;
+    }
+    remaining
 }
 
 fn method_compile_parameter_groups_match(expected: &Function, actual: &Function) -> bool {
@@ -474,6 +489,20 @@ impl Analyzer {
             if let Item::Function(function) = item {
                 *function_counts.entry(function.name.clone()).or_default() += 1;
             }
+            if let Item::Sort(definition) = item {
+                if let Some(members) = &definition.members {
+                    self.closed_type_values
+                        .insert(definition.name.clone(), members.clone());
+                    if self.is_lang_item_name(&definition.name, LangItemKind::AccessSort) {
+                        self.closed_type_values
+                            .insert("access".to_owned(), members.clone());
+                    }
+                    if self.is_lang_item_name(&definition.name, LangItemKind::AbiSort) {
+                        self.closed_type_values
+                            .insert("abi".to_owned(), members.clone());
+                    }
+                }
+            }
             if let Item::TypeForm(definition) = item {
                 if !definition.values.is_empty() {
                     self.closed_type_values
@@ -481,10 +510,6 @@ impl Analyzer {
                     if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
                         self.closed_type_values
                             .insert("bool".to_owned(), definition.values.clone());
-                    }
-                    if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
-                        self.closed_type_values
-                            .insert("access".to_owned(), definition.values.clone());
                     }
                 }
             }
@@ -503,8 +528,6 @@ impl Analyzer {
                         .insert(definition.name.clone(), values.clone());
                     if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
                         self.closed_type_values.insert("bool".to_owned(), values);
-                    } else if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
-                        self.closed_type_values.insert("access".to_owned(), values);
                     }
                 }
             }
@@ -519,7 +542,7 @@ impl Analyzer {
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
-                Item::Domain(definition) => &definition.name,
+                Item::Sort(definition) => &definition.name,
                 Item::TypeAlias(definition) => &definition.name,
                 Item::TypeForm(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
@@ -585,8 +608,7 @@ impl Analyzer {
                     }
                     let transparent_modifier = function.compile_groups.len() == 1
                         && function.compile_groups[0].len() == 1
-                        && function.compile_groups[0][0].kind
-                            == CompileParamKind::ParameterModifier
+                        && function.compile_groups[0][0].kind == Sort::ParameterModifier
                         && function.groups.is_empty()
                         && function.return_type.is_none()
                         && function.effects == FunctionEffects::default()
@@ -605,7 +627,7 @@ impl Analyzer {
                             .into_iter()
                             .any(|kind| self.is_lang_item_name(&source_name, kind))
                         && function.compile_groups.as_slice().iter().flatten().count() == 1
-                        && function.compile_groups[0][0].kind == CompileParamKind::Parameters
+                        && function.compile_groups[0][0].kind == Sort::Parameters
                         && function.groups.is_empty()
                         && matches!(
                             function.return_type.as_ref(),
@@ -620,7 +642,7 @@ impl Analyzer {
                         continue;
                     }
                     for parameter in function.compile_groups.iter().flatten() {
-                        let CompileParamKind::Named(compile_type) = &parameter.kind else {
+                        let Sort::Named(compile_type) = &parameter.kind else {
                             continue;
                         };
                         let Some(members) = self.closed_type_values.get(compile_type) else {
@@ -793,9 +815,7 @@ impl Analyzer {
                     }
                 }
                 Item::Enum(definition) => {
-                    if self.is_lang_item_name(&definition.name, LangItemKind::Bool)
-                        || self.is_lang_item_name(&definition.name, LangItemKind::AccessType)
-                    {
+                    if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
                         continue;
                     }
                     self.nominal_accesses.insert(
@@ -837,7 +857,7 @@ impl Analyzer {
                             .compile_groups
                             .iter()
                             .flatten()
-                            .any(|parameter| parameter.kind != CompileParamKind::Type)
+                            .any(|parameter| parameter.kind != Sort::Type)
                     {
                         self.error(format!(
                             "effect `{}` currently accepts one compile-time group containing only `type` parameters",
@@ -848,7 +868,14 @@ impl Analyzer {
                     self.effect_defs
                         .insert(definition.name.clone(), definition.clone());
                 }
-                Item::Domain(_) => {}
+                Item::Sort(definition) => {
+                    if definition.members.is_none() && origin.package != PackageId::CORE.0 {
+                        self.error(format!(
+                            "abstract sort `{}` is compiler-owned; user sorts must declare a finite member set with `= sort {{ ... }}`",
+                            definition.name
+                        ));
+                    }
+                }
                 Item::TypeForm(definition) => {
                     if definition.builtin && origin.package != PackageId::CORE.0 {
                         self.error(format!(
@@ -993,7 +1020,7 @@ impl Analyzer {
                 Item::Global(_)
                 | Item::Struct(_)
                 | Item::Enum(_)
-                | Item::Domain(_)
+                | Item::Sort(_)
                 | Item::TypeForm(_) => Vec::new(),
                 Item::Effect(definition) => definition.operations.iter().collect(),
                 Item::TypeAlias(_) => Vec::new(),
@@ -1045,7 +1072,7 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         for parameter in &parameters {
-            if parameter.kind != CompileParamKind::Type {
+            if parameter.kind != Sort::Type {
                 self.error(format!(
                     "struct `{}` cannot derive `Copy` with non-type compile-time parameter `{}`",
                     definition.name, parameter.name
@@ -1371,21 +1398,19 @@ impl Analyzer {
         }
         if definition.self_parameter.name != "Self" {
             self.error(format!(
-                "trait `{}` self kind parameter must be named `Self`",
+                "trait `{}` self sort parameter must be named `Self`",
                 definition.name
             ));
             valid = false;
         }
         if !matches!(
             definition.self_parameter.kind,
-            CompileParamKind::Type
-                | CompileParamKind::TypeConstructor { .. }
-                | CompileParamKind::Effect
+            Sort::Type | Sort::TypeConstructor { .. } | Sort::Effect
         ) {
             self.error(format!(
-                "trait `{}` self kind must be `type`, a type-constructor kind, or `effect`, found {}",
+                "trait `{}` self sort must be `type`, a type-constructor sort, or `effect`, found {}",
                 definition.name,
-                describe_compile_param_kind(definition.self_parameter.kind.clone())
+                describe_compile_sort(definition.self_parameter.kind.clone())
             ));
             valid = false;
         }
@@ -1466,24 +1491,23 @@ impl Analyzer {
                         valid = false;
                     }
                     let kind = if associated_kind == AssociatedKind::Parameters {
-                        CompileParamKind::Parameters
+                        Sort::Parameters
                     } else if compile_groups.is_empty() {
-                        CompileParamKind::Type
+                        Sort::Type
                     } else {
-                        let mut parameter_count = 0usize;
                         for parameter in compile_groups.iter().flatten() {
-                            parameter_count += 1;
                             if matches!(
                                 parameter.kind,
-                                CompileParamKind::Effect
-                                    | CompileParamKind::Parameters
-                                    | CompileParamKind::ParameterPack
-                                    | CompileParamKind::ParameterModifier
-                                    | CompileParamKind::TypeConstructor { .. }
-                                    | CompileParamKind::EffectConstructor { .. }
+                                Sort::Effect
+                                    | Sort::Effects
+                                    | Sort::Parameters
+                                    | Sort::ParameterPack
+                                    | Sort::ParameterModifier
+                                    | Sort::TypeConstructor { .. }
+                                    | Sort::EffectConstructor { .. }
                             ) {
                                 self.error(format!(
-                                    "generic associated type `{}.{name}` parameter `{}` has unsupported kind",
+                                    "generic associated type `{}.{name}` parameter `{}` has unsupported sort",
                                     definition.name, parameter.name
                                 ));
                                 valid = false;
@@ -1495,7 +1519,17 @@ impl Analyzer {
                         );
                         associated_type_parameter_groups
                             .insert(name.clone(), compile_groups.clone());
-                        CompileParamKind::TypeConstructor { parameter_count }
+                        Sort::TypeConstructor {
+                            parameter_groups: compile_groups
+                                .iter()
+                                .map(|group| {
+                                    group
+                                        .iter()
+                                        .map(|parameter| parameter.kind.clone())
+                                        .collect()
+                                })
+                                .collect(),
+                        }
                     };
                     if associated_kind == AssociatedKind::Parameters {
                         associated_parameter_schemas.insert(name.clone());
@@ -1585,13 +1619,13 @@ impl Analyzer {
         trait_names.sort();
         for trait_name in trait_names {
             let schema = self.traits[&trait_name].clone();
-            let mut compile_parameter_kinds = schema
+            let mut compile_parameter_sorts = schema
                 .compile_parameters
                 .iter()
                 .map(|parameter| (parameter.name.clone(), parameter.kind.clone()))
                 .collect::<HashMap<_, _>>();
-            compile_parameter_kinds.insert("Self".to_owned(), schema.self_parameter.kind.clone());
-            compile_parameter_kinds.extend(
+            compile_parameter_sorts.insert("Self".to_owned(), schema.self_parameter.kind.clone());
+            compile_parameter_sorts.extend(
                 schema
                     .associated_types
                     .iter()
@@ -1601,12 +1635,12 @@ impl Analyzer {
             valid &= self.validate_where_predicate_shapes(
                 &format!("trait `{trait_name}`"),
                 &schema.where_predicates,
-                &compile_parameter_kinds,
+                &compile_parameter_sorts,
             );
             for method_name in &schema.method_order {
                 let method = &schema.methods[method_name];
-                let mut method_compile_parameter_kinds = compile_parameter_kinds.clone();
-                method_compile_parameter_kinds.extend(
+                let mut method_compile_parameter_sorts = compile_parameter_sorts.clone();
+                method_compile_parameter_sorts.extend(
                     method
                         .compile_groups
                         .iter()
@@ -1625,8 +1659,7 @@ impl Analyzer {
                             });
                             let compile_schema = schema_name.is_some_and(|name| {
                                 schema.compile_parameters.iter().any(|parameter| {
-                                    parameter.name == *name
-                                        && parameter.kind == CompileParamKind::Parameters
+                                    parameter.name == *name && parameter.kind == Sort::Parameters
                                 })
                             });
                             if !schema_name.is_some_and(|name| {
@@ -1657,7 +1690,7 @@ impl Analyzer {
                         &trait_name,
                         method_name,
                         &parameter.ty,
-                        &method_compile_parameter_kinds,
+                        &method_compile_parameter_sorts,
                     );
                     if parameter.mode == PassMode::Copy
                         && !self.trait_source_type_is_definitely_copy(&parameter.ty)
@@ -1675,14 +1708,14 @@ impl Analyzer {
                         &trait_name,
                         method_name,
                         result,
-                        &method_compile_parameter_kinds,
+                        &method_compile_parameter_sorts,
                     );
                 }
                 valid &= self.validate_trait_source_effects(
                     &trait_name,
                     method_name,
                     &method.effects,
-                    &method_compile_parameter_kinds,
+                    &method_compile_parameter_sorts,
                 );
             }
             self.traits
@@ -1720,7 +1753,7 @@ impl Analyzer {
         let associated_types = schema
             .associated_types
             .iter()
-            .filter(|name| schema.associated_type_kinds[*name] == CompileParamKind::Type)
+            .filter(|name| schema.associated_type_kinds[*name] == Sort::Type)
             .map(|name| crate::ast::AssociatedTypeBinding {
                 name: name.clone(),
                 compile_groups: Vec::new(),
@@ -1774,7 +1807,7 @@ impl Analyzer {
         trait_name: &str,
         member_name: &str,
         source: &Type,
-        compile_parameters: &HashMap<String, CompileParamKind>,
+        compile_parameters: &HashMap<String, Sort>,
     ) -> bool {
         match source {
             Type::Tuple(fields) => {
@@ -1808,8 +1841,10 @@ impl Analyzer {
                     return false;
                 };
                 let parameter_count = match kind {
-                    CompileParamKind::Parameters => arguments.len(),
-                    CompileParamKind::TypeConstructor { parameter_count } => *parameter_count,
+                    Sort::Parameters => arguments.len(),
+                    Sort::TypeConstructor { parameter_groups } => {
+                        parameter_groups.iter().map(Vec::len).sum()
+                    }
                     _ => {
                         self.error(format!(
                             "`{name}` in trait member `{trait_name}.{member_name}` is not an associated parameter schema"
@@ -1894,7 +1929,7 @@ impl Analyzer {
                         valid = false;
                     }
                     crate::ast::USizeConst::Parameter(name)
-                        if compile_parameters.get(name) != Some(&CompileParamKind::USize) =>
+                        if compile_parameters.get(name) != Some(&Sort::USize) =>
                     {
                         self.error(format!(
                             "array length `{name}` in trait member `{trait_name}.{member_name}` is not a declared `usize` parameter"
@@ -1936,7 +1971,7 @@ impl Analyzer {
                     .cloned()
                     .expect("checked compile parameter exists");
                 match kind {
-                    CompileParamKind::Type => {
+                    Sort::Type => {
                         if arguments.is_empty() {
                             true
                         } else {
@@ -1946,13 +1981,14 @@ impl Analyzer {
                             false
                         }
                     }
-                    CompileParamKind::USize => {
+                    Sort::USize => {
                         self.error(format!(
                             "`usize` parameter `{name}` in `{trait_name}.{member_name}` can only be used as a compile-time value"
                         ));
                         false
                     }
-                    CompileParamKind::TypeConstructor { parameter_count } => {
+                    Sort::TypeConstructor { parameter_groups } => {
+                        let parameter_count = parameter_groups.iter().map(Vec::len).sum::<usize>();
                         let mut valid = true;
                         if arguments.len() != parameter_count {
                             self.error(format!(
@@ -1989,43 +2025,49 @@ impl Analyzer {
                         }
                         valid
                     }
-                    CompileParamKind::EffectConstructor { .. } => {
+                    Sort::EffectConstructor { .. } => {
                         self.error(format!(
                             "effect constructor parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
-                    CompileParamKind::Effect => {
+                    Sort::Effect | Sort::Effects => {
                         self.error(format!(
-                            "effect row parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                            "effect parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
-                    CompileParamKind::Parameters => {
+                    Sort::Parameters => {
                         self.error(format!(
                             "parameter schema `{name}` in `{trait_name}.{member_name}` can only be used through a complete `...` parameter-group expansion"
                         ));
                         false
                     }
-                    CompileParamKind::ParameterPack => {
+                    Sort::ParameterPack => {
                         self.error(format!(
                             "parameter-group pack `{name}` in `{trait_name}.{member_name}` can only be used through a complete repeated-group expansion"
                         ));
                         false
                     }
-                    CompileParamKind::ParameterModifier => {
+                    Sort::ParameterModifier => {
                         self.error(format!(
                             "parameter modifier `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
-                    CompileParamKind::Region => {
+                    Sort::Region => {
                         self.error(format!(
                             "region parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
-                    CompileParamKind::Named(compile_type) => {
+                    Sort::String => {
+                        self.error(format!(
+                            "string parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    Sort::Named(compile_type) => {
                         self.error(format!(
                             "`{compile_type}` value parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
@@ -2107,14 +2149,14 @@ impl Analyzer {
         associated: &str,
         argument: &Type,
         parameter: &CompileParam,
-        compile_parameters: &HashMap<String, CompileParamKind>,
+        compile_parameters: &HashMap<String, Sort>,
     ) -> bool {
-        let parameter_reference_has_kind = |expected: &CompileParamKind| {
+        let parameter_reference_has_kind = |expected: &Sort| {
             matches!(argument, Type::Named(name, values)
                 if values.is_empty() && compile_parameters.get(name) == Some(expected))
         };
         let valid = match &parameter.kind {
-            CompileParamKind::Type => {
+            Sort::Type => {
                 return self.validate_trait_source_type(
                     trait_name,
                     member_name,
@@ -2122,16 +2164,16 @@ impl Analyzer {
                     compile_parameters,
                 );
             }
-            CompileParamKind::Region => {
-                parameter_reference_has_kind(&CompileParamKind::Region)
+            Sort::Region => {
+                parameter_reference_has_kind(&Sort::Region)
                     || matches!(argument, Type::Named(_, values) if values.is_empty())
             }
-            CompileParamKind::USize => {
+            Sort::USize => {
                 matches!(argument, Type::CompileUSize(_))
-                    || parameter_reference_has_kind(&CompileParamKind::USize)
+                    || parameter_reference_has_kind(&Sort::USize)
             }
-            CompileParamKind::Named(kind) => {
-                parameter_reference_has_kind(&CompileParamKind::Named(kind.clone()))
+            Sort::Named(kind) => {
+                parameter_reference_has_kind(&Sort::Named(kind.clone()))
                     || matches!(argument, Type::Named(name, values)
                     if values.is_empty()
                         && self.closed_type_values.get(kind).is_some_and(|members| {
@@ -2144,9 +2186,9 @@ impl Analyzer {
         };
         if !valid {
             self.error(format!(
-                "generic associated type `{trait_name}.{associated}` argument for parameter `{}` in `{trait_name}.{member_name}` must have kind `{}`",
+                "generic associated type `{trait_name}.{associated}` argument for parameter `{}` in `{trait_name}.{member_name}` must have sort `{}`",
                 parameter.name,
-                compile_parameter_kind_label(&parameter.kind)
+                compile_parameter_sort_label(&parameter.kind)
             ));
         }
         valid
@@ -2157,7 +2199,7 @@ impl Analyzer {
         trait_name: &str,
         member_name: &str,
         effects: &FunctionEffects,
-        compile_parameters: &HashMap<String, CompileParamKind>,
+        compile_parameters: &HashMap<String, Sort>,
     ) -> bool {
         let mut valid = true;
         if let Some(error) = &effects.throws {
@@ -2166,11 +2208,11 @@ impl Analyzer {
         }
         for parameter in &effects.parameters {
             match compile_parameters.get(parameter).cloned() {
-                Some(CompileParamKind::Effect) => {}
+                Some(Sort::Effect | Sort::Effects) => {}
                 Some(kind) => {
                     self.error(format!(
-                        "effect row `{parameter}` in trait member `{trait_name}.{member_name}` has incompatible compile-time kind {}",
-                        describe_compile_param_kind(kind)
+                        "effect row `{parameter}` in trait member `{trait_name}.{member_name}` has incompatible compile-time sort {}",
+                        describe_compile_sort(kind)
                     ));
                     valid = false;
                 }
@@ -2198,7 +2240,7 @@ impl Analyzer {
         trait_name: &str,
         member_name: &str,
         effect: &Type,
-        compile_parameters: &HashMap<String, CompileParamKind>,
+        compile_parameters: &HashMap<String, Sort>,
     ) -> bool {
         let (name, arguments) = match effect {
             Type::Named(name, arguments) => (name, arguments.as_slice()),
@@ -2214,7 +2256,9 @@ impl Analyzer {
                 }
                 if let Some(kind) = compile_parameters.get(name).cloned() {
                     return match kind {
-                        CompileParamKind::EffectConstructor { parameter_count } => {
+                        Sort::EffectConstructor { parameter_groups } => {
+                            let parameter_count =
+                                parameter_groups.iter().map(Vec::len).sum::<usize>();
                             if arguments.len() == parameter_count {
                                 valid
                             } else {
@@ -2225,16 +2269,22 @@ impl Analyzer {
                                 false
                             }
                         }
-                        CompileParamKind::Effect => {
+                        Sort::Effect => {
                             self.error(format!(
-                                "effect row parameter `{name}` in trait member `{trait_name}.{member_name}` does not accept effect arguments"
+                                "effect identity parameter `{name}` in trait member `{trait_name}.{member_name}` is not an effect constructor"
+                            ));
+                            false
+                        }
+                        Sort::Effects => {
+                            self.error(format!(
+                                "effects row parameter `{name}` in trait member `{trait_name}.{member_name}` is not an effect constructor"
                             ));
                             false
                         }
                         _ => {
                             self.error(format!(
-                                "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has kind {}, not `effect`",
-                                describe_compile_param_kind(kind)
+                                "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has sort {}, not `effect`",
+                                describe_compile_sort(kind)
                             ));
                             false
                         }
@@ -2247,7 +2297,8 @@ impl Analyzer {
 
         if let Some(kind) = compile_parameters.get(name).cloned() {
             match kind {
-                CompileParamKind::EffectConstructor { parameter_count } => {
+                Sort::EffectConstructor { parameter_groups } => {
+                    let parameter_count = parameter_groups.iter().map(Vec::len).sum::<usize>();
                     let mut valid = true;
                     if arguments.len() != parameter_count {
                         self.error(format!(
@@ -2266,16 +2317,22 @@ impl Analyzer {
                     }
                     valid
                 }
-                CompileParamKind::Effect => {
+                Sort::Effect => {
                     self.error(format!(
-                        "effect row parameter `{name}` in trait member `{trait_name}.{member_name}` does not accept effect arguments"
+                        "effect identity parameter `{name}` in trait member `{trait_name}.{member_name}` is not an effect constructor"
+                    ));
+                    false
+                }
+                Sort::Effects => {
+                    self.error(format!(
+                        "effects row parameter `{name}` in trait member `{trait_name}.{member_name}` is not an effect constructor"
                     ));
                     false
                 }
                 _ => {
                     self.error(format!(
-                        "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has kind {}, not `effect`",
-                        describe_compile_param_kind(kind)
+                        "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has sort {}, not `effect`",
+                        describe_compile_sort(kind)
                     ));
                     false
                 }
@@ -2417,16 +2474,22 @@ impl Analyzer {
         parameter: &CompileParam,
         source: &Type,
     ) -> Option<Type> {
-        if parameter.kind != CompileParamKind::Effect {
+        if !parameter.kind.is_effect_classifier() {
             return self.source_type_is_concrete(source).then(|| source.clone());
         }
         if matches!(source, Type::Unit)
             || matches!(source, Type::Named(name, arguments) if (name == "()" || name == "pure") && arguments.is_empty())
         {
-            return Some(effect_row_source(false, None, &[]));
+            return (parameter.kind == Sort::Effects).then(|| effect_row_source(false, None, &[]));
         }
         if effect_row_from_source(source).is_some() {
-            return Some(source.clone());
+            return if parameter.kind == Sort::Effect {
+                let (unsafe_effect, throws, custom) = effect_row_from_source(source)?;
+                (usize::from(unsafe_effect) + usize::from(throws.is_some()) + custom.len() == 1)
+                    .then(|| source.clone())
+            } else {
+                Some(source.clone())
+            };
         }
         if self.is_standard_unsafe_effect_source(source) {
             return Some(effect_row_source(true, None, &[]));
@@ -2512,6 +2575,16 @@ impl Analyzer {
                 name: name.clone(),
                 kind: NominalKind::Struct,
                 parameter_count: template.compile_groups.iter().flatten().count(),
+                parameter_groups: template
+                    .compile_groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| parameter.kind.clone())
+                            .collect()
+                    })
+                    .collect(),
             });
         }
         if let Some(template) = self.enum_templates.get(name) {
@@ -2519,6 +2592,16 @@ impl Analyzer {
                 name: name.clone(),
                 kind: NominalKind::Enum,
                 parameter_count: template.compile_groups.iter().flatten().count(),
+                parameter_groups: template
+                    .compile_groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| parameter.kind.clone())
+                            .collect()
+                    })
+                    .collect(),
             });
         }
         None
@@ -2568,6 +2651,10 @@ impl Analyzer {
                 name: target_name.clone(),
                 kind: base.kind,
                 parameter_count: base.parameter_count - supplied_arguments.len(),
+                parameter_groups: remaining_sort_groups(
+                    &base.parameter_groups,
+                    supplied_arguments.len(),
+                ),
             },
             self_constructor: source.clone(),
         })
@@ -2593,7 +2680,7 @@ impl Analyzer {
         }
         if alias_parameters
             .iter()
-            .any(|parameter| parameter.kind != CompileParamKind::Type)
+            .any(|parameter| parameter.kind != Sort::Type)
         {
             self.error(format!(
                 "constructor trait implementation target alias `{alias_name}` must contain only type parameters"
@@ -2696,6 +2783,19 @@ impl Analyzer {
                 name: target_name,
                 kind: base.kind,
                 parameter_count: remaining_parameters.len(),
+                parameter_groups: remaining_sort_groups(
+                    &alias
+                        .compile_groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| parameter.kind.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>(),
+                    supplied_arguments.len(),
+                ),
             },
             self_constructor: source.clone(),
         })
@@ -2743,7 +2843,7 @@ impl Analyzer {
                             (0..target.parameter_count)
                                 .map(|index| CompileParam {
                                     name: format!("T{index}"),
-                                    kind: CompileParamKind::Type,
+                                    kind: Sort::Type,
                                     default: None,
                                 })
                                 .collect::<Vec<_>>()
@@ -2773,10 +2873,10 @@ impl Analyzer {
         {
             if expected.kind != actual.kind {
                 self.error(format!(
-                    "associated type constructor `{trait_name}.{associated}` parameter {} expects kind `{}`, but `{name}` uses kind `{}`",
+                    "associated type constructor `{trait_name}.{associated}` parameter {} expects sort `{}`, but `{name}` uses sort `{}`",
                     index + 1,
-                    compile_parameter_kind_label(&expected.kind),
-                    compile_parameter_kind_label(&actual.kind)
+                    compile_parameter_sort_label(&expected.kind),
+                    compile_parameter_sort_label(&actual.kind)
                 ));
                 return false;
             }
@@ -2835,10 +2935,7 @@ impl Analyzer {
             return false;
         };
         self.traits.get(name).is_some_and(|schema| {
-            matches!(
-                schema.self_parameter.kind,
-                CompileParamKind::TypeConstructor { .. }
-            )
+            matches!(schema.self_parameter.kind, Sort::TypeConstructor { .. })
         })
     }
 
@@ -2857,7 +2954,7 @@ impl Analyzer {
         if !schema.valid {
             return None;
         }
-        if schema.self_parameter.kind != CompileParamKind::Type {
+        if schema.self_parameter.kind != Sort::Type {
             self.error(format!(
                 "trait `{name}` expects a type-constructor implementation target"
             ));
@@ -3335,7 +3432,7 @@ impl Analyzer {
         let mut normalized_sources = HashMap::new();
         for associated in &schema.associated_types {
             match schema.associated_type_kinds[associated].clone() {
-                CompileParamKind::Type => {
+                Sort::Type => {
                     if self
                         .normalize_trait_impl_associated_type(
                             &key.trait_ref.name,
@@ -3350,32 +3447,34 @@ impl Analyzer {
                         valid = false;
                     }
                 }
-                CompileParamKind::TypeConstructor { .. } => {}
-                CompileParamKind::Parameters => {
+                Sort::TypeConstructor { .. } => {}
+                Sort::Parameters => {
                     self.error(format!(
                         "associated parameter schema `{}.{associated}` implementations are compiler-derived only",
                         key.trait_ref.name
                     ));
                     valid = false;
                 }
-                CompileParamKind::ParameterPack => {
+                Sort::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
                 }
-                CompileParamKind::ParameterModifier => {
+                Sort::ParameterModifier => {
                     unreachable!("associated types cannot be parameter modifiers")
                 }
-                CompileParamKind::EffectConstructor { .. } => {
+                Sort::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{}.{associated}` implementations are not supported yet",
                         key.trait_ref.name
                     ));
                     valid = false;
                 }
-                CompileParamKind::Region
-                | CompileParamKind::USize
-                | CompileParamKind::Effect
-                | CompileParamKind::Named(_) => {
-                    unreachable!("associated types only store type kinds")
+                Sort::Region
+                | Sort::String
+                | Sort::USize
+                | Sort::Effect
+                | Sort::Effects
+                | Sort::Named(_) => {
+                    unreachable!("associated types only store type sorts")
                 }
             }
         }
@@ -3395,8 +3494,7 @@ impl Analyzer {
             }
         }
         for associated in &schema.associated_types {
-            let CompileParamKind::TypeConstructor { .. } =
-                schema.associated_type_kinds[associated].clone()
+            let Sort::TypeConstructor { .. } = schema.associated_type_kinds[associated].clone()
             else {
                 continue;
             };
@@ -3682,19 +3780,25 @@ impl Analyzer {
         if !schema.valid {
             return;
         }
-        let CompileParamKind::TypeConstructor { parameter_count } = schema.self_parameter.kind
+        let Sort::TypeConstructor {
+            ref parameter_groups,
+        } = schema.self_parameter.kind
         else {
             self.error(format!(
                 "trait `{trait_name}` does not accept a type-constructor implementation target"
             ));
             return;
         };
-        if parameter_count != target.parameter_count {
+        if *parameter_groups != target.parameter_groups {
             self.error(format!(
-                "type constructor `{}` has {} parameter{}, but trait `{trait_name}` expects a constructor with {parameter_count}",
+                "type constructor `{}` has sort {}, but trait `{trait_name}` expects sort {}",
                 target.name,
-                target.parameter_count,
-                if target.parameter_count == 1 { "" } else { "s" }
+                describe_compile_sort(Sort::TypeConstructor {
+                    parameter_groups: target.parameter_groups.clone(),
+                }),
+                describe_compile_sort(Sort::TypeConstructor {
+                    parameter_groups: parameter_groups.clone(),
+                }),
             ));
             return;
         }
@@ -3710,11 +3814,11 @@ impl Analyzer {
         let mut trait_arguments = Vec::new();
         let mut trait_argument_sources = Vec::new();
         for (parameter, source_argument) in schema.compile_parameters.iter().zip(source_arguments) {
-            if parameter.kind != CompileParamKind::Type {
+            if parameter.kind != Sort::Type {
                 self.error(format!(
-                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
+                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time sort {}",
                     parameter.name,
-                    describe_compile_param_kind(parameter.kind.clone())
+                    describe_compile_sort(parameter.kind.clone())
                 ));
                 return;
             }
@@ -4269,11 +4373,11 @@ impl Analyzer {
     }
 
     fn collect_generic_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
-        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
+        let compile_parameter_sorts = compile_parameter_sorts(&extension.compile_groups);
         if !self.validate_where_predicate_shapes(
             "generic trait extension",
             &extension.where_predicates,
-            &compile_parameter_kinds,
+            &compile_parameter_sorts,
         ) {
             return;
         }
@@ -4494,11 +4598,11 @@ impl Analyzer {
         extension: ExtendDef,
         origin: ItemOrigin,
     ) {
-        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
+        let compile_parameter_sorts = compile_parameter_sorts(&extension.compile_groups);
         if !self.validate_where_predicate_shapes(
             "generic constructor trait extension",
             &extension.where_predicates,
-            &compile_parameter_kinds,
+            &compile_parameter_sorts,
         ) {
             return;
         }
@@ -4522,7 +4626,7 @@ impl Analyzer {
         }
         let mut declared = HashSet::new();
         for parameter in &parameters {
-            if parameter.kind != CompileParamKind::Type
+            if parameter.kind != Sort::Type
                 || parameter.name == "Self"
                 || !declared.insert(parameter.name.clone())
             {
@@ -4559,19 +4663,25 @@ impl Analyzer {
         if !schema.valid {
             return;
         }
-        let CompileParamKind::TypeConstructor { parameter_count } = schema.self_parameter.kind
+        let Sort::TypeConstructor {
+            ref parameter_groups,
+        } = schema.self_parameter.kind
         else {
             self.error(format!(
                 "trait `{trait_name}` does not accept a type-constructor implementation target"
             ));
             return;
         };
-        if parameter_count != target.target.parameter_count {
+        if *parameter_groups != target.target.parameter_groups {
             self.error(format!(
-                "type constructor `{}` has {} parameter{}, but trait `{trait_name}` expects a constructor with {parameter_count}",
+                "type constructor `{}` has sort {}, but trait `{trait_name}` expects sort {}",
                 target.target.name,
-                target.target.parameter_count,
-                if target.target.parameter_count == 1 { "" } else { "s" }
+                describe_compile_sort(Sort::TypeConstructor {
+                    parameter_groups: target.target.parameter_groups.clone(),
+                }),
+                describe_compile_sort(Sort::TypeConstructor {
+                    parameter_groups: parameter_groups.clone(),
+                }),
             ));
             return;
         }
@@ -4584,11 +4694,11 @@ impl Analyzer {
             return;
         }
         for parameter in &schema.compile_parameters {
-            if parameter.kind != CompileParamKind::Type {
+            if parameter.kind != Sort::Type {
                 self.error(format!(
-                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
+                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time sort {}",
                     parameter.name,
-                    describe_compile_param_kind(parameter.kind.clone())
+                    describe_compile_sort(parameter.kind.clone())
                 ));
                 return;
             }
@@ -4782,7 +4892,7 @@ impl Analyzer {
                         valid = false;
                     } else if matches!(
                         schema.associated_type_kinds[&binding.name],
-                        CompileParamKind::EffectConstructor { .. }
+                        Sort::EffectConstructor { .. }
                     ) {
                         self.error(format!(
                             "effect associated constructor `{trait_name}.{}` implementations are not supported yet",
@@ -4832,32 +4942,34 @@ impl Analyzer {
         }
         for name in &schema.associated_types {
             match schema.associated_type_kinds[name].clone() {
-                CompileParamKind::Type | CompileParamKind::TypeConstructor { .. } => {}
-                CompileParamKind::Parameters => {
+                Sort::Type | Sort::TypeConstructor { .. } => {}
+                Sort::Parameters => {
                     self.error(format!(
                         "associated parameter schema `{trait_name}.{name}` implementations are compiler-derived only"
                     ));
                     valid = false;
                     continue;
                 }
-                CompileParamKind::ParameterPack => {
+                Sort::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
                 }
-                CompileParamKind::ParameterModifier => {
+                Sort::ParameterModifier => {
                     unreachable!("associated types cannot be parameter modifiers")
                 }
-                CompileParamKind::EffectConstructor { .. } => {
+                Sort::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{trait_name}.{name}` implementations are not supported yet"
                     ));
                     valid = false;
                     continue;
                 }
-                CompileParamKind::Region
-                | CompileParamKind::USize
-                | CompileParamKind::Effect
-                | CompileParamKind::Named(_) => {
-                    unreachable!("associated types only store type kinds")
+                Sort::Region
+                | Sort::String
+                | Sort::USize
+                | Sort::Effect
+                | Sort::Effects
+                | Sort::Named(_) => {
+                    unreachable!("associated types only store type sorts")
                 }
             }
             if !associated.contains(name) {
@@ -4924,12 +5036,12 @@ impl Analyzer {
         expected_substitutions.insert("Self".to_owned(), extension.target.clone());
         for parameter in extension.compile_groups.iter().flatten() {
             match &parameter.kind {
-                CompileParamKind::USize => {
+                Sort::USize => {
                     expected_substitutions
                         .entry(parameter.name.clone())
                         .or_insert(Type::CompileUSize(0));
                 }
-                CompileParamKind::Named(compile_type) => {
+                Sort::Named(compile_type) => {
                     let Some(member) = self
                         .closed_type_values
                         .get(compile_type)
@@ -4958,7 +5070,7 @@ impl Analyzer {
             };
             if matches!(
                 schema.associated_type_kinds.get(&binding.name),
-                Some(CompileParamKind::EffectConstructor { .. })
+                Some(Sort::EffectConstructor { .. })
             ) {
                 self.error(format!(
                     "effect associated constructor `{trait_name}.{}` implementations are not supported yet",
@@ -4978,7 +5090,7 @@ impl Analyzer {
         let mut normalized = HashMap::new();
         for associated in &schema.associated_types {
             match schema.associated_type_kinds[associated].clone() {
-                CompileParamKind::Type => {
+                Sort::Type => {
                     if let Some(source) = self.normalize_trait_impl_associated_type(
                         trait_name,
                         associated,
@@ -4992,7 +5104,7 @@ impl Analyzer {
                         valid = false;
                     }
                 }
-                CompileParamKind::TypeConstructor { .. } => {
+                Sort::TypeConstructor { .. } => {
                     let Some(source) = raw_associated.get(associated) else {
                         valid = false;
                         continue;
@@ -5008,29 +5120,31 @@ impl Analyzer {
                         valid = false;
                     }
                 }
-                CompileParamKind::Parameters => {
+                Sort::Parameters => {
                     self.error(format!(
                         "associated parameter schema `{trait_name}.{associated}` implementations are compiler-derived only"
                     ));
                     valid = false;
                 }
-                CompileParamKind::ParameterPack => {
+                Sort::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
                 }
-                CompileParamKind::ParameterModifier => {
+                Sort::ParameterModifier => {
                     unreachable!("associated types cannot be parameter modifiers")
                 }
-                CompileParamKind::EffectConstructor { .. } => {
+                Sort::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{trait_name}.{associated}` implementations are not supported yet"
                     ));
                     valid = false;
                 }
-                CompileParamKind::Region
-                | CompileParamKind::USize
-                | CompileParamKind::Effect
-                | CompileParamKind::Named(_) => {
-                    unreachable!("associated types only store type kinds")
+                Sort::Region
+                | Sort::String
+                | Sort::USize
+                | Sort::Effect
+                | Sort::Effects
+                | Sort::Named(_) => {
+                    unreachable!("associated types only store type sorts")
                 }
             }
         }
@@ -5284,11 +5398,11 @@ impl Analyzer {
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
-        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
+        let compile_parameter_sorts = compile_parameter_sorts(&extension.compile_groups);
         if !self.validate_where_predicate_shapes(
             "generic inherent extension",
             &extension.where_predicates,
-            &compile_parameter_kinds,
+            &compile_parameter_sorts,
         ) {
             return;
         }
@@ -5619,21 +5733,21 @@ impl Analyzer {
                     && pointee_arguments.is_empty()
                     && declared.contains(pointee) =>
             {
-                let pointee_is_type = parameters.iter().any(|parameter| {
-                    parameter.name == *pointee && parameter.kind == CompileParamKind::Type
-                });
+                let pointee_is_type = parameters
+                    .iter()
+                    .any(|parameter| parameter.name == *pointee && parameter.kind == Sort::Type);
                 if !pointee_is_type {
                     self.error("`Ptr` extension pointee must be determined by a `type` parameter");
                     return;
                 }
-                if access == "shared" || access == "mut" {
-                    (None, Some(access == "mut"), pointee.clone())
+                if let Some(mutable) = compile_time::access_mutability(access) {
+                    (None, Some(mutable), pointee.clone())
                 } else if declared.contains(access)
                     && parameters.iter().any(|parameter| {
                         parameter.name == *access
                             && matches!(
                                 &parameter.kind,
-                                CompileParamKind::Named(kind) if kind == "access"
+                                Sort::Named(kind) if kind == "access"
                             )
                     })
                 {
@@ -5648,9 +5762,10 @@ impl Analyzer {
             [Type::Named(pointee, pointee_arguments)]
                 if pointee_arguments.is_empty() && declared.contains(pointee) =>
             {
-                if !parameters.iter().any(|parameter| {
-                    parameter.name == *pointee && parameter.kind == CompileParamKind::Type
-                }) {
+                if !parameters
+                    .iter()
+                    .any(|parameter| parameter.name == *pointee && parameter.kind == Sort::Type)
+                {
                     self.error("`Ptr` extension pointee must be determined by a `type` parameter");
                     return;
                 }
@@ -5736,9 +5851,9 @@ impl Analyzer {
         };
         if !arguments.is_empty()
             || !declared.contains(element)
-            || !parameters.iter().any(|parameter| {
-                parameter.name == *element && parameter.kind == CompileParamKind::Type
-            })
+            || !parameters
+                .iter()
+                .any(|parameter| parameter.name == *element && parameter.kind == Sort::Type)
         {
             self.error("`Slice` extension element must be determined by a `type` parameter");
             return;
@@ -5808,9 +5923,9 @@ impl Analyzer {
         };
         if !arguments.is_empty()
             || declared != HashSet::from([element.clone()])
-            || !parameters.iter().any(|parameter| {
-                parameter.name == *element && parameter.kind == CompileParamKind::Type
-            })
+            || !parameters
+                .iter()
+                .any(|parameter| parameter.name == *element && parameter.kind == Sort::Type)
         {
             self.error("`Slice` trait element must be determined by one `type` parameter");
             return;
@@ -5866,10 +5981,10 @@ impl Analyzer {
         if !element_arguments.is_empty()
             || declared != HashSet::from([element_parameter.clone(), length_parameter.clone()])
             || !parameters.iter().any(|parameter| {
-                parameter.name == element_parameter && parameter.kind == CompileParamKind::Type
+                parameter.name == element_parameter && parameter.kind == Sort::Type
             })
             || !parameters.iter().any(|parameter| {
-                parameter.name == length_parameter && parameter.kind == CompileParamKind::USize
+                parameter.name == length_parameter && parameter.kind == Sort::USize
             })
         {
             self.error("`Array(T)(L)` trait parameters must be `T: type` and `L: usize`");
@@ -6611,19 +6726,18 @@ impl Analyzer {
                 ));
                 continue;
             }
-            let compile_parameter_kinds = compile_parameter_kinds(&template.compile_groups);
+            let compile_parameter_sorts = compile_parameter_sorts(&template.compile_groups);
             if !self.validate_where_predicate_shapes(
                 &format!("generic function `{template_name}`"),
                 &template.where_predicates,
-                &compile_parameter_kinds,
+                &compile_parameter_sorts,
             ) {
                 continue;
             }
             if template.compile_groups.iter().flatten().any(|parameter| {
                 matches!(
                     parameter.kind,
-                    CompileParamKind::TypeConstructor { .. }
-                        | CompileParamKind::EffectConstructor { .. }
+                    Sort::TypeConstructor { .. } | Sort::EffectConstructor { .. }
                 )
             }) {
                 continue;
@@ -6631,12 +6745,12 @@ impl Analyzer {
 
             let mut substitutions = HashMap::new();
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
-                if parameter.kind == CompileParamKind::USize {
+                if parameter.kind == Sort::USize {
                     substitutions.insert(parameter.name.clone(), Type::CompileUSize(0));
                     continue;
                 }
                 let marker = match parameter.kind.clone() {
-                    CompileParamKind::Type => {
+                    Sort::Type => {
                         let marker =
                             generic_parameter_marker(&template_name, index, &parameter.name);
                         self.abstract_type_parameters
@@ -6645,19 +6759,17 @@ impl Analyzer {
                     }
                     // Abstract validation uses the maximal currently supported row. Every
                     // concrete instance is lowered again after substituting its selected row.
-                    CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
-                    CompileParamKind::Parameters => continue,
-                    CompileParamKind::ParameterPack => continue,
-                    CompileParamKind::ParameterModifier => {
-                        PARAMETER_MODIFIER_MOVE_MARKER.to_owned()
-                    }
-                    CompileParamKind::Region => continue,
-                    CompileParamKind::USize => unreachable!("handled before marker selection"),
-                    CompileParamKind::TypeConstructor { .. }
-                    | CompileParamKind::EffectConstructor { .. } => unreachable!(
+                    Sort::Effect | Sort::Effects => EFFECT_UNSAFE_MARKER.to_owned(),
+                    Sort::Parameters => continue,
+                    Sort::ParameterPack => continue,
+                    Sort::ParameterModifier => PARAMETER_MODIFIER_MOVE_MARKER.to_owned(),
+                    Sort::Region => continue,
+                    Sort::String => continue,
+                    Sort::USize => unreachable!("handled before marker selection"),
+                    Sort::TypeConstructor { .. } | Sort::EffectConstructor { .. } => unreachable!(
                         "constructor parameters are validated through concrete instances"
                     ),
-                    CompileParamKind::Named(compile_type) => {
+                    Sort::Named(compile_type) => {
                         let Some(member) = self
                             .closed_type_values
                             .get(&compile_type)
@@ -6886,7 +6998,7 @@ impl Analyzer {
                 let mut method_substitutions = HashMap::new();
                 for (index, parameter) in method.compile_groups.iter().flatten().enumerate() {
                     let value = match parameter.kind.clone() {
-                        CompileParamKind::Type => {
+                        Sort::Type => {
                             let marker = generic_parameter_marker(
                                 &format!("{function}${method_id}"),
                                 index,
@@ -6896,14 +7008,14 @@ impl Analyzer {
                                 .insert(marker.clone(), parameter.name.clone());
                             Type::Named(marker, Vec::new())
                         }
-                        CompileParamKind::USize => Type::CompileUSize(0),
-                        CompileParamKind::Effect => {
+                        Sort::USize => Type::CompileUSize(0),
+                        Sort::Effect | Sort::Effects => {
                             Type::Named(EFFECT_UNSAFE_MARKER.to_owned(), Vec::new())
                         }
-                        CompileParamKind::ParameterModifier => {
+                        Sort::ParameterModifier => {
                             Type::Named(PARAMETER_MODIFIER_MOVE_MARKER.to_owned(), Vec::new())
                         }
-                        CompileParamKind::Named(compile_type) => {
+                        Sort::Named(compile_type) => {
                             let Some(member) = self
                                 .closed_type_values
                                 .get(&compile_type)
@@ -6913,11 +7025,12 @@ impl Analyzer {
                             };
                             Type::Named(closed_value_marker(&compile_type, member), Vec::new())
                         }
-                        CompileParamKind::Region
-                        | CompileParamKind::Parameters
-                        | CompileParamKind::ParameterPack
-                        | CompileParamKind::TypeConstructor { .. }
-                        | CompileParamKind::EffectConstructor { .. } => continue,
+                        Sort::Region
+                        | Sort::String
+                        | Sort::Parameters
+                        | Sort::ParameterPack
+                        | Sort::TypeConstructor { .. }
+                        | Sort::EffectConstructor { .. } => continue,
                     };
                     method_substitutions.insert(parameter.name.clone(), value);
                 }
@@ -7032,7 +7145,7 @@ impl Analyzer {
         &mut self,
         owner: &str,
         predicates: &[crate::ast::WherePredicate],
-        _compile_parameter_kinds: &HashMap<String, CompileParamKind>,
+        _compile_parameter_sorts: &HashMap<String, Sort>,
     ) -> bool {
         let mut valid = true;
         let mut seen = HashSet::new();
@@ -7305,114 +7418,90 @@ impl Analyzer {
         let function = self.diagnostic_function_name(function);
         let mut valid = true;
         for predicate in predicates {
-            if let Some(required) = self.constructor_trait_impl_key_from_predicate(predicate) {
-                if !self.constructor_trait_impl_headers.contains(&required) {
-                    self.error(format!(
-                        "where predicate `{}: {}` is not satisfied while instantiating `{function}`",
-                        required.target.name, required.trait_ref.name
-                    ));
-                    valid = false;
-                }
+            let goal = Goal::new([], Constraint::from(predicate));
+            if self.solve_concrete_goal(&goal) == GoalResult::Proven {
                 continue;
             }
-            let subject = self.lower_source_type(&predicate.subject);
-            let Type::Named(name, source_arguments) = &predicate.trait_ref else {
+            let Type::Named(name, _) = &predicate.trait_ref else {
                 valid = false;
                 continue;
             };
-            let arguments = source_arguments
-                .iter()
-                .map(|argument| self.lower_source_type(argument))
-                .collect::<Vec<_>>();
-            let associated_types = predicate
-                .associated_types
-                .iter()
-                .filter(|binding| binding.compile_groups.is_empty())
-                .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
-                .collect::<HashMap<_, _>>();
-            if subject == Ty::Error
-                || arguments.contains(&Ty::Error)
-                || associated_types.values().any(|ty| *ty == Ty::Error)
-            {
-                valid = false;
-                continue;
-            }
-            let satisfied =
-                if name == self.lang_item_name(LangItemKind::Move) && arguments.is_empty() {
-                    self.is_move_type(&subject)
-                } else if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
-                    self.is_copy_type(&subject)
-                } else {
-                    let schema = self.traits.get(name).cloned();
-                    schema.is_some_and(|schema| {
-                        self.trait_impls
-                            .get(&TraitImplKey {
-                                self_ty: subject.clone(),
-                                trait_ref: TraitRefKey {
-                                    name: name.clone(),
-                                    arguments,
-                                },
-                            })
-                            .cloned()
-                            .is_some_and(|implementation| {
-                                associated_types.iter().all(|(name, expected)| {
-                                    implementation.associated_types.get(name) == Some(expected)
-                                }) && predicate.associated_types.iter().all(|binding| {
-                                    self.concrete_associated_equation_holds(
-                                        &implementation,
-                                        &schema,
-                                        binding,
-                                    )
-                                })
-                            })
-                    })
-                };
-            if !satisfied {
-                self.error(format!(
-                    "where predicate `{}: {}` is not satisfied while instantiating `{function}`",
-                    self.diagnostic_type_name(&subject),
-                    name
-                ));
-                valid = false;
-            }
+            self.error(format!(
+                "where predicate `{}: {}` is not satisfied while instantiating `{function}`",
+                source_effect_identity(&predicate.subject),
+                name
+            ));
+            valid = false;
         }
         valid
     }
 
     fn concrete_where_predicate_holds(&mut self, predicate: &crate::ast::WherePredicate) -> bool {
-        if let Some(required) = self.constructor_trait_impl_key_from_predicate(predicate) {
-            return self.constructor_trait_impl_headers.contains(&required);
+        self.solve_concrete_goal(&Goal::new([], Constraint::from(predicate))) == GoalResult::Proven
+    }
+
+    fn solve_concrete_goal(&mut self, goal: &Goal) -> GoalResult {
+        if goal.assumptions.contains(&goal.conclusion) {
+            return GoalResult::Proven;
         }
-        let subject = self.lower_source_type(&predicate.subject);
-        let Type::Named(name, source_arguments) = &predicate.trait_ref else {
-            return false;
+        let Constraint::Implements {
+            subject,
+            trait_ref,
+            projections,
+        } = &goal.conclusion
+        else {
+            return GoalResult::NoSolution;
+        };
+        let predicate = WherePredicate {
+            subject: subject.clone(),
+            trait_ref: trait_ref.clone(),
+            associated_types: projections.iter().map(Into::into).collect(),
+        };
+        if let Some(required) = self.constructor_trait_impl_key_from_predicate(&predicate) {
+            return if self.constructor_trait_impl_headers.contains(&required) {
+                GoalResult::Proven
+            } else {
+                GoalResult::NoSolution
+            };
+        }
+        let subject = self.lower_source_type(subject);
+        let Type::Named(name, source_arguments) = trait_ref else {
+            return GoalResult::NoSolution;
         };
         let arguments = source_arguments
             .iter()
             .map(|argument| self.lower_source_type(argument))
             .collect::<Vec<_>>();
-        let associated_types = predicate
-            .associated_types
+        let associated_types = projections
             .iter()
-            .filter(|binding| binding.compile_groups.is_empty())
-            .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
+            .filter(|binding| binding.parameter_groups.is_empty())
+            .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.value)))
             .collect::<HashMap<_, _>>();
         if subject == Ty::Error
             || arguments.contains(&Ty::Error)
             || associated_types.values().any(|ty| *ty == Ty::Error)
         {
-            return false;
+            return GoalResult::NoSolution;
         }
         if name == self.lang_item_name(LangItemKind::Move) && arguments.is_empty() {
-            return self.is_move_type(&subject);
+            return if self.is_move_type(&subject) {
+                GoalResult::Proven
+            } else {
+                GoalResult::NoSolution
+            };
         }
         if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
-            return self.is_copy_type(&subject);
+            return if self.is_copy_type(&subject) {
+                GoalResult::Proven
+            } else {
+                GoalResult::NoSolution
+            };
         }
         let Some(schema) = self.traits.get(name).cloned() else {
-            return false;
+            return GoalResult::NoSolution;
         };
-        self.trait_impls
+        if self
+            .trait_impls
             .get(&TraitImplKey {
                 self_ty: subject,
                 trait_ref: TraitRefKey {
@@ -7424,10 +7513,19 @@ impl Analyzer {
             .is_some_and(|implementation| {
                 associated_types.iter().all(|(name, expected)| {
                     implementation.associated_types.get(name) == Some(expected)
-                }) && predicate.associated_types.iter().all(|binding| {
-                    self.concrete_associated_equation_holds(&implementation, &schema, binding)
+                }) && projections.iter().all(|equation| {
+                    self.concrete_associated_equation_holds(
+                        &implementation,
+                        &schema,
+                        &equation.into(),
+                    )
                 })
             })
+        {
+            GoalResult::Proven
+        } else {
+            GoalResult::NoSolution
+        }
     }
 
     fn concrete_associated_equation_holds(
@@ -13574,22 +13672,28 @@ fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangIt
     program.item_origins = origins;
 }
 
-fn compile_parameter_kind_label(kind: &CompileParamKind) -> String {
+fn compile_parameter_sort_label(kind: &Sort) -> String {
     match kind {
-        CompileParamKind::Type => "type".to_owned(),
-        CompileParamKind::Region => "region".to_owned(),
-        CompileParamKind::USize => "usize".to_owned(),
-        CompileParamKind::Effect => "effect".to_owned(),
-        CompileParamKind::Parameters => "parameters".to_owned(),
-        CompileParamKind::ParameterPack => "parameter pack".to_owned(),
-        CompileParamKind::ParameterModifier => "parameter modifier".to_owned(),
-        CompileParamKind::TypeConstructor { parameter_count } => {
-            format!("type constructor/{parameter_count}")
+        Sort::Type => "type".to_owned(),
+        Sort::Region => "region".to_owned(),
+        Sort::String => "string".to_owned(),
+        Sort::USize => "usize".to_owned(),
+        Sort::Effect => "effect".to_owned(),
+        Sort::Effects => "effects".to_owned(),
+        Sort::Parameters => "parameters".to_owned(),
+        Sort::ParameterPack => "parameter pack".to_owned(),
+        Sort::ParameterModifier => "parameter modifier".to_owned(),
+        Sort::TypeConstructor { parameter_groups } => {
+            describe_compile_sort(Sort::TypeConstructor {
+                parameter_groups: parameter_groups.clone(),
+            })
         }
-        CompileParamKind::EffectConstructor { parameter_count } => {
-            format!("effect constructor/{parameter_count}")
+        Sort::EffectConstructor { parameter_groups } => {
+            describe_compile_sort(Sort::EffectConstructor {
+                parameter_groups: parameter_groups.clone(),
+            })
         }
-        CompileParamKind::Named(name) => name.clone(),
+        Sort::Named(name) => name.clone(),
     }
 }
 

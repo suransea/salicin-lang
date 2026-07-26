@@ -6,6 +6,24 @@ subset.
 
 ## Unreleased
 
+- Made the private foreign/test syntax contracts reflect their erased inputs:
+  `foreign(ABI: abi)` now receives `c` from the finite `abi = sort { c }`, and
+  `test(name: string)(body)` receives its UTF-8 registration name through the
+  compiler-owned metadata `string` sort.
+- Moved `access` from a closed runtime enum to the finite compile-time sort
+  `sort { shared mut }`, with prelude aliases `mut = access.mut` and
+  `shared = access.shared`. Split the former combined effect classifier into
+  `effect` for exactly one nominal identity and `effects` for normalized
+  zero-or-more rows; row-polymorphic APIs now bind `E: effects`.
+- Replaced source `domain` declarations with compiler-owned abstract `sort`s
+  and user-defined finite sorts. Constructor Sorts now retain curried group
+  boundaries and every parameter Sort, and trait constructor matching checks
+  that complete signature instead of flattened arity.
+- Added typed `StaticValue`, trait `Constraint`/`Goal`, and projection-equation
+  IR boundaries. Ordinary pure `usize`/`bool` functions can now run under
+  bounded CTFE in dependent `Array(T)(expression)` lengths after generic
+  substitution; mutation, borrowing, runtime effects, invalid arithmetic, and
+  repeated nonterminating calls are rejected.
 - Replanned the post-foundation work around daily compiler usability. The
   current milestone now prioritizes practical standard-library text,
   array/slice/vector, formatting, explicit synchronous IO, and test support.

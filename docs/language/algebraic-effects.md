@@ -5,7 +5,7 @@ This document defines the implementation contract for source-declared algebraic 
 
 ## Effect Declarations
 
-An effect is a nominal compile-time identity with one or more operations:
+An effect is a nominal compile-time identity with zero or more operations:
 
 ```sc fragment
 let State(S: type) = effect {
@@ -34,8 +34,10 @@ let increment(): i32 with(State(i32)) = {
 ```
 
 Rows are unordered sets of nominal effect identities. Handling one identity removes exactly that
-identity and forwards every other requirement. A compile-time `E: effect` parameter may represent
+identity and forwards every other requirement. A compile-time `E: effects` parameter may represent
 an abstract residual row and is instantiated before runtime lowering.
+The singular `effect` sort classifies one identity; the plural `effects` sort classifies the empty
+row (`pure`) or any normalized combination of identities and row variables.
 
 Effect rows do not encode ordinary allocation, I/O, or mutation. Those capabilities are represented
 by library types and APIs unless they explicitly declare an effect.

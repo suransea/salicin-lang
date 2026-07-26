@@ -7,8 +7,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
-    Binding, CompileParamKind, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item,
-    ItemOrigin, MatchArm, Param, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
+    Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, ItemOrigin, MatchArm,
+    Param, Pattern, PatternField, PatternFields, Program, Sort, StaticExpr, Stmt, StructDef,
     TraitDef, TraitMember, Type, UseDecl, VariantFields, Visibility,
 };
 use crate::{lexer, parser};
@@ -398,6 +398,8 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("align_of", "core::memory::align_of"),
     ("copy", "core::passing::copy"),
     ("move", "core::passing::move"),
+    ("mut", "$access$mut"),
+    ("shared", "$access$shared"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -469,9 +471,17 @@ const CORE_ASYNC_EXPORTS: &[&str] = &[
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
-const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
+const CORE_SORT_EXPORTS: &[&str] = &[
+    "type",
+    "region",
+    "effect",
+    "effects",
+    "parameters",
+    "string",
+    "abi",
+];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
-const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
+const CORE_BORROW_EXPORTS: &[&str] = &["access", "mut", "shared", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Slice", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "loop", "while",
@@ -593,13 +603,18 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("effect", "Continuation", "core::effect::Continuation"),
     ("effect", "EffectCallable", "core::effect::EffectCallable"),
     ("effect", "Handle", "core::effect::Handle"),
-    ("domains", "type", "core::domains::type"),
-    ("domains", "region", "core::domains::region"),
-    ("domains", "effect", "core::domains::effect"),
-    ("domains", "parameters", "core::domains::parameters"),
+    ("sorts", "type", "core::sorts::type"),
+    ("sorts", "region", "core::sorts::region"),
+    ("sorts", "effect", "core::sorts::effect"),
+    ("sorts", "effects", "core::sorts::effects"),
+    ("sorts", "parameters", "core::sorts::parameters"),
+    ("sorts", "string", "core::sorts::string"),
+    ("sorts", "abi", "core::sorts::abi"),
     ("passing", "copy", "core::passing::copy"),
     ("passing", "move", "core::passing::move"),
     ("borrow", "access", "core::borrow::access"),
+    ("borrow", "mut", "$access$mut"),
+    ("borrow", "shared", "$access$shared"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "defer", "core::control::defer"),
@@ -1081,6 +1096,29 @@ fn collect_symbols(
                 symbols.insert(logical_path, symbol);
             }
 
+            if let Item::Sort(crate::ast::SortDef {
+                members: Some(members),
+                ..
+            }) = item
+            {
+                let owner = canonical_name(&unit.module_path, name);
+                for member in members {
+                    let mut member_path = unit.module_path.clone();
+                    member_path.push(name.to_owned());
+                    member_path.push(member.clone());
+                    symbols.insert(
+                        member_path,
+                        Symbol {
+                            canonical: format!("{owner}.{member}"),
+                            module_path: unit.module_path.clone(),
+                            package_root: unit.package_root.clone(),
+                            visibility: *visibility,
+                            source_path: unit.source.path.clone(),
+                        },
+                    );
+                }
+            }
+
             if module_children
                 .get(&unit.module_path)
                 .is_some_and(|children| children.contains(name))
@@ -1140,8 +1178,8 @@ fn install_standard_namespaces(
         for name in CORE_ASYNC_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.async.{name}"));
         }
-        for name in CORE_DOMAIN_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
+        for name in CORE_SORT_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.sorts.{name}"));
         }
         for name in CORE_PASSING_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.passing.{name}"));
@@ -1298,7 +1336,7 @@ fn install_core_namespace(
             "effect",
             "async",
             "unsafe",
-            "domains",
+            "sorts",
             "control",
             "iter",
             "algebra",
@@ -1502,14 +1540,14 @@ fn install_core_namespace(
                 "<core>",
             );
         }
-        for name in CORE_DOMAIN_EXPORTS {
+        for name in CORE_SORT_EXPORTS {
             insert_standard_symbol(
                 symbols,
                 package_root,
                 &core_root,
-                "domains",
+                "sorts",
                 name,
-                &format!("core::domains::{name}"),
+                &format!("core::sorts::{name}"),
                 "<core>",
             );
         }
@@ -1525,13 +1563,18 @@ fn install_core_namespace(
             );
         }
         for name in CORE_BORROW_EXPORTS {
+            let canonical = match *name {
+                "mut" => "$access$mut".to_owned(),
+                "shared" => "$access$shared".to_owned(),
+                _ => format!("core::borrow::{name}"),
+            };
             insert_standard_symbol(
                 symbols,
                 package_root,
                 &core_root,
                 "borrow",
                 name,
-                &format!("core::borrow::{name}"),
+                &canonical,
                 "<core>",
             );
         }
@@ -1722,7 +1765,7 @@ fn install_std_namespace(
         "effect",
         "async",
         "unsafe",
-        "domains",
+        "sorts",
         "control",
         "iter",
         "algebra",
@@ -1790,7 +1833,12 @@ fn collect_imports(
                 ));
                 continue;
             };
-            if !is_valid_import_alias(&alias) {
+            let finite_sort_keyword_alias = alias == "mut"
+                && declaration
+                    .path
+                    .last()
+                    .is_some_and(|target| target == "mut");
+            if !is_valid_import_alias(&alias) && !finite_sort_keyword_alias {
                 diagnostics.push(format!(
                     "{}: error: `{alias}` cannot be used as an import alias",
                     unit.source.path
@@ -2268,7 +2316,7 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Enum(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
-                Item::Domain(definition) => &definition.name,
+                Item::Sort(definition) => &definition.name,
                 Item::TypeForm(definition) => &definition.name,
                 Item::Function(_) | Item::Global(_) | Item::TypeAlias(_) | Item::Extend(_) => {
                     return None
@@ -2367,7 +2415,7 @@ fn validate_item_api(
                 );
             }
         }
-        Item::Domain(_) | Item::TypeForm(_) => {}
+        Item::Sort(_) | Item::TypeForm(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -2905,7 +2953,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Enum(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
-        Item::Domain(definition) => Some(&definition.name),
+        Item::Sort(definition) => Some(&definition.name),
         Item::TypeForm(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
         Item::Extend(_) => None,
@@ -2918,7 +2966,7 @@ fn declaration_namespace(item: &Item) -> DeclarationNamespace {
         Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) | Item::TypeForm(_) => {
             DeclarationNamespace::Type
         }
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
+        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Sort(_) | Item::Extend(_) => {
             DeclarationNamespace::Other
         }
     }
@@ -3000,7 +3048,7 @@ impl Resolver {
                     self.rewrite_function(operation, context, &type_scope);
                 }
             }
-            Item::Domain(definition) => {
+            Item::Sort(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
             }
             Item::TypeForm(definition) => {
@@ -3176,12 +3224,20 @@ impl Resolver {
         outer_types: &HashSet<String>,
     ) {
         for parameter in groups.iter_mut().flatten() {
-            let CompileParamKind::Named(name) = &mut parameter.kind else {
+            let Sort::Named(name) = &mut parameter.kind else {
                 continue;
             };
             if matches!(
                 name.as_str(),
-                "bool" | "access" | "type" | "region" | "effect" | "parameters"
+                "bool"
+                    | "access"
+                    | "abi"
+                    | "string"
+                    | "type"
+                    | "region"
+                    | "effect"
+                    | "effects"
+                    | "parameters"
             ) {
                 continue;
             }
@@ -3254,9 +3310,12 @@ impl Resolver {
             Type::ArrayApplication {
                 constructor,
                 element,
-                ..
+                length,
             } => {
                 self.rewrite_type(element, context, type_scope);
+                if let crate::ast::USizeConst::Expression(expression) = length {
+                    self.rewrite_static_expression(expression, context, type_scope);
+                }
                 let segments: Vec<String> = constructor.split('.').map(str::to_owned).collect();
                 if let Some(canonical) = self.resolve_logical_path(&segments, context) {
                     *constructor = canonical;
@@ -3333,6 +3392,49 @@ impl Resolver {
             | Type::Bool
             | Type::Unit
             | Type::CompileUSize(_) => {}
+        }
+    }
+
+    fn rewrite_static_expression(
+        &mut self,
+        expression: &mut StaticExpr,
+        context: ResolveContext<'_>,
+        static_scope: &HashSet<String>,
+    ) {
+        match expression {
+            StaticExpr::Name(name) => {
+                if static_scope.contains(name) {
+                    return;
+                }
+                let logical = vec![name.clone()];
+                if let Some(canonical) = self.resolve_logical_path(&logical, context) {
+                    *name = canonical;
+                } else if !self.reject_unimported_standard(&logical, context) {
+                    self.reject_bare_module(&logical, context, "a static value");
+                }
+            }
+            StaticExpr::Unary(_, operand) => {
+                self.rewrite_static_expression(operand, context, static_scope)
+            }
+            StaticExpr::Binary(left, _, right) => {
+                self.rewrite_static_expression(left, context, static_scope);
+                self.rewrite_static_expression(right, context, static_scope);
+            }
+            StaticExpr::Call {
+                function,
+                arguments,
+            } => {
+                let logical: Vec<String> = function.split('.').map(str::to_owned).collect();
+                if let Some(canonical) = self.resolve_logical_path(&logical, context) {
+                    *function = canonical;
+                } else if !self.reject_unimported_standard(&logical, context) {
+                    self.reject_bare_module(&logical, context, "a CTFE function");
+                }
+                for argument in arguments {
+                    self.rewrite_static_expression(argument, context, static_scope);
+                }
+            }
+            StaticExpr::USize(_) | StaticExpr::Bool(_) => {}
         }
     }
 
@@ -3886,10 +3988,10 @@ fn compile_parameter_names(
             .filter(|parameter| {
                 matches!(
                     parameter.kind,
-                    CompileParamKind::Type
-                        | CompileParamKind::TypeConstructor { .. }
-                        | CompileParamKind::EffectConstructor { .. }
-                        | CompileParamKind::ParameterModifier
+                    Sort::Type
+                        | Sort::TypeConstructor { .. }
+                        | Sort::EffectConstructor { .. }
+                        | Sort::ParameterModifier
                 )
             })
             .map(|parameter| parameter.name.clone()),
@@ -3980,7 +4082,7 @@ mod tests {
             .expect("resolved select function");
         assert!(matches!(
             &function.compile_groups[0][0].kind,
-            CompileParamKind::Named(name) if name == "config::optimization"
+            Sort::Named(name) if name == "config::optimization"
         ));
     }
 
@@ -5646,9 +5748,14 @@ let main(): i32 = { Option {} }
             .chain(CORE_EFFECT_EXPORTS.iter().map(|name| ("effect", *name)))
             .chain(CORE_UNSAFE_EXPORTS.iter().map(|name| ("unsafe", *name)))
             .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
-            .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
+            .chain(CORE_SORT_EXPORTS.iter().map(|name| ("sorts", *name)))
             .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
-            .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))
+            .chain(
+                CORE_BORROW_EXPORTS
+                    .iter()
+                    .filter(|name| !matches!(**name, "mut" | "shared"))
+                    .map(|name| ("borrow", *name)),
+            )
             .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))

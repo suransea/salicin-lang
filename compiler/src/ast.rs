@@ -121,7 +121,7 @@ pub enum Item {
     Struct(StructDef),
     Enum(EnumDef),
     Effect(EffectDef),
-    Domain(DomainDef),
+    Sort(SortDef),
     TypeForm(TypeFormDef),
     TypeAlias(TypeAliasDef),
     Trait(TraitDef),
@@ -143,7 +143,7 @@ pub struct EffectDef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainDef {
+pub struct SortDef {
     pub name: String,
     pub members: Option<Vec<String>>,
 }
@@ -168,7 +168,7 @@ pub struct TraitDef {
 pub fn default_trait_self_parameter() -> CompileParam {
     CompileParam {
         name: "Self".to_owned(),
-        kind: CompileParamKind::Type,
+        kind: Sort::Type,
         default: None,
     }
 }
@@ -310,7 +310,7 @@ pub struct AssociatedTypeBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompileParam {
     pub name: String,
-    pub kind: CompileParamKind,
+    pub kind: Sort,
     pub default: Option<CompileParamDefault>,
 }
 
@@ -321,31 +321,56 @@ pub enum CompileParamDefault {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum CompileParamKind {
+/// The classifier of a compile-time value.
+///
+/// Unlike runtime [`Type`] values, sorts are erased before code generation.
+/// Constructor sorts retain source parameter-group boundaries because
+/// `(T: type)(L: usize): type` and `(T: type, L: usize): type` are distinct
+/// compile-time calling conventions.
+pub enum Sort {
     Type,
     USize,
     Region,
+    /// An immutable UTF-8 metadata string erased before runtime lowering.
+    String,
+    /// A single nominal effect identity such as `Unsafe` or `Throws(Error)`.
     Effect,
+    /// A normalized, order-insensitive row of zero or more effect identities.
+    Effects,
     Parameters,
     /// A variadic pack of `parameters` schemas used as repeated runtime groups
     /// by compiler-validated control contracts such as `match`.
     ParameterPack,
-    /// A compile-time parameter-schema transformer with the exact kind
+    /// A compile-time parameter-schema transformer with the exact sort
     /// `(P: parameters): parameters`.
     ParameterModifier,
     TypeConstructor {
-        parameter_count: usize,
+        parameter_groups: Vec<Vec<Sort>>,
     },
     EffectConstructor {
-        parameter_count: usize,
+        parameter_groups: Vec<Vec<Sort>>,
     },
     /// A value whose compile-time type is a source-declared closed type.
     Named(String),
 }
 
-impl CompileParamKind {
+impl Sort {
+    pub fn constructor_parameter_count(&self) -> Option<usize> {
+        match self {
+            Self::TypeConstructor { parameter_groups }
+            | Self::EffectConstructor { parameter_groups } => {
+                Some(parameter_groups.iter().map(Vec::len).sum())
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_access(&self) -> bool {
         matches!(self, Self::Named(name) if name == "access")
+    }
+
+    pub fn is_effect_classifier(&self) -> bool {
+        matches!(self, Self::Effect | Self::Effects)
     }
 
     pub fn is_parameter_modifier(&self) -> bool {
@@ -353,10 +378,28 @@ impl CompileParamKind {
     }
 }
 
+/// A pure expression admitted in a compile-time `usize` position.
+///
+/// This deliberately does not reuse [`Expr`]: the restricted tree cannot
+/// contain mutation, borrowing, handlers, loops, or other runtime-only forms.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StaticExpr {
+    USize(u64),
+    Bool(bool),
+    Name(String),
+    Unary(UnaryOp, Box<StaticExpr>),
+    Binary(Box<StaticExpr>, BinaryOp, Box<StaticExpr>),
+    Call {
+        function: String,
+        arguments: Vec<StaticExpr>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum USizeConst {
     Literal(u64),
     Parameter(String),
+    Expression(Box<StaticExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -610,14 +653,14 @@ impl Expr {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Neg,
     Not,
     Deref,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
     Sub,

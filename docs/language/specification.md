@@ -5,7 +5,9 @@ Status: evolving language specification
 This document defines the meaning of Salicin source programs. It describes the current language,
 not compiler internals, historical designs, or planned features. The precise parser grammar is in
 [Grammar](grammar.md). Implemented coverage and remaining work are tracked in
-[Implementation status](../project/status.md) and the [roadmap](../project/roadmap.md).
+[Implementation status](../project/status.md) and the [roadmap](../project/roadmap.md). Dated
+research comparisons and design gates are recorded in the
+[programming-language research ledger](research-ledger.md).
 
 The source file extension is `.sc`. Source text is UTF-8.
 
@@ -61,7 +63,7 @@ do {
 ```
 
 Fixed structural keywords include `let`, `struct`, `enum`, `trait`, `extend`, `pub`, `where`,
-`root`, `super`, and `package`. Words such as `type`, `domain`, `access`, `region`, `effect`,
+`root`, `super`, and `package`. Words such as `type`, `sort`, `access`, `region`, `effect`, `effects`,
 `parameters`, `borrow`, `copy`, `move`, `shared`, `mut`, and control-operation names are
 contextual: they retain their special meaning only in the corresponding grammatical position.
 
@@ -84,7 +86,7 @@ A binding is not visible in its own initializer, except that a named function is
 body for recursion. The same lexical scope cannot declare the same name twice. An inner scope may
 shadow an outer binding.
 
-Top-level `let` declarations introduce values, functions, types, type aliases, domains, effects,
+Top-level `let` declarations introduce values, functions, types, type aliases, sorts, effects,
 traits, or modules according to their annotation and initializer.
 
 ```sc fragment
@@ -127,7 +129,7 @@ test("arithmetic") {
 `test` is contextual in this position. The form registers the body with the
 test target during compilation; it is not an ordinary runtime call and does
 not introduce a user binding. The form is authorized by the private edition
-contract `let test(move body: (): bool): () = builtin()`; the string remains
+contract `let test(name: string)(move body: (): bool): () = builtin()`; the string remains
 compile-time runner metadata rather than a runtime argument. The name must be a non-empty
 string literal and is used in diagnostics. Registrations are private to their
 source package and cannot have visibility or attributes.
@@ -140,31 +142,42 @@ links one native runner, executes tests in source order, and reports the first
 failing name. A target with no registrations is an error. The current runner
 supports at most 254 registrations per target.
 
-### 3.3 Domains
+### 3.3 Sorts
 
-A domain classifies compile-time values. An abstract domain has no source-enumerable set of values:
+A sort classifies compile-time values. An abstract sort has no source-enumerable set of values and
+is compiler-owned:
 
 ```sc fragment
-let type: domain
+let type: sort
 ```
 
-A defined domain lists its complete members:
+A defined sort lists its complete members:
 
 ```sc fragment
-let optimization = domain {
+let optimization = sort {
   debug
   release
 }
 
-let Empty = domain {}
+let Empty = sort {}
+
+let select(Mode: optimization)(value: i32): i32 = { value }
+let answer = select(optimization.release)(42)
 ```
 
-An abstract domain and an empty defined domain are different. `let Name = domain` is invalid:
-abstract domains use `: domain`, while defined domains use `= domain { ... }`.
+An abstract sort and an empty defined sort are different. `let Name = sort` is invalid:
+compiler-owned abstract sorts use `: sort`, while user-defined finite sorts use
+`= sort { ... }`. User packages cannot introduce a new abstract sort.
+Finite members are named through their Sort, as in `optimization.release`.
 
-`type`, `region`, `effect`, and `parameters` are compile-time domains. `access` and `bool` are
-ordinary closed enums whose values can also classify compile-time parameters. Any other closed enum
-or defined domain can be used the same way.
+`type`, `region`, `effect`, `effects`, `parameters`, and metadata-only `string` are
+compiler-owned abstract compile-time sorts. `access` is the finite sort
+`sort { shared mut }`. `bool` remains an ordinary
+closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
+or defined finite sort can be used the same way.
+
+`abi` is the compiler-owned finite sort `sort { c }`. Its `c` member is the calling-convention
+argument accepted by the current foreign initializer.
 
 ### 3.4 Compiler Definitions
 
@@ -178,7 +191,7 @@ let builtin() = builtin()
 
 This unique self-recursive spelling bootstraps the compiler-definition marker;
 it is not an ordinary call and edition validation assigns its uninhabited
-`Never` result. Semantic analysis obtains each other definition's kind or type
+`Never` result. Semantic analysis obtains each other definition's sort or type
 from its annotation, validates the complete
 edition-owned signature, and resolves the marker before code generation.
 Compiler-owned types and type constructors use the same form:
@@ -198,13 +211,14 @@ implementations.
 The same private root module declares the other syntax-owned contracts:
 
 ```sc fragment
-let foreign(): Never = builtin()
-let test(move body: (): bool): () = builtin()
+let foreign(ABI: abi): Never = builtin()
+let test(name: string)(move body: (): bool): () = builtin()
 ```
 
-`foreign(c, ...)` supplies statically validated ABI metadata to its containing
-function declaration; `test("name") { ... }` supplies compile-time runner
-metadata and a pure boolean body. Neither metadata payload is a runtime value.
+`foreign(c, ...)` passes the finite `abi.c` value (using the contextual short spelling `c`) as
+statically validated metadata to its containing function declaration; `test("name") { ... }`
+passes a compile-time `string` and supplies a pure boolean runner body. Neither metadata payload
+is a runtime value.
 
 ## 4. Types and Compile-Time Parameters
 
@@ -228,20 +242,21 @@ let identity(T: type)(value: T): T = { value }
 let first(T: type, L: usize)(values: Array(T)(L)): T = { values[0] }
 ```
 
-Supported compile-time parameter kinds include:
+Supported compile-time parameter sorts include:
 
 - `T: type`;
 - `L: usize`;
 - `R: region`;
-- `E: effect`;
+- `X: effect` for one nominal effect identity;
+- `E: effects`;
 - `P: parameters`;
 - `A: access`;
 - values of another closed compile-time type;
-- bounded type and effect constructor kinds.
+- bounded type and effect constructor sorts.
 
 Compile-time arguments participate in overload selection and monomorphization, then are erased
 from runtime calling conventions. A rejected explicit or inferred argument is diagnosed against
-its source binder and compile-time kind. Group arity, unknown labels, kind mismatches, and
+its source binder and compile-time sort. Group arity, unknown labels, sort mismatches, and
 underconstrained inference are distinct errors.
 
 ### 4.1 Type Constructors and Aliases
@@ -266,9 +281,31 @@ let Family(T: type): type = core.Option(T)
 let Constructor: (T: type): type = core.Option
 ```
 
-Alias expansion must terminate. Cyclic aliases and arity or kind mismatches are rejected.
+Alias expansion must terminate. Cyclic aliases and arity or sort mismatches are rejected.
 
-### 4.2 Borrow, Pointer, and Array Types
+### 4.2 Compile-Time Evaluation and Dependent Array Lengths
+
+Salicin does not require a second spelling such as `const fn` for compile-time functions. An
+ordinary function may be evaluated in a static context when its body is available, its effects are
+empty, and its inputs and result belong to the supported static subset. The initial subset contains
+`usize` and `bool` literals, immutable local bindings, checked operators, `if`, and calls to other
+eligible top-level functions.
+
+```sc fragment
+let next(value: usize): usize = { value + 1 }
+
+let Buffer(Element: type)(Length: usize) = struct {
+  values: Array(Element)(next(Length))
+}
+```
+
+Static expressions are evaluated after generic static arguments are substituted and before runtime
+type lowering. The result therefore participates in type identity: `Buffer(i32)(2)` contains an
+`Array(i32)(3)`. Mutation, borrowing, handlers, closures, runtime effects, foreign calls, and
+bodyless functions are rejected in static evaluation. Checked overflow, division by zero, invalid
+shifts, or exhaustion of the implementation's evaluation budget are compile errors.
+
+### 4.3 Borrow, Pointer, and Array Types
 
 The safe reference constructor is:
 
@@ -487,6 +524,12 @@ match value {
 
 ## 8. Traits, Extensions, and Static Dispatch
 
+A trait is neither a runtime type nor a Sort. Semantically, it declares a relation over a subject
+and any compile-time arguments. A bound such as `T: Iterator` is a logical constraint (a solver
+goal); an applicable `extend T: Iterator` supplies implementation evidence. Associated-type
+bindings add projection-equality constraints to the same goal. Trait declarations and evidence are
+erased after static dispatch.
+
 A trait declares associated types and required or default methods:
 
 ```sc fragment
@@ -527,7 +570,7 @@ where T: Produce(Item = i32) = {
 }
 ```
 
-Generic associated constructors retain their parameter groups and kinds. Their receiver region can
+Generic associated constructors retain their parameter groups and sorts. Their receiver region can
 determine a yielded type, as in `Iterator.Item(R)`.
 
 Where predicates can equate a generic associated constructor with a type expression by declaring
@@ -538,7 +581,7 @@ let borrow_item(T: type)(value: T): ()
 where T: Iterator(Item(R: region) = borrow(R)(i32)) = { ... }
 ```
 
-The binder groups and kinds must exactly match the associated declaration. The right side may use
+The binder groups and sorts must exactly match the associated declaration. The right side may use
 outer compile-time parameters and its own binders. Transparent aliases are expanded before
 comparison. Equation rewriting is direct, uses at most 32 nested expansions, and does not infer
 missing binders or reorder groups.
@@ -570,12 +613,12 @@ let absolute = if value < 0 {
 The principal source contracts in `core.control` are:
 
 ```sc fragment
-pub let if(E: effect, T: type)
+pub let if(E: effects, T: type)
   (condition: bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E)
 
-pub let while(E: effect)
+pub let while(E: effects)
   (move condition: (): bool with(E))
   (move do: (): () with(E)): () with(E)
 ```
@@ -637,10 +680,16 @@ let result = try {
 }
 ```
 
-Effects compose in one row. Handling one effect preserves all unhandled effects. Effect parameters
-are compile-time row variables and are instantiated before runtime lowering. Once instantiated, a
-capturing closure passed to a parameter with that row follows the same ownership, materialization,
-and handling rules as a closure whose concrete effect was written directly.
+`effect` and `effects` are deliberately distinct sorts. A value of `effect` is exactly one nominal
+identity, such as `Counter` or `Throws(ParseError)`; this is the sort used by
+`Handle(Self: effect)`. A value of `effects` is a normalized zero-or-more row: `pure` is the empty
+row, and `with(...)` combines identities and row variables without order or duplicates.
+
+Handling one identity removes it from the row and preserves every other requirement. Parameters
+such as `E: effects` are compile-time row variables and are instantiated before runtime lowering.
+Once instantiated, a capturing closure passed to a parameter with that row follows the same
+ownership, materialization, and handling rules as a closure whose concrete effects were written
+directly.
 
 An `async { ... }` expression is cold: creating it does not execute its body. The compiler
 materializes private nominal state containing a state word and captured fields. That state is
