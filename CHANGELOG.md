@@ -16,6 +16,13 @@ subset.
   runtime type, tuples and arrays remain distinct, structs retain canonical
   nominal identity, and enums retain their source variant and active payload;
   LLVM emission only encodes this already typed value.
+- Completed builtin scalar CTFE for unit, `bool`, all fixed-width integers,
+  `isize`, and `usize` across pure function parameters, immutable locals,
+  exact-width operators, literal and irrefutable patterns, and results.
+  Integers now use normalized typed bit patterns, preserving signed minima and
+  the full `u128` domain; literal conversion and every arithmetic result are
+  fallible and checked. An explicit 64-bit native target description replaces
+  accidental dependence on Rust host pointer widths.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.

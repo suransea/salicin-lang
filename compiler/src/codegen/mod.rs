@@ -59,6 +59,7 @@ mod references;
 mod registry;
 mod source_rewrite;
 mod static_eval;
+mod target;
 mod throws;
 mod types;
 

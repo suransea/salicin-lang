@@ -97,9 +97,15 @@ Generic associated constructors preserve parameter sorts and groups in trait dec
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-Ordinary pure `usize`/`bool` functions can be evaluated in dependent array-length expressions.
-The static expression IR excludes runtime-only operations, substitutes generic `usize` values
-before evaluation, checks arithmetic, and diagnoses nontermination through a bounded evaluator.
+Ordinary pure scalar functions can be evaluated in dependent array-length
+expressions. Unit `()`, `bool`, every fixed-width signed and unsigned integer, and
+`isize`/`usize` are supported as parameters, immutable locals, operator
+operands, literal or irrefutable patterns, and results. Integer literals are
+converted fallibly to their expected exact type; arithmetic, division,
+remainder, bitwise operations, comparisons, negation, and shifts are checked
+at that width. The static expression IR excludes runtime-only operations,
+substitutes generic `usize` values before evaluation, and diagnoses
+nontermination through a bounded evaluator.
 
 Dependent-expression evaluation and global constant normalization now share
 one recursive typed CTFE value. It retains the exact integer type,
@@ -107,17 +113,24 @@ distinguishes tuples from arrays, records canonical struct and enum identity,
 and stores an enum's source variant plus active payload rather than backend
 padding or discriminants. Erased sort metadata remains in `StaticValue`.
 
-The type-level evaluator does not yet admit unit, other integer widths,
-tuples, arrays, structs, or enums as intermediate values. Global constant
-evaluation supports scalar and aggregate literals but cannot yet call
-ordinary source functions. Extending the shared value through those
-evaluators is the active roadmap boundary.
+The current backend has an explicit native target description with a 64-bit
+pointer width. CTFE, literal validation, runtime guards, LLVM scalar types,
+and constant encoding use that description rather than Rust's host
+`usize`. Global constant normalization and dependent-expression evaluation
+share exact signed/unsigned integer operations, including the full `u128`
+domain and signed minima.
+
+The type-level evaluator does not yet admit tuples, arrays, structs, or enums
+as intermediate values. Global constant evaluation supports scalar and
+aggregate literals but cannot yet call ordinary source functions. Extending
+the shared value through those evaluators is the active roadmap boundary.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,
 resource exclusion, structural normalization, deterministic complexity
 budgets, diagnostics, and the boundary from erased `StaticValue` metadata.
-Implementation begins with the unified typed value IR.
+Implementation now has the unified typed value IR and complete builtin
+scalars.
 
 ## Ownership and Borrowing
 

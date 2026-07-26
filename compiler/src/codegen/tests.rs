@@ -2633,6 +2633,119 @@ let main(): i32 = {
 }
 
 #[test]
+fn ctfe_supports_every_builtin_scalar_with_exact_width_semantics() {
+    let llvm = compile_text(
+        r#"
+let keep_unit(value: ()): () = { value }
+let keep_i8(value: i8): i8 = { value }
+let keep_i16(value: i16): i16 = { value }
+let keep_i32(value: i32): i32 = { value }
+let keep_i64(value: i64): i64 = { value }
+let keep_i128(value: i128): i128 = { value }
+let keep_isize(value: isize): isize = { value }
+let keep_u8(value: u8): u8 = { value }
+let keep_u16(value: u16): u16 = { value }
+let keep_u32(value: u32): u32 = { value }
+let keep_u64(value: u64): u64 = { value }
+let keep_u128(value: u128): u128 = { value }
+let keep_usize(value: usize): usize = { value }
+let keep_bool(value: bool): bool = { value }
+
+let scalar_length(seed: usize): usize = {
+  let unit_value: () = keep_unit(())
+  let signed8: i8 = keep_i8(-128)
+  let signed16: i16 = keep_i16(-32768)
+  let signed32: i32 = keep_i32(-2147483648)
+  let signed64: i64 = keep_i64(-9223372036854775808)
+  let signed128: i128 = keep_i128(-170141183460469231731687303715884105728)
+  let signed_pointer: isize = keep_isize(-9223372036854775808)
+  let unsigned8: u8 = keep_u8(255)
+  let unsigned16: u16 = keep_u16(65535)
+  let unsigned32: u32 = keep_u32(4294967295)
+  let unsigned64: u64 = keep_u64(18446744073709551615)
+  let unsigned128: u128 = keep_u128(340282366920938463463374607431768211455)
+  let unsigned_pointer: usize = keep_usize(18446744073709551615)
+  let truth: bool = keep_bool(true)
+  let unit_matches = match unit_value
+    { _ -> true }
+  let signed_matches = match signed8
+    { -128 -> true }
+    { _ -> false }
+  let unsigned_matches = match unsigned128
+    { 340282366920938463463374607431768211455 -> true }
+    { _ -> false }
+  if truth &&
+    unit_matches &&
+    signed_matches &&
+    unsigned_matches &&
+    signed16 + 32767 == -1 &&
+    signed32 / 2 == -1073741824 &&
+    signed64 / 2 == -4611686018427387904 &&
+    signed128 + 1 < 0 &&
+    signed_pointer / 2 == -4611686018427387904 &&
+    (unsigned8 & 15) == 15 &&
+    unsigned16 - 1 == 65534 &&
+    unsigned32 - 1 == 4294967294 &&
+    unsigned64 > 9223372036854775808 &&
+    (unsigned128 >> 127) == 1 &&
+    (unsigned_pointer >> 63) == 1 {
+    seed
+  } else {
+    0
+  }
+}
+
+let read(values: array(i32)(scalar_length(3))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("all builtin scalar families should evaluate during ctfe");
+    assert!(llvm.contains("[3 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_checks_exact_width_overflow_and_shift_counts() {
+    let overflow = compile_unresolved_text(
+        r#"
+let overflowing_length(seed: usize): usize = {
+  let maximum: u8 = 255
+  let invalid: u8 = maximum + 1
+  seed + invalid
+}
+let read(values: array(i32)(overflowing_length(1))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        overflow.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("integer arithmetic overflows `u8` during ctfe")),
+        "{overflow:?}"
+    );
+
+    let shift = compile_unresolved_text(
+        r#"
+let invalid_shift_length(seed: usize): usize = {
+  let value: u16 = 1
+  let count: u16 = 16
+  let invalid: u16 = value << count
+  seed + invalid
+}
+let read(values: array(i32)(invalid_shift_length(1))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        shift.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("shift count `16` is out of range for `u16` (16-bit) during ctfe")),
+        "{shift:?}"
+    );
+}
+
+#[test]
 fn ctfe_rejects_runtime_mutation_and_reports_arithmetic_failures() {
     let mutation = compile_unresolved_text(
         r#"
@@ -3117,6 +3230,30 @@ let main(): i32 = { read(global) }
         type_symbol("choice"),
         type_symbol("pair")
     )));
+}
+
+#[test]
+fn global_ctfe_preserves_signed_minimum_and_full_u128_values() {
+    let llvm = compile_text(
+        r#"
+let minimum: i128 = -170141183460469231731687303715884105728
+let maximum: u128 = 340282366920938463463374607431768211455
+let high: u128 = maximum >> 127
+let ordered: bool = maximum > 170141183460469231731687303715884105728
+let main(): i32 = { if ordered && high == 1 && minimum < 0 { 42 } else { 0 } }
+"#,
+    )
+    .expect("global ctfe should retain exact signed and unsigned 128-bit values");
+    assert!(
+        llvm.contains("constant i128 -170141183460469231731687303715884105728"),
+        "{llvm}"
+    );
+    assert!(
+        llvm.contains("constant i128 340282366920938463463374607431768211455"),
+        "{llvm}"
+    );
+    assert!(llvm.contains("constant i128 1"), "{llvm}");
+    assert!(llvm.contains("constant i1 1"), "{llvm}");
 }
 
 #[test]

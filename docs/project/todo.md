@@ -22,15 +22,7 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Composite Compile-Time Evaluation
 
-### Value model and contract
-
-### Builtin and aggregate values
-
-- [ ] **CTFE-3 — Complete builtin scalars.** Support Unit, `Bool`, all signed
-  and unsigned integer widths, `isize`, and `usize` in CTFE function
-  parameters, locals, operators, patterns, and results. Use checked,
-  width-aware arithmetic and explicit fallible conversions with target-aware
-  pointer widths.
+### Aggregate values
 
 - [ ] **CTFE-4 — Tuples and fixed arrays.** Add tuple and array literals,
   projection, bounds-checked indexing, immutable binding, nested patterns, and

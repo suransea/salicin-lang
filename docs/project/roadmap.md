@@ -54,13 +54,12 @@ boundary, typed value domain, evaluation order, resource exclusions,
 normalization rules, deterministic complexity budgets, diagnostics, and
 consumer behavior for this milestone.
 
-Salicin currently has two deliberately bounded but overlapping constant
-systems. Type-level CTFE evaluates pure `usize`/`bool` expressions for
-dependent array lengths, while global constant emission separately represents
-integers, booleans, Unit, tuples, arrays, structs, and enums. The current
-milestone replaces that split implementation with one typed CTFE value and
-evaluation boundary, then makes ordinary plain-data values available inside
-pure compile-time calls.
+Dependent expressions and global constants now share one typed CTFE value and
+one exact scalar operation layer. Pure dependent calls support unit, `bool`,
+and every target-width integer; global normalization already represents
+scalars, tuples, arrays, structs, and enums. The remaining milestone work
+extends composite values through pure source calls and then replaces the two
+consumer-specific control paths with one evaluation boundary.
 
 Runtime `struct` and `enum` declarations remain runtime types; this milestone
 does not turn them into `sort`s. A value of such a type may be constructed,

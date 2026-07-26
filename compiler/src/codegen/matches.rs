@@ -35,7 +35,7 @@ impl Analyzer {
         }
         let scalar_ty = match self.probe_expr_ty(scrutinee, None, context) {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
-                if ty == Ty::Bool || ty.is_integer() =>
+                if ty == Ty::Bool || ty == Ty::Unit || ty.is_integer() =>
             {
                 Some(ty)
             }

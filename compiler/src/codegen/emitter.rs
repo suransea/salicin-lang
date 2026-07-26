@@ -1,4 +1,4 @@
-use super::ctfe_value::{CtfeValue, CtfeValueKind};
+use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
@@ -60,7 +60,10 @@ impl ConstantEvaluator<'_> {
         locals: &mut HashMap<LocalId, CtfeValue>,
     ) -> Option<CtfeValue> {
         match &expression.kind {
-            HirExprKind::Integer(value) => Some(CtfeValue::integer(expression.ty.clone(), *value)),
+            HirExprKind::Integer(value) => Some(CtfeValue::integer_bits(
+                expression.ty.clone(),
+                *value as u128,
+            )),
             HirExprKind::Bool(value) => Some(CtfeValue::bool(*value)),
             HirExprKind::Unit => Some(CtfeValue::unit()),
             HirExprKind::LayoutQuery { queried, kind } => Some(CtfeValue {
@@ -95,9 +98,12 @@ impl ConstantEvaluator<'_> {
                     return None;
                 };
                 let index = match index {
-                    HirIndex::Static(index) => i128::from(*index),
+                    HirIndex::Static(index) => u128::from(*index),
                     HirIndex::Dynamic(index) => {
-                        let Some(index) = self.evaluate_expr(index, locals)?.integer_value() else {
+                        let Some(index) = self
+                            .evaluate_expr(index, locals)?
+                            .nonnegative_integer_value()
+                        else {
                             self.error("invalid array index in constant expression");
                             return None;
                         };
@@ -174,6 +180,24 @@ impl ConstantEvaluator<'_> {
                 .evaluate_expr(base, locals)?
                 .projection(*index)
                 .cloned(),
+            HirExprKind::Unary(UnaryOp::Neg, operand)
+                if expression.ty.is_signed()
+                    && matches!(
+                        operand.kind,
+                        HirExprKind::Integer(bits)
+                            if (bits as u128)
+                                == (1_u128
+                                    << (super::target::NATIVE_TARGET
+                                        .integer_width(&expression.ty)
+                                        .expect("signed integer has width")
+                                        - 1))
+                    ) =>
+            {
+                let HirExprKind::Integer(bits) = operand.kind else {
+                    unreachable!("negative minimum literal guard")
+                };
+                Some(CtfeValue::integer_bits(expression.ty.clone(), bits as u128))
+            }
             HirExprKind::Unary(operator, operand) => {
                 let operand = self.evaluate_expr(operand, locals)?;
                 self.evaluate_unary(*operator, operand, &expression.ty)
@@ -287,16 +311,14 @@ impl ConstantEvaluator<'_> {
             );
             return None;
         }
-        match (operator, operand.kind) {
+        match (operator, &operand.kind) {
             (UnaryOp::Not, CtfeValueKind::Bool(value)) => Some(CtfeValue::bool(!value)),
-            (UnaryOp::Neg, CtfeValueKind::Integer(value)) => value
-                .checked_neg()
-                .filter(|value| integer_value_fits(*value, ty))
-                .map(|value| CtfeValue::integer(ty.clone(), value))
-                .or_else(|| {
+            (UnaryOp::Neg, CtfeValueKind::Integer(_)) => {
+                operand.checked_integer_neg().ok().or_else(|| {
                     self.error(format!("constant arithmetic overflows `{ty}`"));
                     None
-                }),
+                })
+            }
             _ => None,
         }
     }
@@ -317,65 +339,34 @@ impl ConstantEvaluator<'_> {
             );
             return None;
         }
-        match (left.kind, right.kind) {
-            (CtfeValueKind::Integer(left), CtfeValueKind::Integer(right)) => {
-                if matches!(operator, Div | Rem)
-                    && right == -1
-                    && signed_integer_min(operand_ty) == Some(left)
-                {
-                    self.error(format!("constant arithmetic overflows `{operand_ty}`"));
-                    return None;
-                }
-                if matches!(operator, Shl | Shr)
-                    && u32::try_from(right)
-                        .ok()
-                        .is_none_or(|shift| shift >= integer_bit_width(operand_ty))
-                {
-                    self.error(format!(
-                        "shift count `{right}` is out of range for `{operand_ty}`"
-                    ));
-                    return None;
-                }
-                let arithmetic = match operator {
-                    Add => left.checked_add(right),
-                    Sub => left.checked_sub(right),
-                    Mul => left.checked_mul(right),
-                    Div if right == 0 => {
+        match (&left.kind, &right.kind) {
+            (CtfeValueKind::Integer(_), CtfeValueKind::Integer(_)) => {
+                match left.checked_integer_binary(operator, &right) {
+                    Ok(value) => Some(value),
+                    Err(IntegerEvalError::DivisionByZero) => {
                         self.error("division by zero in global constant");
-                        return None;
+                        None
                     }
-                    Div => left.checked_div(right),
-                    Rem if right == 0 => {
+                    Err(IntegerEvalError::RemainderByZero) => {
                         self.error("remainder by zero in global constant");
-                        return None;
+                        None
                     }
-                    Rem => left.checked_rem(right),
-                    BitAnd => Some(left & right),
-                    BitOr => Some(left | right),
-                    BitXor => Some(left ^ right),
-                    Shl => u32::try_from(right)
-                        .ok()
-                        .filter(|shift| *shift < integer_bit_width(operand_ty))
-                        .and_then(|shift| left.checked_shl(shift)),
-                    Shr => u32::try_from(right)
-                        .ok()
-                        .filter(|shift| *shift < integer_bit_width(operand_ty))
-                        .and_then(|shift| left.checked_shr(shift)),
-                    Eq => return Some(CtfeValue::bool(left == right)),
-                    Ne => return Some(CtfeValue::bool(left != right)),
-                    Lt => return Some(CtfeValue::bool(left < right)),
-                    Le => return Some(CtfeValue::bool(left <= right)),
-                    Gt => return Some(CtfeValue::bool(left > right)),
-                    Ge => return Some(CtfeValue::bool(left >= right)),
-                    And | Or => unreachable!("short-circuit operators handled separately"),
-                };
-                arithmetic
-                    .filter(|value| integer_value_fits(*value, operand_ty))
-                    .map(|value| CtfeValue::integer(operand_ty.clone(), value))
-                    .or_else(|| {
+                    Err(IntegerEvalError::InvalidShift { count, .. }) => {
+                        self.error(format!(
+                            "shift count `{count}` is out of range for `{operand_ty}`"
+                        ));
+                        None
+                    }
+                    Err(IntegerEvalError::Overflow) => {
                         self.error(format!("constant arithmetic overflows `{operand_ty}`"));
                         None
-                    })
+                    }
+                    Err(
+                        IntegerEvalError::TypeMismatch
+                        | IntegerEvalError::InvalidOperator
+                        | IntegerEvalError::InvalidNegation,
+                    ) => None,
+                }
             }
             (CtfeValueKind::Bool(left), CtfeValueKind::Bool(right)) => match operator {
                 Eq => Some(CtfeValue::bool(left == right)),
@@ -4436,7 +4427,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I16 | Ty::U16 => Ok("i16".to_owned()),
         Ty::I32 | Ty::U32 => Ok("i32".to_owned()),
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
-        Ty::ISize | Ty::USize => Ok(format!("i{}", usize::BITS)),
+        Ty::ISize | Ty::USize => Ok(format!("i{}", super::target::NATIVE_TARGET.pointer_width)),
         Ty::I128 | Ty::U128 => Ok("i128".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Tuple(fields) => Ok(format!(
@@ -4505,7 +4496,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<CtfeValue> {
         | Ty::U32
         | Ty::U64
         | Ty::U128
-        | Ty::USize => Some(CtfeValue::integer(ty.clone(), 0)),
+        | Ty::USize => Some(CtfeValue::integer_bits(ty.clone(), 0)),
         Ty::Bool => Some(CtfeValue::bool(false)),
         Ty::Unit => Some(CtfeValue::unit()),
         Ty::Tuple(fields) => Some(CtfeValue {
@@ -4575,7 +4566,9 @@ fn const_ir(value: &CtfeValue, ty: &Ty, program: &HirProgram) -> Result<String, 
         )));
     }
     match (&value.kind, ty) {
-        (CtfeValueKind::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
+        (CtfeValueKind::Integer(_), ty) if ty.is_integer() => value
+            .integer_display()
+            .ok_or_else(|| Diagnostic::new("internal error: invalid integer constant")),
         (CtfeValueKind::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
         (CtfeValueKind::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
         (CtfeValueKind::LayoutQuery { queried, kind }, Ty::U64) => {
@@ -4718,7 +4711,7 @@ mod tests {
         }
         assert_eq!(
             llvm_value_type(&Ty::USize).unwrap(),
-            format!("i{}", usize::BITS)
+            format!("i{}", super::super::target::NATIVE_TARGET.pointer_width)
         );
         assert_eq!(
             llvm_value_type(&Ty::Pointer {

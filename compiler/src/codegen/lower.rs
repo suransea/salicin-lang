@@ -319,33 +319,21 @@ pub(super) fn record_closure_capture(
 }
 
 pub(super) fn integer_fits(value: u128, ty: &Ty) -> bool {
-    match ty {
-        Ty::I8 => value <= i8::MAX as u128,
-        Ty::I16 => value <= i16::MAX as u128,
-        Ty::I32 => value <= i32::MAX as u128,
-        Ty::I64 => value <= i64::MAX as u128,
-        Ty::I128 => value <= i128::MAX as u128,
-        Ty::ISize => value <= isize::MAX as u128,
-        Ty::U8 => u8::try_from(value).is_ok(),
-        Ty::U16 => u16::try_from(value).is_ok(),
-        Ty::U32 => value <= u32::MAX as u128,
-        Ty::U64 => value <= u64::MAX as u128,
-        Ty::USize => value <= usize::MAX as u128,
-        Ty::U128 => true,
-        _ => false,
+    if ty.is_signed() {
+        super::target::NATIVE_TARGET
+            .signed_max(ty)
+            .is_some_and(|maximum| value <= maximum as u128)
+    } else {
+        super::target::NATIVE_TARGET
+            .unsigned_max(ty)
+            .is_some_and(|maximum| value <= maximum)
     }
 }
 
 pub(super) fn negative_integer_fits(magnitude: u128, ty: &Ty) -> bool {
-    match ty {
-        Ty::I8 => magnitude <= (i8::MAX as u128) + 1,
-        Ty::I16 => magnitude <= (i16::MAX as u128) + 1,
-        Ty::I32 => magnitude <= (i32::MAX as u128) + 1,
-        Ty::I64 => magnitude <= (i64::MAX as u128) + 1,
-        Ty::ISize => magnitude <= (isize::MAX as u128) + 1,
-        Ty::I128 => magnitude <= (i128::MAX as u128) + 1,
-        _ => false,
-    }
+    super::target::NATIVE_TARGET
+        .signed_min(ty)
+        .is_some_and(|minimum| magnitude <= minimum.unsigned_abs())
 }
 
 pub(super) fn integer_literal_bits(value: u128) -> i128 {
@@ -353,45 +341,25 @@ pub(super) fn integer_literal_bits(value: u128) -> i128 {
 }
 
 pub(super) fn integer_value_fits(value: i128, ty: &Ty) -> bool {
-    match ty {
-        Ty::I8 => i8::try_from(value).is_ok(),
-        Ty::I16 => i16::try_from(value).is_ok(),
-        Ty::I32 => i32::try_from(value).is_ok(),
-        Ty::I64 => i64::try_from(value).is_ok(),
-        Ty::ISize => isize::try_from(value).is_ok(),
-        Ty::I128 => true,
-        Ty::U8 => u8::try_from(value).is_ok(),
-        Ty::U16 => u16::try_from(value).is_ok(),
-        Ty::U32 => u32::try_from(value).is_ok(),
-        Ty::U64 => u64::try_from(value).is_ok(),
-        Ty::USize => usize::try_from(value).is_ok(),
-        Ty::U128 => value >= 0,
-        _ => false,
+    if ty.is_signed() {
+        super::target::NATIVE_TARGET
+            .signed_min(ty)
+            .zip(super::target::NATIVE_TARGET.signed_max(ty))
+            .is_some_and(|(minimum, maximum)| (minimum..=maximum).contains(&value))
+    } else {
+        value >= 0
+            && super::target::NATIVE_TARGET
+                .unsigned_max(ty)
+                .is_some_and(|maximum| value as u128 <= maximum)
     }
 }
 
 pub(super) fn integer_bit_width(ty: &Ty) -> u32 {
-    match ty {
-        Ty::I8 | Ty::U8 => 8,
-        Ty::I16 | Ty::U16 => 16,
-        Ty::I32 | Ty::U32 => 32,
-        Ty::I64 | Ty::U64 => 64,
-        Ty::ISize | Ty::USize => usize::BITS,
-        Ty::I128 | Ty::U128 => 128,
-        _ => 0,
-    }
+    super::target::NATIVE_TARGET.integer_width(ty).unwrap_or(0)
 }
 
 pub(super) fn signed_integer_min(ty: &Ty) -> Option<i128> {
-    match ty {
-        Ty::I8 => Some(i128::from(i8::MIN)),
-        Ty::I16 => Some(i128::from(i16::MIN)),
-        Ty::I32 => Some(i128::from(i32::MIN)),
-        Ty::I64 => Some(i128::from(i64::MIN)),
-        Ty::I128 => Some(i128::MIN),
-        Ty::ISize => Some(isize::MIN as i128),
-        _ => None,
-    }
+    super::target::NATIVE_TARGET.signed_min(ty)
 }
 
 pub(super) fn nominal_name(ty: &Ty) -> Option<&str> {

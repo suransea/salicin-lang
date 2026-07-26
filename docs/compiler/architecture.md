@@ -48,7 +48,8 @@ The implementation lives under `compiler/src`:
   - `constructors.rs` lowers struct literals, struct and enum construction, field argument
     validation, and context-sensitive short enum variant resolution.
   - `ctfe_value.rs` defines the recursive runtime-typed value shared by dependent-expression and
-    global-constant evaluation while keeping erased metadata in `StaticValue`.
+    global-constant evaluation, plus exact checked integer operations, while keeping erased
+    metadata in `StaticValue`.
   - `emitter.rs` normalizes globals into typed CTFE values and encodes them as textual LLVM IR.
   - `effects.rs` owns source-level support state, effect identity helpers, call-site effect
     requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
@@ -97,6 +98,8 @@ The implementation lives under `compiler/src`:
   - `static_eval.rs` evaluates the pure static-expression subset through ordinary source function
     definitions into the shared typed CTFE value before dependent types are lowered to runtime
     layouts.
+  - `target.rs` defines the explicit native target width used by CTFE, literal validation,
+    runtime guards, and LLVM scalar lowering instead of inheriting Rust host integer widths.
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
     infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
     automatic throws propagation return-boundary wrappers.
