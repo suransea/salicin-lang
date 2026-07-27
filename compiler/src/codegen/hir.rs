@@ -3,6 +3,8 @@ use std::fmt;
 
 use crate::ast::{BinaryOp, ItemOrigin, PassMode, StructRepresentation, Type, UnaryOp, Visibility};
 
+use super::ctfe_value::CtfeValue;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Ty {
     I8,
@@ -344,6 +346,7 @@ pub(super) struct HirProgram {
     pub(super) structs: Vec<StructLayout>,
     pub(super) enums: Vec<EnumLayout>,
     pub(super) globals: Vec<HirGlobal>,
+    pub(super) normalized_globals: HashMap<String, CtfeValue>,
     pub(super) exported_globals: HashMap<String, String>,
     pub(super) functions: Vec<HirFunction>,
     pub(super) exported_functions: HashMap<String, String>,
@@ -489,7 +492,6 @@ impl HirProgram {
 pub(super) struct HirGlobal {
     pub(super) name: String,
     pub(super) ty: Ty,
-    pub(super) value: HirExpr,
 }
 
 #[derive(Debug, Clone)]

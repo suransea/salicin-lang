@@ -386,7 +386,6 @@ impl Analyzer {
             HirGlobal {
                 name: name.to_owned(),
                 ty: ty.clone(),
-                value,
             },
         );
         self.global_states

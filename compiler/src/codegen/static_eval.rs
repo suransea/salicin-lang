@@ -4,9 +4,10 @@ use crate::ast::{
     BinaryOp, CallArg, Expr, Function, PassMode, Pattern, PatternFields, StaticExpr, Stmt, Type,
     UnaryOp,
 };
+use crate::core::LangItemKind;
 
 use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
-use super::hir::Ty;
+use super::hir::{LayoutQueryKind, Ty};
 use super::lower::{flatten_call, InferredTypeArgument};
 use super::Analyzer;
 
@@ -21,6 +22,62 @@ enum StaticFunctionFlow {
 }
 
 impl Analyzer {
+    pub(super) fn evaluate_static_globals(&mut self) {
+        for name in self.global_order.clone() {
+            if self.ctfe_global_values.contains_key(&name) {
+                continue;
+            }
+            let mut fuel = STATIC_EVALUATION_FUEL;
+            let mut active_calls = Vec::new();
+            if let Err(message) = self.evaluate_static_global(&name, &mut fuel, &mut active_calls) {
+                self.error(format!(
+                    "global constant `{name}` evaluation failed: {message}"
+                ));
+            }
+        }
+    }
+
+    fn evaluate_static_global(
+        &mut self,
+        name: &str,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
+        if let Some(value) = self.ctfe_global_values.get(name) {
+            return Ok(value.clone());
+        }
+        if !self.ctfe_active_globals.insert(name.to_owned()) {
+            return Err(format!("cyclic global constant involving `{name}`"));
+        }
+        let result = (|| {
+            let binding = self
+                .globals
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown global constant `{name}`"))?;
+            let expected = self
+                .hir_globals
+                .get(name)
+                .map(|global| global.ty.clone())
+                .ok_or_else(|| format!("global constant `{name}` was not typed"))?;
+            self.validate_static_value_type(&expected)?;
+            let value = self.evaluate_static_body(
+                &binding.value,
+                Some(&expected),
+                &mut HashMap::new(),
+                fuel,
+                active_calls,
+            )?;
+            Self::expect_static_type(value, &expected, &format!("global constant `{name}`"))
+        })();
+        self.ctfe_active_globals.remove(name);
+        if let Ok(value) = &result {
+            self.ctfe_global_values
+                .insert(name.to_owned(), value.clone());
+        }
+        result
+    }
+
     pub(super) fn evaluate_static_usize(&mut self, expression: &StaticExpr) -> Option<u64> {
         let mut fuel = STATIC_EVALUATION_FUEL;
         let mut active_calls = Vec::new();
@@ -512,10 +569,13 @@ impl Analyzer {
                         active_calls,
                     )?
                 } else {
-                    locals
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| format!("unknown local `{name}` in ctfe function"))?
+                    if let Some(value) = locals.get(name).cloned() {
+                        value
+                    } else if self.globals.contains_key(name) {
+                        self.evaluate_static_global(name, fuel, active_calls)?
+                    } else {
+                        return Err(format!("unknown local or global `{name}` during ctfe"));
+                    }
                 }
             }
             Expr::Unary(UnaryOp::Neg, operand)
@@ -965,6 +1025,47 @@ impl Analyzer {
     ) -> Result<CtfeValue, String> {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
+        if let Expr::Name(name) = root.unlocated() {
+            let kind = if self.is_lang_item_name(name, LangItemKind::SizeOf) {
+                Some(LayoutQueryKind::Size)
+            } else if self.is_lang_item_name(name, LangItemKind::AlignOf) {
+                Some(LayoutQueryKind::Align)
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                let [group] = groups.as_slice() else {
+                    return Err(format!(
+                        "ctfe layout query `{name}` requires one compile-time argument group"
+                    ));
+                };
+                let [argument] = *group else {
+                    return Err(format!(
+                        "ctfe layout query `{name}` requires exactly one type argument"
+                    ));
+                };
+                if argument.label.is_some() {
+                    return Err(format!(
+                        "ctfe layout query `{name}` does not accept a runtime argument label"
+                    ));
+                }
+                let source = self
+                    .probe_type_argument_source(&argument.value, &HashMap::new())
+                    .ok_or_else(|| format!("ctfe layout query `{name}` expects a type argument"))?;
+                let queried = self
+                    .static_value_type(&source)
+                    .ok_or_else(|| format!("ctfe layout query `{name}` has an invalid type"))?;
+                let value = CtfeValue {
+                    ty: Ty::U64,
+                    kind: CtfeValueKind::LayoutQuery { queried, kind },
+                };
+                return if let Some(expected) = expected {
+                    Self::expect_static_type(value, expected, "ctfe layout query")
+                } else {
+                    Ok(value)
+                };
+            }
+        }
         if let Expr::Name(name) = root.unlocated() {
             if self.function_templates.contains_key(name)
                 && self
@@ -1561,7 +1662,10 @@ impl Analyzer {
         locals: &HashMap<String, CtfeValue>,
     ) -> Option<Ty> {
         match expression.unlocated() {
-            Expr::Name(name) => locals.get(name).map(|value| value.ty.clone()),
+            Expr::Name(name) => locals
+                .get(name)
+                .map(|value| value.ty.clone())
+                .or_else(|| self.hir_globals.get(name).map(|global| global.ty.clone())),
             Expr::Bool(_) => Some(Ty::Bool),
             Expr::Unit => Some(Ty::Unit),
             Expr::Tuple(fields) => Some(Ty::Tuple(
@@ -1971,6 +2075,12 @@ impl Analyzer {
     }
 
     fn evaluate_static_unary(operator: UnaryOp, operand: CtfeValue) -> Result<CtfeValue, String> {
+        if matches!(&operand.kind, CtfeValueKind::LayoutQuery { .. }) {
+            return Err(
+                "target layout queries may only be standalone global constants in this version"
+                    .to_owned(),
+            );
+        }
         match operator {
             UnaryOp::Not if operand.ty == Ty::Bool => Ok(CtfeValue::bool(
                 !operand.bool_value().expect("bool value has bool payload"),
@@ -1988,6 +2098,14 @@ impl Analyzer {
         operator: BinaryOp,
         right: CtfeValue,
     ) -> Result<CtfeValue, String> {
+        if matches!(&left.kind, CtfeValueKind::LayoutQuery { .. })
+            || matches!(&right.kind, CtfeValueKind::LayoutQuery { .. })
+        {
+            return Err(
+                "target layout queries may only be standalone global constants in this version"
+                    .to_owned(),
+            );
+        }
         if left.ty.is_integer() && right.ty.is_integer() {
             return left
                 .checked_integer_binary(operator, &right)

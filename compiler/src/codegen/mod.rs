@@ -23,6 +23,8 @@ use crate::manifest::Edition;
 use crate::modules::PackageId;
 use crate::static_semantics::{Constraint, Goal, GoalResult};
 
+use self::ctfe_value::CtfeValue;
+
 mod access;
 mod arrays;
 mod assignment;
@@ -252,6 +254,8 @@ struct Analyzer {
     global_annotations: HashMap<String, Option<Ty>>,
     function_states: HashMap<String, ResolutionState>,
     global_states: HashMap<String, ResolutionState>,
+    ctfe_global_values: HashMap<String, CtfeValue>,
+    ctfe_active_globals: HashSet<String>,
     hir_functions: HashMap<String, HirFunction>,
     lifted_functions: Vec<HirFunction>,
     next_closure: usize,
@@ -349,6 +353,8 @@ impl Analyzer {
             global_annotations: HashMap::new(),
             function_states: HashMap::new(),
             global_states: HashMap::new(),
+            ctfe_global_values: HashMap::new(),
+            ctfe_active_globals: HashSet::new(),
             hir_functions: HashMap::new(),
             lifted_functions: Vec::new(),
             next_closure: 0,
@@ -6454,6 +6460,7 @@ impl Analyzer {
             self.lower_function(&name);
             function_index += 1;
         }
+        self.evaluate_static_globals();
         self.validate_nominal_layouts();
         self.validate_inferred_api_visibility();
         if require_entry_point {
@@ -6522,6 +6529,7 @@ impl Analyzer {
                 .iter()
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
+            normalized_globals: self.ctfe_global_values.clone(),
             exported_globals,
             functions,
             exported_functions,

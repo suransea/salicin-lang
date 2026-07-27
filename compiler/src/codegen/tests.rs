@@ -3667,6 +3667,25 @@ let main(): i32 = { read(global) }
 }
 
 #[test]
+fn global_constants_use_the_shared_source_ctfe_call_path() {
+    let llvm = compile_text(
+        r#"
+let pair(comptime value: type) = struct { left: value, right: value }
+let make(comptime value: type)(left: value)(right: value): pair(value) = {
+  pair(value) { left: left, right: right }
+}
+let sum(value: pair(i32)): i32 = { value.left + value.right }
+let global: pair(i32) = make(i32)(40)(2)
+let total: i32 = sum(global)
+let main(): i32 = { total }
+"#,
+    )
+    .expect("global constants should call eligible ordinary source functions");
+    assert!(llvm.contains("{ i32 40, i32 2 }"));
+    assert!(llvm.contains("constant i32 42"));
+}
+
+#[test]
 fn global_ctfe_preserves_signed_minimum_and_full_u128_values() {
     let llvm = compile_text(
         r#"
@@ -7620,7 +7639,7 @@ let main(): i32 = { invalid }
     assert!(errors.iter().any(|error| {
         error
             .message
-            .contains("constant arithmetic overflows `i32`")
+            .contains("integer arithmetic overflows `i32` during ctfe")
     }));
 }
 
