@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.209.0 - 2026-07-27
+
 - Replaced declaration-shaped extension headers with compiler-call syntax:
   inherent members use `extend(target) { ... }` and trait implementations use
   `extend(target, trait) { ... }`. The trailing block is the implementation
