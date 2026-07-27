@@ -1,6 +1,6 @@
 let point = struct { raw: i32 }
 
-extend point {
+extend(point) {
   let origin: self = self { raw: 40 }
   let new(value: i32): self = { self { raw: value } }
   let shifted(move self)(delta: i32): self = { self { raw: self.raw + delta } }
@@ -10,7 +10,7 @@ extend point {
 
 let choice = enum { some(i32), none }
 
-extend choice {
+extend(choice) {
   let unwrap(move self)(): i32 = { match self
       { self.some(value) -> value }
       { self.none -> 0 }
@@ -25,7 +25,7 @@ let rebuild = trait {
 
 let wrapper = struct { raw: i32 }
 
-extend wrapper: rebuild {
+extend(wrapper, rebuild) {
   let rebuild(move self)(): self = { self { raw: self.raw } }
   let read(self: borrow(self))(): i32 = { self.raw }
 }

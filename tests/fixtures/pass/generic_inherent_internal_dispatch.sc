@@ -1,6 +1,6 @@
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let take(move self)(): t = { self.value }
   let round_trip(move value: t): t = {
     let cell = cell { value: value }

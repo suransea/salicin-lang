@@ -1,6 +1,6 @@
 let payload = struct { value: i32 }
 
-extend payload: copyable {}
+extend(payload, copyable) {}
 
 let event = enum {
   value( value: payload ),

@@ -11,7 +11,7 @@ let counter = struct {
   drops: ptr(mut)(i32),
 }
 
-extend counter: droppable {
+extend(counter, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
@@ -19,7 +19,7 @@ extend counter: droppable {
   }
 }
 
-extend counter: iterator {
+extend(counter, iterator) {
   let item = owned_item(i32)
 
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
@@ -33,7 +33,7 @@ extend counter: iterator {
   }
 }
 
-extend counter: into_iterator {
+extend(counter, into_iterator) {
   let iter = counter
 
   let into_iter(move self)(): counter = {

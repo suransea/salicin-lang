@@ -4,12 +4,12 @@ let rewrap = trait {
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let wrap(move value: t): self = { self { value: value } }
   let replace(move self)(move value: t): self = { self { value: value } }
 }
 
-extend(comptime t: type) cell(t): rewrap {
+extend(cell(t), rewrap) {
   let rewrap(move self)(): self = { self { value: self.value } }
 }
 

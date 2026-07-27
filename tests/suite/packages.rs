@@ -752,7 +752,7 @@ pub let number = struct { value: i32 }
 let secret = trait {
   let reveal(self: borrow(self))(): i32
 }
-extend number: secret {
+extend(number, secret) {
   let reveal(self: borrow(self))(): i32 = { self.value }
 }
 pub let make(): number = { number { value: 21 } }
@@ -851,7 +851,7 @@ dep = { path = "../dep" }
 let add = std.ops.add
 
 pub let number = struct { value: i32 }
-extend number: add(number) {
+extend(number, add(number)) {
   let output = number
   let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }
 }
@@ -891,11 +891,11 @@ pub let sub(comptime rhs: type) = trait {
   let sub(move self)(move rhs: rhs): output
 }
 pub let number = struct { value: i32 }
-extend number: add(number) {
+extend(number, add(number)) {
   let output = number
   let add(move self)(move rhs: number): number = { number { value: self.value + rhs.value } }
 }
-extend number: sub(number) {
+extend(number, sub(number)) {
   let output = number
   let sub(move self)(move rhs: number): number = { number { value: self.value - rhs.value } }
 }
@@ -992,7 +992,7 @@ pub let make_number(value: i32): number = { number { value: value } }
         "app/src/main.sc",
         r#"use root.fake as add
 let number = struct { value: i32 }
-extend number: add(number) {
+extend(number, add(number)) {
   let output = i32
   let add(move self)(move rhs: number): i32 = { self.value + rhs.value }
 }
@@ -1066,7 +1066,7 @@ pub let make(value: i32): Token = { Token { value: value } }
     );
     workspace.write(
         "app/src/main.sc",
-        r#"extend dep.Token: copyable {}
+        r#"extend(dep.Token, copyable) {}
 let main(): i32 = { 42 }
 "#,
     );
@@ -1088,7 +1088,7 @@ let main(): i32 = { 42 }
     workspace.write(
         "dep/src/lib.sc",
         r#"pub let Token = struct { value: i32 }
-extend Token: copyable {}
+extend(Token, copyable) {}
 pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
 "#,
@@ -1120,7 +1120,7 @@ pub let read(copy token: Token): i32 = { token.value }
         "app/src/main.sc",
         r#"use root.fake.copyable as fake_copy
 let local_type = struct { value: i32 }
-extend local_type: fake_copy {}
+extend(local_type, fake_copy) {}
 let read(copy local: local_type): i32 = { local.value }
 let main(): i32 = { read(local_type { value: 42 }) }
 "#,
@@ -1149,7 +1149,7 @@ let main(): i32 = { read(local_type { value: 42 }) }
         r#"pub let copyable = trait {}
 pub let Token = struct { value: i32 }
 
-extend Token: copyable {}
+extend(Token, copyable) {}
 
 pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
@@ -1392,7 +1392,7 @@ edition = "2026"
 let read = trait {
   let read(self: borrow(self))(): i32
 }
-extend number: read {
+extend(number, read) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 pub(package) let answer(): i32 = {

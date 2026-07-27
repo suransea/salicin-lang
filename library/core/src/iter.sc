@@ -32,7 +32,7 @@ pub let array_into_iter(comptime t: type)
   next_index: usize,
 }
 
-extend(comptime t: type, comptime l: usize) array_into_iter(t)(l): iterator
+extend(array_into_iter(t)(l), iterator)
 where t: core.marker.copyable {
   let item = owned_item(t)
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(t) = {
@@ -46,7 +46,7 @@ where t: core.marker.copyable {
   }
 }
 
-extend(comptime t: type, comptime l: usize) array(t)(l): into_iterator
+extend(array(t)(l), into_iterator)
 where t: core.marker.copyable {
   let iter = array_into_iter(t)(l)
   let into_iter(move self)(): array_into_iter(t)(l) = {
@@ -60,7 +60,7 @@ pub let slice_iter(comptime a: access)(comptime t: type) = struct {
   next_index: u64,
 }
 
-extend(comptime a: access, comptime t: type) slice_iter(a)(t): iterator {
+extend(slice_iter(a)(t), iterator) {
   let item = borrowed_item(a, t)
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(item(r)) = {
     if self.next_index == unsafe { raw_slice_len(self.values) } {
@@ -75,12 +75,12 @@ extend(comptime a: access, comptime t: type) slice_iter(a)(t): iterator {
   }
 }
 
-extend(comptime a: access, comptime t: type) slice_iter(a)(t): into_iterator {
+extend(slice_iter(a)(t), into_iterator) {
   let iter = slice_iter(a)(t)
   let into_iter(move self)(): slice_iter(a)(t) = { self }
 }
 
-extend(comptime t: type) slice(t) {
+extend(slice(t)) {
   /// Iterates over borrowed values while retaining source access.
   let iter(comptime a: access)(self: borrow(a)(self))(): slice_iter(a)(t) = {
     slice_iter(a)(t) { values: self, next_index: 0 }

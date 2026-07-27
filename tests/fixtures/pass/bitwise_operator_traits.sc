@@ -6,23 +6,23 @@ let shr = std.ops.shr
 
 let bits = struct { value: i32 }
 
-extend bits: bit_and(bits) {
+extend(bits, bit_and(bits)) {
   let output = bits
   let bit_and(self)(rhs: bits): bits = { bits { value: self.value & rhs.value } }
 }
-extend bits: bit_or(bits) {
+extend(bits, bit_or(bits)) {
   let output = bits
   let bit_or(self)(rhs: bits): bits = { bits { value: self.value | rhs.value } }
 }
-extend bits: bit_xor(bits) {
+extend(bits, bit_xor(bits)) {
   let output = bits
   let bit_xor(self)(rhs: bits): bits = { bits { value: self.value ^ rhs.value } }
 }
-extend bits: shl(bits) {
+extend(bits, shl(bits)) {
   let output = bits
   let shl(self)(rhs: bits): bits = { bits { value: self.value << rhs.value } }
 }
-extend bits: shr(bits) {
+extend(bits, shr(bits)) {
   let output = bits
   let shr(self)(rhs: bits): bits = { bits { value: self.value >> rhs.value } }
 }

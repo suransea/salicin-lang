@@ -246,9 +246,10 @@ groups appear before `: type`.
 
 ```ebnf
 extend_decl =
-    "extend", { compile_parameter_group },
+    "extend", "(",
     type_expr,
-    [ ":", trait_ref ],
+    [ ",", trait_ref ],
+    ")",
     [ where_clause ],
     "{", separators,
     { extend_member, separators },

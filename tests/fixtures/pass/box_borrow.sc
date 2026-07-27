@@ -2,7 +2,7 @@ let box = std.boxed.box
 
 let resource = struct { value: i32 }
 
-extend resource {
+extend(resource) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 

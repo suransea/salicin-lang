@@ -3,11 +3,11 @@ let mark = enum {
   empty,
 }
 
-extend mark: copyable {}
+extend(mark, copyable) {}
 
 let pixel = struct { value: i32 }
 
-extend pixel: copyable {}
+extend(pixel, copyable) {}
 
 let score(mark: mark): i32 = { match mark
     { mark.value( value: value ) -> value }

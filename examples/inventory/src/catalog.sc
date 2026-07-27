@@ -10,7 +10,7 @@ pub(package) let summarize = trait {
   let total(move self)(): i32
 }
 
-extend inventory {
+extend(inventory) {
   let new(): inventory = {
     inventory { products: vec(model.product).new() }
   }
@@ -20,7 +20,7 @@ extend inventory {
   }
 }
 
-extend inventory: summarize {
+extend(inventory, summarize) {
   let total(move self)(): i32 = {
     let mut owner = self
     let products = owner.products.take()

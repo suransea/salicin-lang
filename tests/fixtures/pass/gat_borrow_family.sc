@@ -9,7 +9,7 @@ let lend = trait {
 
 let cell = struct { value: i32 }
 
-extend cell: lend {
+extend(cell, lend) {
   let item = view(i32)
 
   let view(comptime a: access, comptime r: region)

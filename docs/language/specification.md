@@ -552,7 +552,7 @@ match value {
 
 A trait is neither a runtime type nor a Sort. Semantically, it declares a relation over a subject
 and any compile-time arguments. A bound such as `T: Iterator` is a logical constraint (a solver
-goal); an applicable `extend T: Iterator` supplies implementation evidence. Associated-type
+goal); an applicable `extend(T, Iterator)` supplies implementation evidence. Associated-type
 bindings add projection-equality constraints to the same goal. Trait declarations and evidence are
 erased after static dispatch.
 
@@ -568,12 +568,20 @@ let Iterator = trait {
 An `extend` block adds inherent members or implements a trait:
 
 ```sc fragment
-extend Point {
+extend(Point) {
   let translated(self: borrow(Self))(dx: i32, dy: i32): Point = {
     Point { x: self.x + dx, y: self.y + dy }
   }
 }
 ```
+
+`extend` has the call-shaped compiler contract
+`extend(t: type, impl: (self): ())` for inherent members and
+`extend(t: type, tt: trait, impl: (self): ())` for trait implementations. The final implementation
+argument is written as a trailing declaration block. Its target is a type pattern: constructor
+parameters are bound by destructuring and their sorts are inferred from the constructor signature.
+For example, `extend(result(error)(t), core.flow.chain) { ... }` binds `error` and `t` as `type`
+values without a separate compile-time parameter header.
 
 Trait dispatch is static. Implementations are selected by the concrete subject and trait
 arguments; no runtime dictionary or implicit open-world dispatch is introduced.

@@ -20,21 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Composite Compile-Time Evaluation
-
-### Acceptance
-
-- [ ] **CTFE-9 — Rejection and determinism proof.** Cover every supported
-  scalar and composite family plus type mismatches, overflow, invalid
-  shifts/indexes, non-exhaustive patterns, generic substitution, recursive
-  layout, repeated-call cycles, fuel exhaustion, aggregate limits,
-  cross-module identity, stable diagnostics, deterministic IR, and native
-  global values.
-
-P0 is complete only when every CTFE task and the roadmap milestone exit
-conditions are satisfied.
-
-## P1: Standard Library Usability
+## P0: Standard Library Usability
 
 ### Foundation
 

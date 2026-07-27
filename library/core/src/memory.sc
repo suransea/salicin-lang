@@ -11,7 +11,7 @@ pub let array(comptime t: type)
 pub let slice(comptime t: type): type = builtin()
 
 /// Routes fixed-size array brackets through the source-defined indexing protocol.
-extend(comptime t: type, comptime l: usize) array(t)(l): index(usize) {
+extend(array(t)(l), index(usize)) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
@@ -19,7 +19,7 @@ extend(comptime t: type, comptime l: usize) array(t)(l): index(usize) {
 }
 
 /// Provides operations on a borrowed contiguous sequence.
-extend(comptime t: type) slice(t) {
+extend(slice(t)) {
   /// Returns the number of elements in this slice.
   let len(comptime a: access = shared)(self: borrow(a)(self))(): u64 = {
     unsafe {
@@ -36,7 +36,7 @@ extend(comptime t: type) slice(t) {
 }
 
 /// Routes bracket access through the source-defined indexing protocol.
-extend(comptime t: type) slice(t): index(u64) {
+extend(slice(t), index(u64)) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
@@ -55,7 +55,7 @@ pub let ptr(comptime a: access = shared)
   (value: borrow(a)(t)): ptr(a)(t) = builtin()
 
 /// Provides operations shared by raw pointers at either access.
-extend(comptime a: access, comptime t: type) ptr(a)(t) {
+extend(ptr(a)(t)) {
   /// Returns the pointer `index` elements after this pointer.
   let offset(self)(index: u64): ptr(a)(t) with(core.unsafe.unsafe_effect) = {
     unsafe {
@@ -65,7 +65,7 @@ extend(comptime a: access, comptime t: type) ptr(a)(t) {
 }
 
 /// Provides operations that require mutable raw-pointer access.
-extend(comptime t: type) ptr(mut)(t) {
+extend(ptr(mut)(t)) {
   /// Initializes storage that is currently uninitialized.
   let init(self)(value: t): () with(core.unsafe.unsafe_effect) = {
     unsafe {

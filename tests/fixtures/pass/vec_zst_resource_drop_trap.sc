@@ -2,7 +2,7 @@ let vec = std.vec.vec
 
 let bomb = struct {}
 
-extend bomb: droppable {
+extend(bomb, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       raw_trap()

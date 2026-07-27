@@ -1,6 +1,6 @@
 let counter = struct { value: i32 }
 
-extend counter {
+extend(counter) {
   let add(self: borrow(self))(left: i32): i32 = { self.value + left }
   let add(self: borrow(self))(right: i32): i32 = { self.value + right + 1 }
 

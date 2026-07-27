@@ -4,6 +4,6 @@ let convert = trait {
 
 let number = struct { value: i32 }
 
-extend number: convert() {}
+extend(number, convert()) {}
 
 let main(): i32 = { 0 }

@@ -1,6 +1,6 @@
 let pair = struct { left: i32, right: i32 }
 
-extend pair: copyable {}
+extend(pair, copyable) {}
 
 let read_left(pair: pair): i32 = { pair.left }
 

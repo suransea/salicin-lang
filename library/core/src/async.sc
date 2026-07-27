@@ -31,7 +31,7 @@ pub let executor = trait {
 /// Minimal allocation-free executor that polls one future until completion.
 pub let spin = struct {}
 
-extend spin: executor {
+extend(spin, executor) {
   let run(comptime e: effects, comptime f: type, comptime t: type)
     (self: borrow(mut)(self))
     (move future: f): t with(e)

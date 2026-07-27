@@ -70,7 +70,7 @@ let utf8_invalid_at(bytes: borrow(vec(u8))): option(u64) = {
   option(u64).none
 }
 
-extend string {
+extend(string) {
   /// Creates an empty string with zero capacity.
   let new(): string = { string { bytes: vec(u8).new() } }
 
@@ -125,7 +125,7 @@ extend string {
   }
 }
 
-extend from_utf8_error {
+extend(from_utf8_error) {
   /// Returns the byte length of the valid prefix before the malformed sequence.
   let valid_up_to(self: borrow(self))(): u64 = { self.valid_prefix }
 

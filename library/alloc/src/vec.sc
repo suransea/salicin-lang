@@ -334,7 +334,7 @@ where t: copyable = {
 }
 
 /// Provides inherent vector constructors and mutation operations.
-extend(comptime t: type) vec(t) {
+extend(vec(t)) {
   /// Creates an empty vector with zero capacity.
   let new(): vec(t) = { vec_new() }
   /// Creates an empty vector with storage for `capacity` elements.
@@ -399,7 +399,7 @@ extend(comptime t: type) vec(t) {
 }
 
 /// Provides copy-only indexed read and write operations.
-extend(comptime t: type) vec(t)
+extend(vec(t))
 where t: copyable {
   /// Copies the element at `index` out of this vector.
   let read(self: borrow(self))(index: u64): t = { vec_read(self)(index) }
@@ -416,7 +416,7 @@ pub let vec_into_iter(comptime t: type) = struct {
 }
 
 /// Routes bracket access through the source-defined indexing protocol.
-extend(comptime t: type) vec(t): index(u64) {
+extend(vec(t), index(u64)) {
   let output = t
   let index(comptime a: access)
     (self: borrow(a)(self))
@@ -426,7 +426,7 @@ extend(comptime t: type) vec(t): index(u64) {
 }
 
 /// Advances an owning vector iterator in source order.
-extend(comptime t: type) vec_into_iter(t): iterator {
+extend(vec_into_iter(t), iterator) {
   let item = owned_item(t)
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(t) = {
     if self.next_index == self.length {
@@ -442,7 +442,7 @@ extend(comptime t: type) vec_into_iter(t): iterator {
 }
 
 /// Consumes a vector into an owning iterator.
-extend(comptime t: type) vec(t): into_iterator {
+extend(vec(t), into_iterator) {
   let iter = vec_into_iter(t)
   let into_iter(move self)(): vec_into_iter(t) = {
     let iterator = vec_into_iter(t) { pointer: self.pointer, next_index: 0, length: self.length, storage_capacity: self.storage_capacity }
@@ -452,7 +452,7 @@ extend(comptime t: type) vec(t): into_iterator {
 }
 
 /// Drops elements not yet yielded and releases the transferred vector storage.
-extend(comptime t: type) vec_into_iter(t): droppable {
+extend(vec_into_iter(t), droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     while { self.next_index < self.length } {
       let item = unsafe {
@@ -465,7 +465,7 @@ extend(comptime t: type) vec_into_iter(t): droppable {
 }
 
 /// Drops initialized elements and releases vector storage.
-extend(comptime t: type) vec(t): droppable {
+extend(vec(t), droppable) {
   /// Drops all initialized elements and deallocates storage.
   let drop(self: borrow(mut)(self))(): () = {
     let mut index: u64 = 0

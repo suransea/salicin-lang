@@ -6,7 +6,7 @@ let holds(comptime item: type) = trait {
   let get(self: borrow(self))(): item
 }
 
-extend pair(i32, bool): holds(item: i32) {
+extend(pair(i32, bool), holds(item: i32)) {
   let get(self: borrow(self))(): i32 = { self.key }
 }
 

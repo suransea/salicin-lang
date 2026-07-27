@@ -4,7 +4,7 @@ let measure = trait {
 
 let value = struct { value: i32 }
 
-extend value: measure {
+extend(value, measure) {
   let measure(self: borrow(self))(): i32 = { self.value }
 }
 

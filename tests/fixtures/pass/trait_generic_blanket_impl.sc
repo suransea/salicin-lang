@@ -4,13 +4,13 @@ let read = trait {
 
 let leaf = struct { value: i32 }
 
-extend leaf: read {
+extend(leaf, read) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t): read
+extend(cell(t), read)
 where t: read {
   let read(self: borrow(self))(): i32 = { self.value.read() }
 }
@@ -23,7 +23,7 @@ let value = trait {
   let take(move self)(): item
 }
 
-extend(comptime t: type) cell(t): value {
+extend(cell(t), value) {
   let item = t
   let take(move self)(): t = { self.value }
 }

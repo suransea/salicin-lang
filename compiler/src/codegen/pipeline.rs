@@ -15,6 +15,8 @@ use super::emitter::Emitter;
 use super::hir::Ty;
 use super::{Analyzer, Diagnostic, HirProgram};
 
+const COMPILER_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 struct AnalyzedProgram {
     hir: HirProgram,
 }
@@ -60,7 +62,7 @@ fn on_compiler_stack<R: Send>(operation: impl FnOnce() -> R + Send) -> R {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("salic-compiler".to_owned())
-            .stack_size(16 * 1024 * 1024)
+            .stack_size(COMPILER_STACK_SIZE)
             .spawn_scoped(scope, operation)
             .expect("spawn compiler worker")
             .join()

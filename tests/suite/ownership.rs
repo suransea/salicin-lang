@@ -109,6 +109,18 @@ fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
 }
 
 #[test]
+fn composite_ctfe_globals_run_natively() {
+    for (name, output) in batched_native_fixture_outputs(&["ctfe_composite_globals.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn alloc_box_owns_copy_and_resource_payloads() {
     let fixtures = [
         "box_i32.sc",
@@ -604,7 +616,7 @@ edition = "2026"
     project.write(
         "src/api.sc",
         "pub(package) let cell(comptime t: type) = struct { value: t }\n\
-         extend(comptime t: type) cell(t) {\n\
+         extend(cell(t)) {\n\
            let new(move value: t): cell(t) = { cell { value: value } }\n\
            let take(move self)(): t = { self.value }\n\
          }\n",
@@ -639,12 +651,12 @@ edition = "2026"
            let choose(comptime value_type: type)(self: borrow(self))(move value: value_type): value_type\n\
          }\n\
          pub(package) let cell = struct {}\n\
-         extend cell: choose {\n\
+         extend(cell, choose) {\n\
            let choose(comptime result: type)(self: borrow(self))(move value: result): result = {\n\
              value\n\
            }\n\
          }\n\
-         extend cell {\n\
+         extend(cell) {\n\
            let new(): cell = { cell {} }\n\
          }\n",
     );
@@ -688,7 +700,7 @@ dep = { path = "../dep" }
     );
     project.write(
         "app/src/main.sc",
-        "extend(comptime t: type) dep.cell(t) {\n\
+        "extend(dep.cell(t)) {\n\
            let take(move self)(): t = { self.value }\n\
          }\n\
          let main(): i32 = { 0 }\n",

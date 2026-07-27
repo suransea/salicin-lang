@@ -4,7 +4,7 @@ let update = trait {
 
 let number = struct { value: i32 }
 
-extend number: update {
+extend(number, update) {
   let update(self: borrow(self))(copy value: i32): i32 = { self.value }
 }
 

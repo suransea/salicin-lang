@@ -5,6 +5,6 @@ let message = enum {
   empty,
 }
 
-extend message: copyable {}
+extend(message, copyable) {}
 
 let main(): i32 = { 42 }

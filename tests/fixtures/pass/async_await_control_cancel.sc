@@ -15,7 +15,7 @@ let marker = struct {
   amount: i32
 }
 
-extend marker: droppable {
+extend(marker, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + self.amount
@@ -23,7 +23,7 @@ extend marker: droppable {
   }
 }
 
-extend first: droppable {
+extend(first, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 10
@@ -31,7 +31,7 @@ extend first: droppable {
   }
 }
 
-extend second: droppable {
+extend(second, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
@@ -39,7 +39,7 @@ extend second: droppable {
   }
 }
 
-extend first: future(()) {
+extend(first, future(())) {
   let output = i32
 
   let poll(comptime r: region)
@@ -49,7 +49,7 @@ extend first: future(()) {
   }
 }
 
-extend second: future(()) {
+extend(second, future(())) {
   let output = i32
 
   let poll(comptime r: region)

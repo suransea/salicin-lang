@@ -1,10 +1,10 @@
-extend number {
+extend(number) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 
 let number = struct { value: i32 }
 
-extend number {
+extend(number) {
   let bonus = 2
 }
 

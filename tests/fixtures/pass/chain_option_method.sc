@@ -2,7 +2,7 @@ let option = std.option
 
 let number = struct { value: i32 }
 
-extend number {
+extend(number) {
   let take(move self)(): i32 = { self.value }
 }
 

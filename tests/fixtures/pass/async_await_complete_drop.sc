@@ -5,7 +5,7 @@ let unsafe_effect = std.unsafe.unsafe_effect
 let step = struct { counter: ptr(mut)(i32) }
 let resource = struct { counter: ptr(mut)(i32) }
 
-extend step: droppable {
+extend(step, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
@@ -13,7 +13,7 @@ extend step: droppable {
   }
 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
@@ -23,7 +23,7 @@ extend resource: droppable {
 
 let consume(move resource: resource): () = { () }
 
-extend step: future(()) {
+extend(step, future(())) {
   let output = i32
 
   let poll(comptime r: region)

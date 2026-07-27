@@ -4,7 +4,7 @@ let present = enum {
   value(i32),
 }
 
-extend present: unwrap {
+extend(present, unwrap) {
   let output = i32
 
   let unwrap(move self): i32 = {

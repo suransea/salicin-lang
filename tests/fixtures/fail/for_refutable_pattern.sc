@@ -6,7 +6,7 @@ let owned_item = std.iter.owned_item
 let values = struct { done: bool }
 let choice = enum { some(i32), none }
 
-extend values: iterator {
+extend(values, iterator) {
   let item = owned_item(choice)
 
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(choice) = {
@@ -19,7 +19,7 @@ extend values: iterator {
   }
 }
 
-extend values: into_iterator {
+extend(values, into_iterator) {
   let iter = values
   let into_iter(move self)(): values = { self }
 }

@@ -4,11 +4,11 @@ let convert(comptime to: type) = trait {
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t): convert(i32) {
+extend(cell(t), convert(i32)) {
   let convert(self: borrow(self))(): i32 = { 42 }
 }
 
-extend(comptime t: type) cell(t): convert(i64) {
+extend(cell(t), convert(i64)) {
   let convert(self: borrow(self))(): i64 = { 42 }
 }
 

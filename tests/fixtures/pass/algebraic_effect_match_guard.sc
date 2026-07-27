@@ -4,7 +4,7 @@ let decide = effect {
 
 let event = enum { value( value: i32 ), empty }
 
-extend event: copyable {}
+extend(event, copyable) {}
 
 let accepted(value: i32): bool with(decide) = {
   decide.accept(value)

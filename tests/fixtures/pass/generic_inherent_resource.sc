@@ -1,6 +1,6 @@
 let resource = struct { counter: ptr(mut)(i32) }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1
@@ -10,7 +10,7 @@ extend resource: droppable {
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let new(move value: t): cell(t) = { cell { value: value } }
   let take(move self)(): t = { self.value }
 }

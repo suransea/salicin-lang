@@ -4,11 +4,11 @@ let read = trait {
 
 let number = struct { value: i32 }
 
-extend number: read {
+extend(number, read) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 
-extend number: read {
+extend(number, read) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 

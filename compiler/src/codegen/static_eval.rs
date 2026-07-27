@@ -2674,7 +2674,7 @@ impl Analyzer {
 mod tests {
     use crate::ast::Program;
 
-    use super::{Analyzer, Ty, MAX_CTFE_AGGREGATE_ELEMENTS, MAX_CTFE_VALUE_NESTING};
+    use super::{Analyzer, CtfeValue, Ty, MAX_CTFE_AGGREGATE_ELEMENTS, MAX_CTFE_VALUE_NESTING};
 
     #[test]
     fn aggregate_type_limits_are_checked_before_ctfe_construction() {
@@ -2693,5 +2693,28 @@ mod tests {
             .validate_static_value_type(&nested)
             .unwrap_err()
             .contains("nesting limit"));
+
+        let node_heavy = Ty::Tuple(vec![
+            Ty::Array(Box::new(Ty::U8), 32_768),
+            Ty::Array(Box::new(Ty::U8), 32_768),
+        ]);
+        assert!(analyzer
+            .validate_static_value_type(&node_heavy)
+            .unwrap_err()
+            .contains("node limit"));
+    }
+
+    #[test]
+    fn normalized_value_consumers_reject_exact_type_mismatches() {
+        let error = Analyzer::expect_static_type(
+            CtfeValue::bool(true),
+            &Ty::USize,
+            "dependent array length",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "dependent array length has type `bool`, expected `usize`"
+        );
     }
 }

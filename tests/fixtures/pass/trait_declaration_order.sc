@@ -1,4 +1,4 @@
-extend number: read {
+extend(number, read) {
   let read(self: borrow(self))(): i32 = { self.value }
 }
 

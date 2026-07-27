@@ -1,6 +1,6 @@
 let cell = struct { value: i32 }
 
-extend cell {
+extend(cell) {
   let clash(self: borrow(self))(move other: cell): i32 = { self.value + other.value }
 }
 

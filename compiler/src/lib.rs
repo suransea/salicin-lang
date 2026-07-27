@@ -322,7 +322,7 @@ mod tests {
                 "cannot define type `fake`",
             ),
             (
-                "extend i32 { let fake(self)(): i32 = builtin() }\nlet main(): i32 = { 0 }\n",
+                "extend(i32) { let fake(self)(): i32 = builtin() }\nlet main(): i32 = { 0 }\n",
                 "cannot define extension methods",
             ),
         ] {
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn operator_traits_require_imports_but_operator_syntax_does_not() {
         let missing = "let number = struct { value: i32 }\n\
-                       extend number: add(number) {\n\
+                       extend(number, add(number)) {\n\
                          let output = number\n\
                          let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }\n\
                        }\n\
@@ -673,7 +673,7 @@ mod tests {
             .expect("built-in operator syntax should not require importing its protocol");
 
         let missing_order = "let number = struct { value: i32 }\n\
-                             extend number: partial_ord(number) {\n\
+                             extend(number, partial_ord(number)) {\n\
                                let partial_cmp(self: borrow(self))(rhs: borrow(number)): std.ops.partial_ordering = {\n\
                                  std.ops.partial_ordering.equal\n\
                                }\n\
@@ -697,7 +697,7 @@ mod tests {
             .expect("imported partial_ord should define ordering operators");
 
         let missing_unary = "let number = struct { value: i32 }\n\
-                             extend number: neg {\n\
+                             extend(number, neg) {\n\
                                let output = number\n\
                                let neg(self)(): number = { self }\n}\n\
                              let main(): i32 = { 0 }\n";
@@ -714,7 +714,7 @@ mod tests {
         compile_source(&imported_unary).expect("imported neg should define unary `-`");
 
         let missing_bitwise = "let bits = struct { value: i32 }\n\
-                               extend bits: bit_and(bits) {\n\
+                               extend(bits, bit_and(bits)) {\n\
                                  let output = bits\n\
                                  let bit_and(self)(rhs: bits): bits = { bits { value: self.value & rhs.value } }\n\
                                }\n\
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn generic_inherent_methods_accept_member_compile_parameters() {
         let source = "let cell(comptime t: type) = struct { value: t }\n\
-                      extend(comptime t: type) cell(t) {\n\
+                      extend(cell(t)) {\n\
                         let make(comptime u: type)(move value: t)(marker: u): cell(t) = {\n\
                           cell(t) { value: value }\n\
                         }\n\
@@ -855,7 +855,7 @@ mod tests {
         let ir = compile_source(
             "let index = std.ops.index\n\
              let bag = struct { value: i32 }\n\
-             extend bag: index(i32) {\n\
+             extend(bag, index(i32)) {\n\
                let output = i32\n\
                let index(comptime a: access)\n\
                  (self: borrow(a)(self))\n\
@@ -878,7 +878,7 @@ mod tests {
         let ir = compile_source(
             "let index = std.ops.index\n\
              let bag = struct { value: i32 }\n\
-             extend bag: index(i32) {\n\
+             extend(bag, index(i32)) {\n\
                let output = i32\n\
                let index(comptime a: access)\n\
                  (self: borrow(a)(self))\n\
@@ -901,7 +901,7 @@ mod tests {
         compile_source(
             "let index = std.ops.index\n\
              let bag = struct { value: i32 }\n\
-             extend bag: index(i32) {\n\
+             extend(bag, index(i32)) {\n\
                let output = i32\n\
                let index(comptime a: access)\n\
                  (self: borrow(a)(self))\n\

@@ -1,6 +1,6 @@
 let number = struct { raw: i32 }
 
-extend number {
+extend(number) {
   let reset(self: borrow(mut)(self))(value: i32): () = {
     self.raw = value
   }

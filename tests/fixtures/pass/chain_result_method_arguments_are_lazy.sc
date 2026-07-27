@@ -2,7 +2,7 @@ let result = std.result
 
 let adder = struct { base: i32 }
 
-extend adder {
+extend(adder) {
   let add(self)(value: i32): i32 = { self.base + value }
 }
 

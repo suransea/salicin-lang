@@ -1,6 +1,6 @@
 let bomb(comptime t: type) = struct { marker: t, divisor: i32 }
 
-extend(comptime t: type) bomb(t): droppable {
+extend(bomb(t), droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.divisor
   }

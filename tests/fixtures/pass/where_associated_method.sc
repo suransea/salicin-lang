@@ -5,7 +5,7 @@ let produce = trait {
 
 let value = struct { value: i32 }
 
-extend value: produce {
+extend(value, produce) {
   let item = i32
   let produce(self: borrow(self))(): i32 = { self.value }
 }

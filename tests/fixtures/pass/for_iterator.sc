@@ -6,7 +6,7 @@ let owned_item = std.iter.owned_item
 
 let counter = struct { current: i32, end: i32 }
 
-extend counter: iterator {
+extend(counter, iterator) {
   let item = owned_item(i32)
 
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): option(i32) = {
@@ -20,7 +20,7 @@ extend counter: iterator {
   }
 }
 
-extend counter: into_iterator {
+extend(counter, into_iterator) {
   let iter = counter
   let into_iter(move self)(): counter = { self }}
 

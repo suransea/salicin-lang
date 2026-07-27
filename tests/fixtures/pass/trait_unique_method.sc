@@ -4,7 +4,7 @@ let add_value = trait {
 
 let number = struct { value: i32 }
 
-extend number: add_value {
+extend(number, add_value) {
   let add(self: borrow(self))(value: i32): i32 = { self.value + value }
 }
 

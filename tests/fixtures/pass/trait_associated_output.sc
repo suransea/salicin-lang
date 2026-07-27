@@ -5,7 +5,7 @@ let convert = trait {
 
 let number = struct { value: i32 }
 
-extend number: convert {
+extend(number, convert) {
   let output = i32
   let convert(self: borrow(self))(): i32 = { self.value }}
 

@@ -4,11 +4,11 @@ let not = std.ops.not
 let number = struct { value: i32 }
 let flag = struct { value: bool }
 
-extend number: neg {
+extend(number, neg) {
   let output = i32
   let neg(self)(): i32 = { -self.value }}
 
-extend flag: not {
+extend(flag, not) {
   let output = i32
   let not(self)(): i32 = {
     if self.value { 0 } else { 42 }

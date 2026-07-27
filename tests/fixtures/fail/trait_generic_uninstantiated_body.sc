@@ -4,7 +4,7 @@ let read = trait {
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t): read {
+extend(cell(t), read) {
   let read(self: borrow(self))(): i32 = { missing }
 }
 

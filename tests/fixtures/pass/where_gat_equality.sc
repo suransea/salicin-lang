@@ -8,7 +8,7 @@ let factory = trait {
 
 let cell = struct {}
 
-extend cell: factory {
+extend(cell, factory) {
   let item = identity
 
   let make(self: borrow(self))(value: i32): i32 = { value }

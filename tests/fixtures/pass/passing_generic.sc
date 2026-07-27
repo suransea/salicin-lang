@@ -1,7 +1,7 @@
 let token = struct { value: i32 }
 let holder(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) holder(t) {
+extend(holder(t)) {
   let into(comptime m: (comptime p: parameters): parameters)(m self)(): t = { self.value }
 }
 

@@ -4,7 +4,7 @@ let read = trait {
 
 let number = struct { value: i32 }
 
-extend number: read {
+extend(number, read) {
 }
 
 let main(): i32 = { 0 }

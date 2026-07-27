@@ -1450,8 +1450,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
         let source = alloc_source().replacen(
-            "extend(comptime t: type) vec(t): droppable {\n  /// Drops all initialized elements and deallocates storage.\n  let drop(self: borrow(mut)(self))(): () = {",
-            "extend(comptime t: type) vec(t): droppable {\n  /// Drops all initialized elements and deallocates storage.\n  let release(self: borrow(mut)(self))(): () = {",
+            "extend(vec(t), droppable) {\n  /// Drops all initialized elements and deallocates storage.\n  let drop(self: borrow(mut)(self))(): () = {",
+            "extend(vec(t), droppable) {\n  /// Drops all initialized elements and deallocates storage.\n  let release(self: borrow(mut)(self))(): () = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

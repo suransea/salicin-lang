@@ -8,7 +8,7 @@ let keep = trait {
 
 let marker = struct {}
 
-extend marker: keep {
+extend(marker, keep) {
   let output = fixed
 
   let keep(comptime l: usize)(move value: array(i32)(l)): array(i32)(l) = {

@@ -7,7 +7,7 @@ let stored = enum {
   failure(bool),
 }
 
-extend stored: raise {
+extend(stored, raise) {
   let output = i32
   let error = bool
 

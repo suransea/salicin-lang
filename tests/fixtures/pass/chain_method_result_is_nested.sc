@@ -2,7 +2,7 @@ let option = std.option
 
 let boxed = struct { value: i32 }
 
-extend boxed {
+extend(boxed) {
   let optional(move self)(): option(i32) = { option(i32).some(self.value) }
 }
 

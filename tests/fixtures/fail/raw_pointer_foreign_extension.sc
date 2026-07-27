@@ -1,4 +1,4 @@
-extend(comptime a: access, comptime t: type) ptr(a)(t) {
+extend(ptr(a)(t)) {
   let identity(self)(): ptr(a)(t) = { self }
 }
 

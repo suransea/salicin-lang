@@ -3,7 +3,7 @@ let maybe(comptime t: type) = enum {
   none,
 }
 
-extend(comptime t: type) maybe(t) {
+extend(maybe(t)) {
   let unwrap_or(move self)(move fallback: t): t = { match self
       { some(value) -> value }
       { none -> fallback }

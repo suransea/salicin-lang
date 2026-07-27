@@ -7,7 +7,7 @@ pub let option(comptime t: type) = enum {
 }
 
 /// Provides `?.` chaining for `Option`.
-extend(comptime t: type) option(t): core.flow.chain {
+extend(option(t), core.flow.chain) {
   /// The payload type produced by a successful option.
   let item = t
   /// Rebuilds `Option` around a transformed payload type.
@@ -24,7 +24,7 @@ extend(comptime t: type) option(t): core.flow.chain {
 }
 
 /// Provides `??` fallback evaluation for `Option`.
-extend(comptime t: type) option(t): core.flow.coalesce {
+extend(option(t), core.flow.coalesce) {
   /// The value type returned by coalescing.
   let item = t
 
@@ -39,7 +39,7 @@ extend(comptime t: type) option(t): core.flow.coalesce {
 }
 
 /// Provides postfix `!` extraction for `Option`.
-extend(comptime t: type) option(t): core.flow.unwrap {
+extend(option(t), core.flow.unwrap) {
   let output = t
 
   let unwrap(move self): t = {
@@ -50,7 +50,7 @@ extend(comptime t: type) option(t): core.flow.unwrap {
 }
 
 /// Implements `Functor` for `Option`.
-extend option: core.functional.functor {
+extend(option, core.functional.functor) {
   /// Maps `Some` through `transform` and preserves `None`.
   let map(comptime e: effects, comptime a: type, comptime b: type)
     (self: option(a))
@@ -62,7 +62,7 @@ extend option: core.functional.functor {
 }
 
 /// Implements `Applicative` for `Option`.
-extend option: core.functional.applicative {
+extend(option, core.functional.applicative) {
   /// Wraps `value` in `Some`.
   let pure(comptime a: type)
     (value: a): option(a) = {
@@ -82,7 +82,7 @@ extend option: core.functional.applicative {
 }
 
 /// Implements `Monad` for `Option`.
-extend option: core.functional.monad {
+extend(option, core.functional.monad) {
   /// Runs `next` for `Some` and propagates `None`.
   let flat_map(comptime e: effects, comptime a: type, comptime b: type)
     (self: option(a))

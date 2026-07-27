@@ -1,6 +1,6 @@
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let new(move value: t): cell(t) = { cell { value: value } }
   let take(move self)(): t = { self.value }
   let replace(self: borrow(mut)(self))(move value: t): () = {

@@ -1,7 +1,7 @@
 let resource = struct { value: i32 }
 let holder = struct { resource: resource, tail: resource }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0

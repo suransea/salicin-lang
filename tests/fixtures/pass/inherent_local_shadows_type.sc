@@ -1,6 +1,6 @@
 let answer = struct { answer: i32 }
 
-extend answer {
+extend(answer) {
   let answer = 2
 }
 

@@ -243,6 +243,12 @@ fn resolve_packages_impl(
         }
     }
 
+    if let Err(message) = parser::infer_extend_parameters(&mut items) {
+        resolver
+            .diagnostics
+            .push(format!("<packages>: error: {message}"));
+    }
+
     if resolver.diagnostics.is_empty() {
         let primary = packages
             .iter()
@@ -4415,7 +4421,7 @@ mod tests {
                    let convert(self: borrow(self))(value: self): output\n\
                  }\n\
                  pub(package) let number = struct { value: i32 }\n\
-                 extend number: convert {\n\
+                 extend(number, convert) {\n\
                    let output = i32\n\
                    let a = self\n\
                    let b = a\n\
@@ -4519,7 +4525,7 @@ mod tests {
                 "src/api.sc",
                 &["api"],
                 "pub(package) let cell(comptime t: type) = struct { value: t }\n\
-                 extend(comptime t: type) cell(t) {\n\
+                 extend(cell(t)) {\n\
                    let new(move value: t): cell(t) = { cell { value: value } }\n\
                    let take(move self)(): t = { self.value }\n\
                  }\n",
@@ -4553,6 +4559,42 @@ mod tests {
                 "api::cell".into(),
                 vec![Type::Named("t".into(), Vec::new())]
             ))
+        );
+    }
+
+    #[test]
+    fn reinfers_cross_module_extend_pattern_sorts_after_resolution() {
+        let program = resolve_sources(&[
+            unit(
+                "src/main.sc",
+                &[],
+                "extend(api.handle(a)(t)) {}\nlet main(): i32 = { 0 }\n",
+                true,
+            ),
+            unit(
+                "src/api.sc",
+                &["api"],
+                "pub let mode = sort { shared unique }\n\
+                 pub let handle(comptime a: mode)(comptime t: type) = struct {}\n",
+                false,
+            ),
+        ])
+        .unwrap();
+
+        let extension = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Extend(extension) => Some(extension),
+                _ => None,
+            })
+            .expect("missing resolved extension");
+        assert_eq!(
+            extension.compile_groups[0]
+                .iter()
+                .map(|parameter| (parameter.name.as_str(), parameter.kind.clone()))
+                .collect::<Vec<_>>(),
+            vec![("a", Sort::Named("api::mode".into())), ("t", Sort::Type),]
         );
     }
 
@@ -4679,7 +4721,7 @@ let add = root.fake
 let never = root.fake
 
 let number = struct { value: i32 }
-extend number: add(number) {
+extend(number, add(number)) {
   let output = i32
   let add(self)(rhs: number): i32 = { self.value + rhs.value }
 }
@@ -5378,7 +5420,7 @@ let main(): i32 = { option {} }
             &[],
             "let hidden = trait {}\n\
              pub let cell(comptime t: type) = struct { pub value: t }\n\
-             extend(comptime t: type) cell(t) where t: hidden {\n\
+             extend(cell(t)) where t: hidden {\n\
                let take(move self)(): t = { self.value }\n\
              }\n",
             true,
@@ -5528,7 +5570,7 @@ let main(): i32 = { option {} }
             &[],
             "use std.ops.add as plus\n\
              let number = struct { value: i32 }\n\
-             extend number: plus(number) {\n\
+             extend(number, plus(number)) {\n\
                let output = number\n\
                let add(self)(rhs: number): number = { number { value: self.value + rhs.value } }\n\
              }\n",
@@ -5549,9 +5591,9 @@ let main(): i32 = { option {} }
              let legacy_coalesce = core.ops.coalesce\n\
              let maybe(comptime t: type) = enum { some(t), none }\n\
              let legacy_maybe(comptime t: type) = enum { some(t), none }\n\
-             extend(comptime t: type) maybe(t): chain {}\n\
-             extend(comptime t: type) maybe(t): ops_coalesce {}\n\
-             extend(comptime t: type) legacy_maybe(t): legacy_coalesce {}\n",
+             extend(maybe(t), chain) {}\n\
+             extend(maybe(t), ops_coalesce) {}\n\
+             extend(legacy_maybe(t), legacy_coalesce) {}\n",
             true,
         )])
         .unwrap();
@@ -5575,9 +5617,9 @@ let main(): i32 = { option {} }
              let number = struct { value: i32 }\n\
              let suspended(): i32 with(async) = { 0 }\n\
              let invoke(move action: (): i32 with(async)): i32 with(async) = { action() }\n\
-             extend number: semigroup {\n\
+             extend(number, semigroup) {\n\
                let combine(move left: number, move right: number): number = { number { value: left.value + right.value } }\n}\n\
-             extend number: monoid {\n\
+             extend(number, monoid) {\n\
                let empty(): number = { number { value: 0 } }\n}\n",
             true,
         )])
@@ -5645,7 +5687,7 @@ let main(): i32 = { option {} }
             "operator.sc",
             &[],
             "let number = struct { value: i32 }\n\
-             extend number: add(number) {\n\
+             extend(number, add(number)) {\n\
                let output = number\n\
                let add(self)(rhs: number): number = { self }\n\
              }\n",
@@ -5661,7 +5703,7 @@ let main(): i32 = { option {} }
             "flow.sc",
             &[],
             "let maybe(comptime t: type) = enum { some(t), none }\n\
-             extend(comptime t: type) maybe(t): chain {}\n",
+             extend(maybe(t), chain) {}\n",
             true,
         )])
         .unwrap_err();
@@ -5686,7 +5728,7 @@ let main(): i32 = { option {} }
             "algebra.sc",
             &[],
             "let number = struct { value: i32 }\n\
-             extend number: semigroup {\n\
+             extend(number, semigroup) {\n\
                let combine(move left: number, move right: number): number = { left }\n}\n",
             true,
         )])
@@ -5700,7 +5742,7 @@ let main(): i32 = { option {} }
             "functional.sc",
             &[],
             "let number = struct { value: i32 }\n\
-             extend number: functor {}\n",
+             extend(number, functor) {}\n",
             true,
         )])
         .unwrap_err();

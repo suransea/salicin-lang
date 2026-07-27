@@ -2,7 +2,7 @@ let rem = std.ops.rem
 
 let number = struct { value: i32 }
 
-extend number: rem(number) {
+extend(number, rem(number)) {
   let output = number
   let rem(self)(rhs: number): number = { number { value: self.value % rhs.value } }
 }

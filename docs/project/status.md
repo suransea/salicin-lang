@@ -85,6 +85,9 @@ Implemented type-system features include:
 - curried compile-time and runtime parameter groups;
 - labeled arguments, overload selection, and trailing closures;
 - generic nominal types, aliases, inherent extensions, and trait implementations;
+- call-shaped `extend(target) { ... }` and `extend(target, trait) { ... }`
+  declarations whose generic binders and sorts are inferred by destructuring
+  the target type constructor, including after cross-module resolution;
 - associated types and generic associated constructors;
 - bounded generic associated-constructor equality predicates;
 - static trait and operator dispatch;

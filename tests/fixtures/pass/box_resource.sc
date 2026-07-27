@@ -2,7 +2,7 @@ let box = std.boxed.box
 
 let resource = struct { value: i32 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
   }

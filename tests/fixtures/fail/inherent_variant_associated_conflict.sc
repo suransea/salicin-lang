@@ -2,7 +2,7 @@ let choice = enum {
   answer,
 }
 
-extend choice {
+extend(choice) {
   let answer = 42
 }
 

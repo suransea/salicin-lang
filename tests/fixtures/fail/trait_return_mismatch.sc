@@ -4,7 +4,7 @@ let check = trait {
 
 let number = struct { value: i32 }
 
-extend number: check {
+extend(number, check) {
   let check(self: borrow(self))(): bool = { true }
 }
 

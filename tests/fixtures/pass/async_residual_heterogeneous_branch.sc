@@ -27,7 +27,7 @@ let retained = struct {
   offset: i32,
 }
 
-extend first: droppable {
+extend(first, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 10
@@ -35,7 +35,7 @@ extend first: droppable {
   }
 }
 
-extend second: droppable {
+extend(second, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
@@ -43,7 +43,7 @@ extend second: droppable {
   }
 }
 
-extend retained: droppable {
+extend(retained, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 100
@@ -51,7 +51,7 @@ extend retained: droppable {
   }
 }
 
-extend first: future(()) {
+extend(first, future(())) {
   let output = i32
 
   let poll(comptime r: region)
@@ -66,7 +66,7 @@ extend first: future(()) {
   }
 }
 
-extend second: future(()) {
+extend(second, future(())) {
   let output = i32
 
   let poll(comptime r: region)

@@ -1,7 +1,7 @@
 let resource = struct { value: i32 }
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t)
+extend(cell(t))
 where t: copyable {
   let new(copy value: t): cell(t) = { cell { value: value } }
 }

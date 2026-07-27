@@ -8,11 +8,11 @@ let right_answer = trait {
 
 let number = struct { value: i32 }
 
-extend number: left_answer {
+extend(number, left_answer) {
   let answer(self: borrow(self))(): i32 = { self.value }
 }
 
-extend number: right_answer {
+extend(number, right_answer) {
   let answer(self: borrow(self))(): i32 = { self.value }
 }
 

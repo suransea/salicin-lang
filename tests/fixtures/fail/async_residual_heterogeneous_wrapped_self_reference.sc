@@ -13,7 +13,7 @@ let second = struct {
   value: i32,
 }
 
-extend first: future(()) {
+extend(first, future(())) {
   let output = i32
 
   let poll(comptime r: region)
@@ -23,7 +23,7 @@ extend first: future(()) {
   }
 }
 
-extend second: future(()) {
+extend(second, future(())) {
   let output = i32
 
   let poll(comptime r: region)

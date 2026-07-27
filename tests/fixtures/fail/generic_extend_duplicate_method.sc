@@ -1,10 +1,10 @@
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let answer(self: borrow(self))(): i32 = { 1 }
 }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let answer(self: borrow(self))(): i32 = { 2 }
 }
 

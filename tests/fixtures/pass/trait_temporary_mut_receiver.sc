@@ -4,7 +4,7 @@ let reset = trait {
 
 let counter = struct { value: i32 }
 
-extend counter: reset {
+extend(counter, reset) {
   let reset(self: borrow(mut)(self))(): i32 = {
     self.value = 42
     self.value

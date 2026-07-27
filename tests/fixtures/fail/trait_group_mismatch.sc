@@ -4,7 +4,7 @@ let combine = trait {
 
 let number = struct { value: i32 }
 
-extend number: combine {
+extend(number, combine) {
   let combine(self: borrow(self))(left: i32, right: i32): i32 = { left + right }
 }
 

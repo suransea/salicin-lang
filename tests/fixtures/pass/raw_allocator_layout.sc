@@ -1,6 +1,6 @@
 let payload = struct { left: i32, right: i32 }
 
-extend payload: copyable {}
+extend(payload, copyable) {}
 
 let main(): i32 = {
   let pointer = unsafe {

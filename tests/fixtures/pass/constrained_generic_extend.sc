@@ -1,6 +1,6 @@
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t)
+extend(cell(t))
 where t: copyable {
   let new(copy value: t): cell(t) = { cell { value: value } }
   let duplicate(self: borrow(self))(): t = {

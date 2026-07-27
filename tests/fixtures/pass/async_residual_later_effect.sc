@@ -16,7 +16,7 @@ let step = struct {
   value: i32,
 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 100
@@ -24,7 +24,7 @@ extend resource: droppable {
   }
 }
 
-extend step: droppable {
+extend(step, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 10
@@ -32,7 +32,7 @@ extend step: droppable {
   }
 }
 
-extend step: future(()) {
+extend(step, future(())) {
   let output = i32
 
   let poll(comptime r: region)

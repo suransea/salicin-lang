@@ -1,4 +1,7 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use crate::ast::{
     default_trait_self_parameter, AssociatedKind, AssociatedTypeBinding, BinaryOp, Binding,
@@ -197,6 +200,9 @@ impl Parser {
             self.skip_separators();
         }
 
+        if let Err(message) = infer_extend_parameters(&mut items) {
+            return Err(self.error_here(message));
+        }
         if let Err(message) = normalize_and_validate_scopes(&mut items) {
             return Err(self.error_here(message));
         }
@@ -1071,25 +1077,21 @@ impl Parser {
 
     fn extend_definition(&mut self) -> Result<ExtendDef, ParseError> {
         self.expect(&TokenKind::Extend, "`extend`")?;
-        let (compile_groups, runtime_groups) = self.declaration_groups(false, &[])?;
-        if !runtime_groups.is_empty() {
-            return Err(self.error_here(
-                "extend headers accept only compile-time parameters before the target type",
-            ));
-        }
+        self.expect(&TokenKind::LParen, "`(` after `extend`")?;
         let target = self.type_expr()?;
-        let trait_ref = if self.take(&TokenKind::Colon) {
+        let trait_ref = if self.take(&TokenKind::Comma) {
             Some(self.type_expr()?)
         } else {
             None
         };
+        self.expect(&TokenKind::RParen, "`)` after extend arguments")?;
         self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
         let where_predicates = self.where_clause()?;
-        if !where_predicates.is_empty() && compile_groups.is_empty() {
-            return Err(self.error_here("extension `where` requires compile-time parameters"));
-        }
         self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
-        self.expect(&TokenKind::LBrace, "`{` after extend target")?;
+        self.expect(
+            &TokenKind::LBrace,
+            "trailing implementation block after `extend(...)`",
+        )?;
         self.skip_separators();
 
         let mut members = Vec::new();
@@ -1106,7 +1108,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "`}` after extend members")?;
 
         Ok(ExtendDef {
-            compile_groups,
+            compile_groups: Vec::new(),
             target,
             trait_ref,
             where_predicates,
@@ -4916,6 +4918,226 @@ impl Parser {
     }
 }
 
+pub(crate) fn infer_extend_parameters(items: &mut [Item]) -> Result<(), String> {
+    let mut constructors = HashMap::<String, Vec<CompileParam>>::new();
+    let mut concrete_types = HashSet::<String>::new();
+    let mut closed_values = HashMap::<String, HashSet<String>>::new();
+    for item in items.iter() {
+        let (name, groups) = match item {
+            Item::Struct(definition) => (&definition.name, Some(&definition.compile_groups)),
+            Item::Enum(definition) => (&definition.name, Some(&definition.compile_groups)),
+            Item::TypeForm(definition) => (&definition.name, Some(&definition.compile_groups)),
+            Item::TypeAlias(definition) => (&definition.name, Some(&definition.compile_groups)),
+            Item::Trait(definition) => {
+                concrete_types.insert(definition.name.clone());
+                continue;
+            }
+            Item::Sort(definition) => {
+                if let Some(members) = &definition.members {
+                    closed_values
+                        .insert(definition.name.clone(), members.iter().cloned().collect());
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        concrete_types.insert(name.clone());
+        if let Some(groups) = groups {
+            constructors.insert(name.clone(), groups.iter().flatten().cloned().collect());
+        }
+    }
+
+    let schema = ExtendPatternSchema {
+        constructors: &constructors,
+        concrete_types: &concrete_types,
+        closed_values: &closed_values,
+    };
+    for item in items {
+        let Item::Extend(extension) = item else {
+            continue;
+        };
+        let mut inferred = Vec::<CompileParam>::new();
+        let mut positions = HashMap::<String, usize>::new();
+        infer_extend_pattern(
+            &extension.target,
+            Sort::Type,
+            true,
+            &schema,
+            &mut inferred,
+            &mut positions,
+        )?;
+        extension.compile_groups = if inferred.is_empty() {
+            Vec::new()
+        } else {
+            vec![inferred]
+        };
+    }
+    Ok(())
+}
+
+struct ExtendPatternSchema<'a> {
+    constructors: &'a HashMap<String, Vec<CompileParam>>,
+    concrete_types: &'a HashSet<String>,
+    closed_values: &'a HashMap<String, HashSet<String>>,
+}
+
+fn infer_extend_pattern(
+    pattern: &Type,
+    expected: Sort,
+    root: bool,
+    schema: &ExtendPatternSchema<'_>,
+    inferred: &mut Vec<CompileParam>,
+    positions: &mut HashMap<String, usize>,
+) -> Result<(), String> {
+    let bind = |name: &str,
+                kind: Sort,
+                inferred: &mut Vec<CompileParam>,
+                positions: &mut HashMap<String, usize>|
+     -> Result<(), String> {
+        if let Some(index) = positions.get(name).copied() {
+            if inferred[index].kind != kind {
+                return Err(format!(
+                    "extend pattern `{name}` is inferred as both `{:?}` and `{:?}`",
+                    inferred[index].kind, kind
+                ));
+            }
+            return Ok(());
+        }
+        positions.insert(name.to_owned(), inferred.len());
+        inferred.push(CompileParam {
+            name: name.to_owned(),
+            kind,
+            default: None,
+        });
+        Ok(())
+    };
+
+    match pattern {
+        Type::Named(name, arguments) => {
+            if arguments.is_empty() {
+                let is_concrete = schema.concrete_types.contains(name)
+                    || (expected.is_access()
+                        && (matches!(
+                            name.as_str(),
+                            "mut" | "shared" | "$access$mut" | "$access$shared"
+                        ) || name.ends_with("::mut")
+                            || name.ends_with("::shared")
+                            || name.ends_with(".mut")
+                            || name.ends_with(".shared")))
+                    || match &expected {
+                        Sort::Named(sort) => schema
+                            .closed_values
+                            .get(sort)
+                            .is_some_and(|members| members.contains(name)),
+                        _ => false,
+                    }
+                    || matches!(
+                        name.as_str(),
+                        "i8" | "i16"
+                            | "i32"
+                            | "i64"
+                            | "i128"
+                            | "isize"
+                            | "u8"
+                            | "u16"
+                            | "u32"
+                            | "u64"
+                            | "u128"
+                            | "usize"
+                            | "bool"
+                    );
+                if !is_concrete {
+                    bind(name, expected, inferred, positions)?;
+                }
+                return Ok(());
+            }
+            let parameters = schema.constructors.get(name);
+            for (index, argument) in arguments.iter().enumerate() {
+                let kind = parameters
+                    .and_then(|parameters| parameters.get(index))
+                    .map_or(Sort::Type, |parameter| parameter.kind.clone());
+                infer_extend_pattern(argument, kind, false, schema, inferred, positions)?;
+            }
+        }
+        Type::NamedArgs(name, arguments) => {
+            let parameters = schema.constructors.get(name);
+            for (index, argument) in arguments.iter().enumerate() {
+                let parameter = argument
+                    .label
+                    .as_ref()
+                    .and_then(|label| {
+                        parameters.and_then(|parameters| {
+                            parameters.iter().find(|parameter| &parameter.name == label)
+                        })
+                    })
+                    .or_else(|| parameters.and_then(|parameters| parameters.get(index)));
+                infer_extend_pattern(
+                    &argument.ty,
+                    parameter.map_or(Sort::Type, |parameter| parameter.kind.clone()),
+                    false,
+                    schema,
+                    inferred,
+                    positions,
+                )?;
+            }
+        }
+        Type::ArrayApplication {
+            element, length, ..
+        } => {
+            infer_extend_pattern(element, Sort::Type, false, schema, inferred, positions)?;
+            if let USizeConst::Parameter(name) = length {
+                bind(name, Sort::USize, inferred, positions)?;
+            }
+        }
+        Type::Borrow {
+            access,
+            region,
+            pointee,
+            ..
+        } => {
+            if let Some(name) = access {
+                bind(name, Sort::Named("access".to_owned()), inferred, positions)?;
+            }
+            if let Some(name) = region {
+                bind(name, Sort::Region, inferred, positions)?;
+            }
+            infer_extend_pattern(pointee, Sort::Type, false, schema, inferred, positions)?;
+        }
+        Type::Tuple(fields) => {
+            for field in fields {
+                infer_extend_pattern(field, Sort::Type, false, schema, inferred, positions)?;
+            }
+        }
+        Type::Array(element, _) => {
+            infer_extend_pattern(element, Sort::Type, false, schema, inferred, positions)?
+        }
+        Type::Function { .. }
+        | Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::U128
+        | Type::USize
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {
+            if !root && expected != Sort::Type {
+                return Err(format!(
+                    "extend pattern value has sort `type`, expected `{:?}`",
+                    expected
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
     let empty = HashSet::new();
     for item in items {
@@ -6662,7 +6884,7 @@ mod tests {
 
     #[test]
     fn rejects_visibility_where_it_is_not_supported_yet() {
-        let extension = parse("pub extend thing {}\n").unwrap_err();
+        let extension = parse("pub extend(thing) {}\n").unwrap_err();
         assert!(extension
             .message
             .contains("`extend` declarations cannot have visibility"));
@@ -6671,7 +6893,7 @@ mod tests {
             parse("let protocol = trait { pub let f(value: i32): i32 }\n").unwrap_err();
         assert!(trait_member.message.contains("trait members"));
 
-        let extend_member = parse("extend thing { pub(package) let answer = 42 }\n").unwrap_err();
+        let extend_member = parse("extend(thing) { pub(package) let answer = 42 }\n").unwrap_err();
         assert!(extend_member.message.contains("extend members"));
     }
 
@@ -6811,7 +7033,7 @@ mod tests {
     fn parses_empty_structs_as_types_that_can_be_extended() {
         let program = parse(
             "let marker = struct {}\n\
-             extend marker {\n\
+             extend(marker) {\n\
                let answer(): i32 = { 42 }\n\
              }\n",
         )
@@ -7211,13 +7433,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_runtime_parameters_on_generic_data_and_extend_headers() {
+    fn rejects_runtime_parameters_on_generic_data_and_legacy_extend_headers() {
         let data =
             parse("let bad(comptime t: type)(value: t) = struct { value: t }\n").unwrap_err();
         assert!(data.message.contains("runtime parameters"));
 
-        let extension = parse("extend(value: i32) cell(i32) {}\n").unwrap_err();
-        assert!(extension.message.contains("only compile-time parameters"));
+        let extension = parse("extend cell {}\n").unwrap_err();
+        assert!(extension.message.contains("`(` after `extend`"));
     }
 
     #[test]
@@ -7760,7 +7982,7 @@ mod tests {
     fn named_closure_declarations_require_braced_bodies() {
         for source in [
             "let answer(): i32 = 42\n",
-            "extend cell { let read(self: borrow(self))(): i32 = self.value }\n",
+            "extend(cell) { let read(self: borrow(self))(): i32 = self.value }\n",
             "let read = trait { let read(self: borrow(self))(): i32 = 42 }\n",
         ] {
             let error = parse(source).unwrap_err();
@@ -8528,7 +8750,7 @@ mod tests {
              pub let scalar: type = builtin()\n\
              pub let family(comptime t: type)(comptime l: usize): type = builtin()\n\
              pub let intrinsic(comptime t: type)(value: t): t = builtin()\n\
-             extend i32: add(i32) {\n\
+             extend(i32, add(i32)) {\n\
                let output = i32\n\
                let add(self)(rhs: i32): i32 = builtin()\n\
              }\n",
@@ -8576,7 +8798,7 @@ mod tests {
             "let value: i32 = builtin()\n",
             "let intrinsic(value: i32) = builtin()\n",
             "let scalar: type = builtin(1)\n",
-            "extend i32 { let constant = builtin() }\n",
+            "extend(i32) { let constant = builtin() }\n",
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
@@ -9030,7 +9252,7 @@ mod tests {
     fn parses_extend_methods_associated_functions_constants_and_trait_refs() {
         let program = parse(
             "let a = struct { value: i32 }\n\
-             extend a: foo {\n\
+             extend(a, foo) {\n\
                let reset(self: borrow(mut)(self))(): () = {}\n\
                let answer: i32 = 42\n\
                let make(value: i32): a = { a { value: value } }\n\
@@ -9087,7 +9309,7 @@ mod tests {
     #[test]
     fn parses_compile_parameters_on_extend_functions() {
         let program = parse(
-            "extend a {\n\
+            "extend(a) {\n\
                let convert(comptime t: type)(self: borrow(self))(value: t): t = { value }\n\
                let make(comptime t: type)(value: t): t = { value }\n\
              }\n",
@@ -9113,10 +9335,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_compile_parameters_on_extend_headers() {
+    fn infers_extend_pattern_parameters_from_constructor_sorts() {
         let program = parse(
             "let cell(comptime t: type) = struct { value: t }\n\
-             extend(comptime t: type) cell(t)\n\
+             extend(cell(t))\n\
              where t: copyable {\n\
                let get(self: borrow(self))(): t = { self.value }\n}\n",
         )
@@ -9131,6 +9353,27 @@ mod tests {
         assert_eq!(
             extension.target,
             Type::Named("cell".into(), vec![Type::Named("t".into(), Vec::new())])
+        );
+
+        let program = parse(
+            "let result(comptime error: type)(comptime t: type) = enum { ok(t), err(error) }\n\
+             let chain = trait {}\n\
+             extend(result(error)(t), chain) {}\n",
+        )
+        .unwrap();
+        let Item::Extend(extension) = &program.items[2] else {
+            panic!("expected destructuring extend declaration");
+        };
+        assert_eq!(
+            extension.compile_groups[0]
+                .iter()
+                .map(|parameter| (parameter.name.as_str(), parameter.kind.clone()))
+                .collect::<Vec<_>>(),
+            vec![("error", Sort::Type), ("t", Sort::Type)]
+        );
+        assert_eq!(
+            extension.trait_ref,
+            Some(Type::Named("chain".into(), Vec::new()))
         );
     }
 
@@ -9195,19 +9438,19 @@ mod tests {
     fn rejects_invalid_extend_receivers() {
         let cases = [
             (
-                "extend a { let invalid(self, value: i32)(): () = {} }\n",
+                "extend(a) { let invalid(self, value: i32)(): () = {} }\n",
                 "only parameter",
             ),
             (
-                "extend a { let invalid(self): () = {} }\n",
+                "extend(a) { let invalid(self): () = {} }\n",
                 "requires an explicit parameter group",
             ),
             (
-                "extend a { let invalid(value: i32)(self)(): () = {} }\n",
+                "extend(a) { let invalid(value: i32)(self)(): () = {} }\n",
                 "first parameter group",
             ),
             (
-                "extend a { let invalid(self)(self)(): () = {} }\n",
+                "extend(a) { let invalid(self)(self)(): () = {} }\n",
                 "at most one",
             ),
         ];
@@ -9225,7 +9468,7 @@ mod tests {
     #[test]
     fn parses_borrow_and_move_receivers_with_explicit_following_groups() {
         let program = parse(
-            "extend a {\n\
+            "extend(a) {\n\
                let inspect(self: borrow(self))(): i32 = { self.value }\n\
                let replace(move self)(value: i32)(other: i32): a = { a { value: value + other } }\n\
              }\n",
@@ -9262,13 +9505,13 @@ mod tests {
         let receiver = parse("let invalid(self: a)(): () = {}\n").unwrap_err();
         assert!(receiver.message.contains("only allowed in extend"));
 
-        let mutable = parse("extend a { let mut answer = 42 }\n").unwrap_err();
+        let mutable = parse("extend(a) { let mut answer = 42 }\n").unwrap_err();
         assert!(mutable.message.contains("let mut"));
 
-        let data = parse("extend a { let nested = struct { value: i32 } }\n").unwrap_err();
+        let data = parse("extend(a) { let nested = struct { value: i32 } }\n").unwrap_err();
         assert!(data.message.contains("data declarations"));
 
-        let missing = parse("extend a { let answer: i32\n}\n").unwrap_err();
+        let missing = parse("extend(a) { let answer: i32\n}\n").unwrap_err();
         assert!(missing.message.contains("expected `=`"));
     }
 

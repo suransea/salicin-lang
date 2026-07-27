@@ -70,7 +70,7 @@ Arithmetic and bitwise protocols accept their operands with automatic passing an
 ```sc fragment
 let Add = std.ops.Add
 
-extend Number: Add(Number) {
+extend(Number, Add(Number)) {
   let Output = Number
   let add(self)
     (rhs: Number): Number = { ... }
@@ -83,7 +83,7 @@ negates its result:
 ```sc fragment
 let Eq = std.ops.Eq
 
-extend Number: Eq(Number) {
+extend(Number, Eq(Number)) {
   let eq(self: borrow(Self))
     (rhs: borrow(Number)): Bool = { self.value == rhs.value }
 }
@@ -97,7 +97,7 @@ the method once; an `Unordered` result makes each operator false:
 let PartialOrd = std.ops.PartialOrd
 let PartialOrdering = std.ops.PartialOrdering
 
-extend Number: PartialOrd(Number) {
+extend(Number, PartialOrd(Number)) {
   let partial_cmp(self: borrow(Self))
     (rhs: borrow(Number)): PartialOrdering = { ... }
 }
@@ -495,7 +495,7 @@ where Self: Applicative {
 These declarations use constructor sorts such as `(Value: type): type` on the trait `Self` subject,
 not as ordinary trait parameters. Traits with a matching constructor subject can be implemented for
 generic nominal constructors. Method implementations are registered as generic function templates
-and validated, for example `extend Carrier: Functor{let map(E, A, B)...}`. Receiver methods
+and validated, for example `extend(Carrier, Functor){let map(E, A, B)...}`. Receiver methods
 dispatch from concrete nominal instances, so `Carrier(i32) { value: 41 }.map(add_one)` selects the
 `Carrier: Functor` implementation and instantiates the generic method template. Constructor
 associated functions without a receiver can still be called from the bare constructor; for example,

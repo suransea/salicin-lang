@@ -4,7 +4,7 @@ let convert(comptime to: type) = trait {
 
 let value = struct { value: i32 }
 
-extend value: convert(i32) {
+extend(value, convert(i32)) {
   let convert(self: borrow(self))(): i32 = { self.value }
 }
 

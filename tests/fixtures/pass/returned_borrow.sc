@@ -22,7 +22,7 @@ let inferred_same(comptime t: type)(value: borrow(t)): borrow(t) = { borrow(valu
 
 let inferred_forward(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { inferred_left(pair) }
 
-extend pair {
+extend(pair) {
   let right_ref(comptime r: region)(pair: borrow(r)(pair)): borrow(r)(i32) = { borrow(pair.right) }
 
   let right_method(comptime r: region)(self: borrow(r)(self))(): borrow(r)(i32) = { borrow(self.right) }
@@ -35,11 +35,11 @@ extend pair {
   let inferred_left_mut(self: borrow(mut)(self))(): borrow(mut)(i32) = { borrow(mut)(self.left) }
 }
 
-extend(comptime t: type) holder(t) {
+extend(holder(t)) {
   let get(comptime r: region)(self: borrow(r)(self))(): borrow(r)(t) = { borrow(self.value) }
 }
 
-extend pair: right_view {
+extend(pair, right_view) {
   let view(comptime r: region)(self: borrow(r)(self))(): borrow(r)(i32) = { borrow(self.right) }
 }
 

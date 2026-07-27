@@ -1,4 +1,4 @@
-extend i32 {
+extend(i32) {
   let answer = 42
 }
 

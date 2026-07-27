@@ -1,7 +1,7 @@
 let resource = struct { value: i32 }
 let choice = enum { pair(resource, resource), none }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let trapped = 1 / self.value
   }

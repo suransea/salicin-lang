@@ -8,7 +8,7 @@ pub let result(comptime e: type)
 }
 
 /// Provides `?.` chaining for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain {
+extend(result(error)(t), core.flow.chain) {
   /// The success payload type.
   let item = t
   /// Rebuilds `Result(Error)` around a transformed success type.
@@ -25,7 +25,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.chain
 }
 
 /// Provides `??` fallback evaluation for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coalesce {
+extend(result(error)(t), core.flow.coalesce) {
   /// The success payload type returned by coalescing.
   let item = t
 
@@ -40,7 +40,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.coale
 }
 
 /// Provides postfix `!` extraction for `Result`.
-extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwrap {
+extend(result(error)(t), core.flow.unwrap) {
   let output = t
 
   let unwrap(move self): t = {
@@ -51,7 +51,7 @@ extend(comptime error: type, comptime t: type) result(error)(t): core.flow.unwra
 }
 
 /// Provides postfix `!` effect raising for `Result`.
-extend(comptime e: type, comptime t: type) result(e)(t): core.flow.raise {
+extend(result(e)(t), core.flow.raise) {
   let output = t
   let error = e
 
@@ -63,7 +63,7 @@ extend(comptime e: type, comptime t: type) result(e)(t): core.flow.raise {
 }
 
 /// Implements `Functor` for `Result(Error)`.
-extend(comptime error: type) result(error): core.functional.functor {
+extend(result(error), core.functional.functor) {
   /// Maps `Ok` through `transform` and preserves `Err`.
   let map(comptime e: effects, comptime a: type, comptime b: type)
     (self: result(error)(a))
@@ -75,7 +75,7 @@ extend(comptime error: type) result(error): core.functional.functor {
 }
 
 /// Implements `Applicative` for `Result(Error)`.
-extend(comptime error: type) result(error): core.functional.applicative {
+extend(result(error), core.functional.applicative) {
   /// Wraps `value` in `Ok`.
   let pure(comptime a: type)
     (value: a): result(error)(a) = {
@@ -95,7 +95,7 @@ extend(comptime error: type) result(error): core.functional.applicative {
 }
 
 /// Implements `Monad` for `Result(Error)`.
-extend(comptime error: type) result(error): core.functional.monad {
+extend(result(error), core.functional.monad) {
   /// Runs `next` for `Ok` and propagates `Err`.
   let flat_map(comptime e: effects, comptime a: type, comptime b: type)
     (self: result(error)(a))

@@ -5,7 +5,7 @@ let step = struct {
   remaining: ptr(mut)(i32)
 }
 
-extend step: future(()) {
+extend(step, future(())) {
   let output = bool
 
   let poll(comptime r: region)

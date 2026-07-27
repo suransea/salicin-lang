@@ -3,7 +3,7 @@ let future = std.async.future
 
 let step = struct { polls: i32 }
 
-extend step: future(()) {
+extend(step, future(())) {
   let output = i32
 
   let poll(comptime r: region)

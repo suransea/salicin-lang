@@ -154,7 +154,10 @@ fn m1_inherent_member_errors_report_their_cause() {
             "conflicts with variant",
         ),
         ("inherent_mut_receiver_immutable.sc", "immutable"),
-        ("inherent_unknown_target.sc", "unknown extension target"),
+        (
+            "inherent_bare_pattern_target.sc",
+            "not a generic nominal type",
+        ),
         ("inherent_trait_extension_pending.sc", "unknown trait"),
         ("inherent_bound_method_value.sc", "must be called"),
         ("inherent_associated_function_value.sc", "must be called"),

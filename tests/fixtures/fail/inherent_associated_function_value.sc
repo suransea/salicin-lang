@@ -1,6 +1,6 @@
 let number = struct { value: i32 }
 
-extend number {
+extend(number) {
   let make(value: i32): number = { number { value: value } }
 }
 

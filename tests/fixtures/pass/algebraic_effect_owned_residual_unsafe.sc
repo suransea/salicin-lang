@@ -9,7 +9,7 @@ let state = struct {
   drops: ptr(mut)(i32),
 }
 
-extend state: droppable {
+extend(state, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1

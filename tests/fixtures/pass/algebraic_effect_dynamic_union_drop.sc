@@ -5,7 +5,7 @@ let abort = effect {
 
 let resource = struct { counter: ptr(mut)(i32) }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.counter = *self.counter + 1

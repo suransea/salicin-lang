@@ -72,7 +72,7 @@ let box_as_ref(comptime a: access, comptime r: region, comptime t: type)
 }
 
 /// Provides inherent constructors and accessors for `Box`.
-extend(comptime t: type) box(t) {
+extend(box(t)) {
   /// Allocates a new box containing `value`.
   let new(value: t): box(t) = { box_new(value) }
   /// Rebuilds unique ownership from a pointer returned by `Box.into_raw`.
@@ -94,7 +94,7 @@ extend(comptime t: type) box(t) {
 }
 
 /// Provides copy-only value accessors for `Box`.
-extend(comptime t: type) box(t)
+extend(box(t))
 where t: copyable {
   /// Copies the boxed value out of this box.
   let read(self: borrow(self))(): t = { box_read(self) }
@@ -110,7 +110,7 @@ let box_deallocate(comptime t: type)(pointer: ptr(mut)(t)): () = {
 }
 
 /// Drops the owned value and releases its heap allocation.
-extend(comptime t: type) box(t): droppable {
+extend(box(t), droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let pointer = self.pointer
     do {

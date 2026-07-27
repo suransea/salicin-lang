@@ -2,7 +2,7 @@ let option = std.option
 
 let counter = struct { current: i32, end: i32 }
 
-extend counter {
+extend(counter) {
   let next(self: borrow(mut)(self))(): option(i32) = {
     if self.current < self.end {
       let value = self.current

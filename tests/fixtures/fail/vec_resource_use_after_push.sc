@@ -2,7 +2,7 @@ let vec = std.vec.vec
 
 let resource = struct { value: i32 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {}}
 
 let main(): i32 = {

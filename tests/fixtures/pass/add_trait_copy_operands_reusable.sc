@@ -3,9 +3,9 @@ let add = std.ops.add
 
 let number = struct { value: i32 }
 
-extend number: copyable {}
+extend(number, copyable) {}
 
-extend number: add(number) {
+extend(number, add(number)) {
   let output = number
   let add(self)(rhs: number): number = {
     number { value: self.value + rhs.value }

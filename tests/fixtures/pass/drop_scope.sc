@@ -4,7 +4,7 @@ let choice = enum {
   none,
 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     let checked = 1 / self.value
     self.value = 0

@@ -2,7 +2,7 @@ let inspect(comptime a: access)(value: borrow(a)(i32)): i32 = { value }
 
 let cell(comptime t: type) = struct { value: t }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let view(comptime a: access)(self: borrow(a)(self))(): borrow(a)(t) = { borrow(a)(self.value) }
 }
 

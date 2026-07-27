@@ -1,6 +1,6 @@
 let number = struct { raw: i32 }
 
-extend number {
+extend(number) {
   let value(self: borrow(self))(): i32 = { self.raw }
 }
 

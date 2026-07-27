@@ -1,7 +1,7 @@
 let cell(comptime t: type) = struct { value: t }
 let holder = struct { cell: cell(i32) }
 
-extend(comptime t: type) cell(t) {
+extend(cell(t)) {
   let take(move self)(): t = { self.value }
 }
 

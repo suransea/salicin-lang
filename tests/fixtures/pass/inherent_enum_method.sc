@@ -3,7 +3,7 @@ let choice = enum {
   empty,
 }
 
-extend choice {
+extend(choice) {
   let unwrap(move self)(): i32 = { match self
       { choice.answer( answer: value ) -> value }
       { choice.empty -> 0 }

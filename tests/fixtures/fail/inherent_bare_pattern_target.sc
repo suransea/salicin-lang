@@ -1,4 +1,4 @@
-extend missing {
+extend(missing) {
   let answer = 42
 }
 

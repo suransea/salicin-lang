@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Replaced declaration-shaped extension headers with compiler-call syntax:
+  inherent members use `extend(target) { ... }` and trait implementations use
+  `extend(target, trait) { ... }`. The trailing block is the implementation
+  argument. Generic extension parameters are now inferred by destructuring the
+  target against its type-constructor signature, including curried,
+  cross-module, `usize`, and finite-sort parameters; the former explicit
+  compile-time header and colon form are rejected.
 - Accepted the composite CTFE contract. It defines the runtime-typed value
   domain, phase rules, strict evaluation order, pure-call eligibility,
   resource exclusion, structural equality and normalization, target-width
@@ -61,6 +68,14 @@ subset.
   target-layout LLVM constants. Regression coverage proves normalized values
   and emitted constants are independent of checkout path, declaration order,
   and source-unit traversal.
+- Completed the composite CTFE acceptance proof across scalar and composite
+  success paths, exact consumer type mismatches, overflow, invalid shifts and
+  indexes, non-exhaustive guarded patterns, generic substitution, recursive
+  layouts, repeated-call cycles, 128-active-call and 16,384-step limits,
+  aggregate depth/element/node limits, cross-module identity, stable
+  diagnostics, byte-deterministic IR, and native composite globals. Composite
+  CTFE leaves the active queue; standard-library usability is now the P0
+  milestone.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.
@@ -83,11 +98,11 @@ subset.
   substitution; mutation, borrowing, runtime effects, invalid arithmetic, and
   repeated nonterminating calls are rejected.
 - Replanned the post-foundation work around daily compiler usability.
-  Composite CTFE is now current: it will unify scalar static evaluation and
-  aggregate global constants, then support every builtin scalar, tuples,
-  arrays, structs, and enums in bounded pure compile-time calls. Practical
-  standard-library text, collection, formatting, synchronous IO, and test
-  support follows, then persistent caching, LSP diagnostics, semantic
+  Completed composite CTFE unifies scalar static evaluation and aggregate
+  global constants across builtin scalars, tuples, arrays, structs, and enums
+  in bounded pure compile-time calls. Practical standard-library text,
+  collection, formatting, synchronous IO, and test support is now current,
+  followed by persistent caching, LSP diagnostics, semantic
   navigation, and verified registry dependencies. The executable TODO assigns
   stable tasks and acceptance gates while separating design candidates and
   deferred language features from committed work.
@@ -582,8 +597,8 @@ subset.
   overload selection; operation effect errors now report source names such as `State(i32).get`
   instead of generated `$effect$operation$...` symbols.
 - Extended the built-in `Ptr(A)(T)` family through ordinary source declarations. A generic
-  `extend(A: access, T: type) Ptr(A)(T)` supplies `offset` to both access modes, while
-  `extend(T: type) Ptr(mut)(T)` specializes `init` and `take` for mutable pointers. Pointer methods
+  `extend(Ptr(A)(T))` supplies `offset` to both access modes, while
+  `extend(Ptr(mut)(T))` specializes `init` and `take` for mutable pointers. Pointer methods
   use concrete non-nominal method owners internally, retain source-level diagnostics, obey the core
   package orphan boundary, and do not require general compile-time equality predicates.
 - Moved the closed `access` type into `core.borrow`, and replaced the former closed
@@ -707,7 +722,7 @@ subset.
   `ResultWith(Error)` unary type-constructor adapter over `Result(Value, Error)`.
 - Added semantic support for partially applied transparent type aliases as higher-kinded
   constructor trait implementation targets, enabling source-level adapters such as
-  `extend(Error: type) ResultWith(Error): Monad`.
+  `extend(ResultWith(Error), Monad)`.
 - Exported `ResultWith` as a normal non-prelude standard-library item.
 
 ## 0.183.0 - 2026-07-22
@@ -764,7 +779,7 @@ subset.
 ## 0.176.0 - 2026-07-22
 
 - Allowed generic nominal trait implementations to bind direct generic associated constructors,
-  so `extend(T: type) Maybe(T): Chain { let Rebind = Maybe ... }` materializes each concrete
+  so `extend(Maybe(T), Chain) { let Rebind = Maybe ... }` materializes each concrete
   instance with the same source-backed constructor substitution as concrete implementations.
 - Allowed generic trait implementation methods to carry compile-time parameter groups matching
   their trait declarations, including effect rows such as `chain(E: effect, U: type)`.
@@ -946,7 +961,7 @@ subset.
 ## 0.159.0 - 2026-07-22
 
 - Added callable dispatch for constructor trait associated functions, so a generic nominal
-  constructor with `extend Carrier: Functor { let map... }` can call `Carrier.map(...)` and route to
+  constructor with `extend(Carrier, Functor) { let map... }` can call `Carrier.map(...)` and route to
   the registered implementation method template.
 - Reused the existing generic function instance pipeline for HKT associated methods, preserving
   ordinary compile-time argument inference, named-argument overload selection, and effect checking.
@@ -961,7 +976,7 @@ subset.
 ## 0.158.0 - 2026-07-22
 
 - Registered constructor trait implementation methods as ordinary generic function templates, so
-  implementations such as `extend Carrier: Functor { let map(E, A, B)... }` are shape-checked and
+  implementations such as `extend(Carrier, Functor) { let map(E, A, B)... }` are shape-checked and
   their bodies are validated by the existing generic template pipeline.
 - Added constructor-kind substitution for applied type constructors, allowing trait signatures using
   `F(A)` to normalize to implementation signatures such as `Carrier(A)`.
@@ -972,7 +987,7 @@ subset.
 
 - Added a dedicated constructor-trait-implementation header table so generic nominal constructors can
   implement marker traits whose first compile-time parameter is a matching type-constructor kind.
-- Allowed declarations such as `extend Carrier: Higher {}` and `extend Carrier: Tagged(i32) {}` when
+- Allowed declarations such as `extend(Carrier, Higher) {}` and `extend(Carrier, Tagged(i32)) {}` when
   `Higher`/`Tagged` abstract over `F: (Value: type): type`, including duplicate, arity, orphan, and
   unsupported-member diagnostics.
 - Kept constructor trait implementations limited to marker traits for now; generic method lowering,
@@ -2313,7 +2328,7 @@ subset.
 ## 0.37.0 - 2026-07-21
 
 - Implemented blanket generic trait extensions such as
-  `extend(T: type) Cell(T): Read where T: Read`, selected lazily for each concrete nominal
+  `extend(Cell(T), Read) where T: Read`, selected lazily for each concrete nominal
   instance.
 - Substituted target parameters through trait arguments, method signatures and bodies, where
   predicates, and associated-type definitions including `let Item = T`.
@@ -2373,7 +2388,7 @@ subset.
 ## 0.32.0 - 2026-07-21
 
 - Implemented blanket generic inherent extensions with the specified
-  `extend(T: type) Cell(T) { ... }` syntax. Header parameters survive module qualification and are
+  `extend(Cell(T)) { ... }` syntax. Pattern parameters survive module qualification and are
   substituted when each concrete struct or enum instance is materialized.
 - Added inferred generic associated-function dispatch, including runtime arguments, expected result
   types, named type arguments, reordered target parameters, and qualified file-module types. Methods
@@ -2709,11 +2724,11 @@ subset.
   acquire compiler `Copy` semantics.
 - Made primitive types, `()`, `never`, the compiler's internal error-recovery type, and arrays whose
   elements are `Copy` intrinsically copyable.
-- Added explicit nominal `Copy` implementations with `extend T: Copy {}`. Struct fields and every
+- Added explicit nominal `Copy` implementations with `extend(T, Copy) {}`. Struct fields and every
   enum variant payload are checked recursively, including private representation fields and arrays,
   and only the package defining the nominal type may provide the implementation.
 - Kept concrete generic implementations local to the exact instance: for example,
-  `extend Cell(i32): Copy {}` does not make `Cell(bool)` or the generic template `Copy`; blanket and
+  `extend(Cell(i32), Copy) {}` does not make `Cell(bool)` or the generic template `Copy`; blanket and
   generic `Copy` implementations and `where`-based proofs remain unsupported.
 - Routed validated nominal `Copy` through ordinary reads, inferred parameter modes, closure captures,
   and function or bound-method partial application. Unannotated parameters copy `Copy` values and

@@ -4,7 +4,7 @@ let future = std.async.future
 let number = struct {}
 let flag = struct {}
 
-extend number: future(()) {
+extend(number, future(())) {
   let output = i32
 
   let poll(comptime r: region)
@@ -14,7 +14,7 @@ extend number: future(()) {
   }
 }
 
-extend flag: future(()) {
+extend(flag, future(())) {
   let output = bool
 
   let poll(comptime r: region)

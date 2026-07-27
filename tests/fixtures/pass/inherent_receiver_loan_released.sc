@@ -1,6 +1,6 @@
 let number = struct { value: i32 }
 
-extend number {
+extend(number) {
   let read(self: borrow(self))(): i32 = { self.value }
   let take(move self)(): i32 = { self.value }
 }

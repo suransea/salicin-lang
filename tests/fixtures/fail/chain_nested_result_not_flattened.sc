@@ -2,7 +2,7 @@ let result = std.result
 
 let boxed = struct { value: i32 }
 
-extend boxed {
+extend(boxed) {
   let checked(move self)(): result(bool)(i32) = { result(bool)(i32).ok(self.value) }
 }
 

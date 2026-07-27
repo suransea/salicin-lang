@@ -8,7 +8,7 @@ let resource = struct {
   drops: ptr(mut)(i32),
 }
 
-extend resource: droppable {
+extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = {
     unsafe {
       *self.drops = *self.drops + 1
