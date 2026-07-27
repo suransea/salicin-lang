@@ -44,6 +44,7 @@ const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
+const EDITION_2026_LITERAL: &str = include_str!("../../library/core/src/literal.sc");
 const EDITION_2026_STRING: &str = include_str!("../../library/core/src/string.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
@@ -71,6 +72,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("control", EDITION_2026_CONTROL),
     ("iter", EDITION_2026_ITER),
     ("memory", EDITION_2026_MEMORY),
+    ("literal", EDITION_2026_LITERAL),
     ("string", EDITION_2026_STRING),
 ];
 
@@ -80,6 +82,7 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "control",
     "iter",
     "passing",
+    "literal",
     "string",
 ];
 
@@ -4302,7 +4305,7 @@ pub let index(comptime key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 313);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 320);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);

@@ -425,6 +425,8 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
     ("string", "core::string::string"),
+    ("array_literal", "core::literal::array_literal"),
+    ("string_literal", "core::literal::string_literal"),
     ("copy", "core::passing::copy"),
     ("move", "core::passing::move"),
     ("comptime", "core::passing::comptime"),
@@ -442,6 +444,8 @@ const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("result", "core::result::result"),
     ("slice", "core::memory::slice"),
     ("string", "core::string::string"),
+    ("array_literal", "core::literal::array_literal"),
+    ("string_literal", "core::literal::string_literal"),
 ];
 const CORE_NEVER_EXPORTS: &[&str] = &["never"];
 const CORE_MARKER_EXPORTS: &[&str] = &["movable", "copyable", "droppable"];
@@ -513,6 +517,7 @@ const CORE_SORT_EXPORTS: &[&str] = &[
     "parameters",
 ];
 const CORE_STRING_EXPORTS: &[&str] = &["string"];
+const CORE_LITERAL_EXPORTS: &[&str] = &["array_literal", "string_literal"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "mut", "shared", "borrow"];
@@ -1257,6 +1262,7 @@ fn install_core_namespace(
             "async",
             "unsafe",
             "sorts",
+            "literal",
             "string",
             "foreign",
             "control",
@@ -1481,6 +1487,17 @@ fn install_core_namespace(
                 "string",
                 name,
                 &format!("core::string::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_LITERAL_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "literal",
+                name,
+                &format!("core::literal::{name}"),
                 "<core>",
             );
         }
@@ -5691,6 +5708,7 @@ let main(): i32 = { option {} }
             .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
             .chain(CORE_SORT_EXPORTS.iter().map(|name| ("sorts", *name)))
             .chain(CORE_STRING_EXPORTS.iter().map(|name| ("string", *name)))
+            .chain(CORE_LITERAL_EXPORTS.iter().map(|name| ("literal", *name)))
             .chain(CORE_FOREIGN_EXPORTS.iter().map(|name| ("foreign", *name)))
             .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(

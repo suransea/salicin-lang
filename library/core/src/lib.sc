@@ -34,3 +34,5 @@ pub let ptr = core.memory.ptr
 pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of
 pub let string = core.string.string
+pub let array_literal = core.literal.array_literal
+pub let string_literal = core.literal.string_literal

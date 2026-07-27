@@ -11176,6 +11176,7 @@ let run(left: borrow(i32), right: borrow(mut)(i32))(move action: (): i32 with(as
     left + right
   }
 }
+
 let main(): i32 = {
   let left = 10
   let mut right = 20
@@ -11189,4 +11190,69 @@ let main(): i32 = {
 "#,
     )
     .expect("borrowed arguments before a direct action must retain their source places");
+}
+
+#[test]
+fn array_literals_dispatch_through_user_trait_implementations() {
+    compile_text(
+        r#"
+let total = struct { value: i32 }
+
+extend(total, array_literal(i32)) {
+  let output = total
+
+  let from_array_literal(comptime length: usize)
+    (move values: array(i32)(length)): output = {
+    total { value: 42 }
+  }
+}
+
+let main(): i32 = {
+  let value: total = [10, 20, 12]
+  value.value
+}
+"#,
+    )
+    .expect("array literals should call a user-defined source-backed constructor");
+}
+
+#[test]
+fn string_literals_dispatch_to_byte_arrays_and_user_types() {
+    compile_text(
+        r#"
+let tag = struct { first: u8 }
+
+extend(tag, string_literal) {
+  let output = tag
+
+  let from_string_literal(comptime length: usize)
+    (move utf8: array(u8)(length)): output = {
+    tag { first: 83 }
+  }
+}
+
+let byte(): u8 = {
+  let text: array(u8)(3) = "abc"
+  text[1]
+}
+
+let main(): i32 = {
+  let value: tag = "Salicin"
+  if value.first == 83 && byte() == 98 { 0 } else { 1 }
+}
+"#,
+    )
+    .expect("string literals should expose UTF-8 backing through the literal trait");
+}
+
+#[test]
+fn array_literals_unsize_to_borrowed_slices() {
+    compile_text(
+        r#"
+let first(values: borrow(slice(i32))): i32 = { values[0] }
+let slice = core.memory.slice
+let main(): i32 = { first([42, 43]) }
+"#,
+    )
+    .expect("array literal temporaries should back slice borrows");
 }

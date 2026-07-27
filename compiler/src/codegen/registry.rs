@@ -89,7 +89,8 @@ pub(super) struct SliceTraitExtension {
 
 #[derive(Clone)]
 pub(super) struct ArrayTraitExtension {
-    pub(super) element_parameter: String,
+    pub(super) element_parameter: Option<String>,
+    pub(super) required_element: Option<Ty>,
     pub(super) length_parameter: String,
     pub(super) extension: crate::ast::ExtendDef,
     pub(super) origin: ItemOrigin,

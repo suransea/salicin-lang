@@ -11,6 +11,13 @@ pub let string = struct {
   capacity: u64,
 }
 
+extend(string, core.literal.string_literal) {
+  let output = string
+
+  let from_string_literal(comptime length: usize)
+    (move utf8: array(u8)(length)): output = builtin()
+}
+
 extend(string) {
   /// Returns the number of UTF-8 bytes.
   let len_bytes(self: borrow(self))(): u64 = { self.length }

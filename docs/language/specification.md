@@ -360,6 +360,32 @@ array(comptime t: type)(comptime l: usize)
 Array length is part of the type. Array indexing requires `usize`, evaluates
 its base and index once, and performs a bounds check.
 
+Array and string literals are target-typed construction protocols declared in
+`core.literal`. The compiler first forms an exact backing
+`array(element)(length)` (UTF-8 bytes for a string literal), then selects the
+implementation whose associated `output` matches the expected type:
+
+```sc fragment
+pub let array_literal(comptime element: type) = trait {
+  let output: type
+  let from_array_literal(comptime length: usize)
+    (move values: array(element)(length)): output
+}
+
+pub let string_literal = trait {
+  let output: type
+  let from_string_literal(comptime length: usize)
+    (move utf8: array(u8)(length)): output
+}
+```
+
+Without an expected type, array literals default to their fixed-size backing
+array and string literals default to `string`. Core provides implementations
+for fixed arrays and slices; a slice result is always used through
+`borrow(slice(T))`, because `slice(T)` is dynamically sized. User-defined
+nominal types may implement either trait. Implementations receive the exact
+literal length as a compile-time argument.
+
 ## 5. Functions and Application
 
 A function declaration may contain multiple compile-time and runtime parameter groups:

@@ -754,11 +754,17 @@ impl Analyzer {
             unreachable!("reference argument lowering requires a reference parameter");
         };
         let value = self.lower_expr(argument, Some(pointee), context);
-        self.require_same_type(
-            &value.ty,
-            pointee,
-            format!("argument for parameter `{}`", parameter.name),
+        let array_unsizes_to_slice = matches!(
+            (&value.ty, pointee.as_ref()),
+            (Ty::Array(actual, _), Ty::Slice(expected)) if actual == expected
         );
+        if !array_unsizes_to_slice {
+            self.require_same_type(
+                &value.ty,
+                pointee,
+                format!("argument for parameter `{}`", parameter.name),
+            );
+        }
         let id = context.fresh_local();
         let ty = value.ty.clone();
         temporary_bindings.push(HirBinding {

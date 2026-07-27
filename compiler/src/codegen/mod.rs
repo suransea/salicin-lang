@@ -3625,7 +3625,12 @@ impl Analyzer {
                 .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
             let primitive_intrinsic = function.builtin
                 && ((origin.package == PackageId::CORE.0 && primitive_scalar_type(&target))
-                    || (function_origin.package == PackageId::CORE.0 && method_name == "index"));
+                    || (function_origin.package == PackageId::CORE.0
+                        && (method_name == "index"
+                            || matches!(
+                                key.trait_ref.name.as_str(),
+                                "core::literal::array_literal" | "core::literal::string_literal"
+                            ))));
             if function.body.is_none() && !primitive_intrinsic {
                 self.error(format!(
                     "trait implementation method `{}.{method_name}` requires a body",
@@ -4975,7 +4980,7 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    if function.body.is_none() {
+                    if function.body.is_none() && !function.builtin {
                         self.error(format!(
                             "trait implementation method `{trait_name}.{}` requires a body",
                             function.name
@@ -6017,24 +6022,39 @@ impl Analyzer {
             self.error("trait extension for `array` must be declared in core");
             return;
         }
-        let Type::Named(element_parameter, element_arguments) = element else {
-            self.error("generic `array` trait target element must be a type parameter");
-            return;
-        };
         let crate::ast::USizeConst::Parameter(length_parameter) = length else {
             self.error("generic `array` trait target length must be a usize parameter");
             return;
         };
-        if !element_arguments.is_empty()
-            || declared != HashSet::from([element_parameter.clone(), length_parameter.clone()])
-            || !parameters.iter().any(|parameter| {
-                parameter.name == element_parameter && parameter.kind == Sort::Type
-            })
+        let (element_parameter, required_element, expected_declared) = match element {
+            Type::Named(element_parameter, element_arguments)
+                if element_arguments.is_empty()
+                    && parameters.iter().any(|parameter| {
+                        parameter.name == element_parameter && parameter.kind == Sort::Type
+                    }) =>
+            {
+                (
+                    Some(element_parameter.clone()),
+                    None,
+                    HashSet::from([element_parameter, length_parameter.clone()]),
+                )
+            }
+            Type::U8 => (
+                None,
+                Some(Ty::U8),
+                HashSet::from([length_parameter.clone()]),
+            ),
+            _ => {
+                self.error("generic `array` trait target element must be a type parameter or `u8`");
+                return;
+            }
+        };
+        if declared != expected_declared
             || !parameters.iter().any(|parameter| {
                 parameter.name == length_parameter && parameter.kind == Sort::USize
             })
         {
-            self.error("`array(T)(L)` trait parameters must be `T: type` and `L: usize`");
+            self.error("array trait parameters must be determined by its target");
             return;
         }
         let Some(Type::Named(trait_name, trait_arguments)) = extension.trait_ref.as_ref() else {
@@ -6072,6 +6092,7 @@ impl Analyzer {
         }
         self.array_trait_extensions.push(ArrayTraitExtension {
             element_parameter,
+            required_element,
             length_parameter,
             extension,
             origin,
@@ -6093,8 +6114,17 @@ impl Analyzer {
             return;
         };
         for template in self.array_trait_extensions.clone() {
+            if template
+                .required_element
+                .as_ref()
+                .is_some_and(|required| required != element.as_ref())
+            {
+                continue;
+            }
             let mut substitutions = HashMap::new();
-            substitutions.insert(template.element_parameter, element_source.clone());
+            if let Some(parameter) = template.element_parameter {
+                substitutions.insert(parameter, element_source.clone());
+            }
             substitutions.insert(template.length_parameter, Type::CompileUSize(*length));
             let mut extension = template.extension;
             substitute_type_parameters(&mut extension.target, &substitutions);
@@ -7634,9 +7664,12 @@ impl Analyzer {
                 .cloned()
                 .map_or(TypeProbe::Defaultable(Ty::I32), TypeProbe::Known),
             Expr::Bool(_) => TypeProbe::Known(Ty::Bool),
-            Expr::String(_) => self
-                .string_ty()
-                .map_or(TypeProbe::Unsupported, TypeProbe::Known),
+            Expr::String(_) => hint
+                .filter(|hint| **hint != Ty::Error)
+                .cloned()
+                .map(TypeProbe::Known)
+                .or_else(|| self.string_ty().map(TypeProbe::Known))
+                .unwrap_or(TypeProbe::Unsupported),
             Expr::Unit => TypeProbe::Known(Ty::Unit),
             Expr::Tuple(fields) => {
                 let expected_fields = match hint {
@@ -7765,6 +7798,26 @@ impl Analyzer {
                         return TypeProbe::Unsupported;
                     }
                     return TypeProbe::Known(Ty::Array(element.clone(), *length));
+                }
+                if let Some(hint) = hint.filter(|hint| **hint != Ty::Error) {
+                    if let Some(element) =
+                        self.literal_protocol_element("core::literal::array_literal", hint)
+                    {
+                        if elements.iter().all(|item| {
+                            matches!(
+                                self.probe_expr_ty(item, Some(&element), context),
+                                TypeProbe::Known(ref ty) | TypeProbe::KnownSource(ref ty, _)
+                                    if ty == &element
+                            ) || matches!(
+                                self.probe_expr_ty(item, Some(&element), context),
+                                TypeProbe::Defaultable(ref ty)
+                                    if ty.is_integer() && element.is_integer()
+                            )
+                        }) {
+                            return TypeProbe::Known(hint.clone());
+                        }
+                        return TypeProbe::Unsupported;
+                    }
                 }
                 let Some(first) = elements.first() else {
                     return TypeProbe::Unsupported;
@@ -8666,23 +8719,59 @@ impl Analyzer {
                 kind: HirExprKind::Bool(*value),
             },
             Expr::String(value) => {
-                let Some(ty) = self.string_ty() else {
+                let Some(default_ty) = self.string_ty() else {
                     self.error("the core `string` type is unavailable");
                     return error_expr();
                 };
-                if let Some(expected) =
-                    expected.filter(|expected| **expected != ty && **expected != Ty::Error)
-                {
-                    self.error(format!(
-                        "string literal cannot be used where `{}` is expected",
-                        self.diagnostic_type_name(expected)
-                    ));
+                let ty = expected
+                    .filter(|expected| **expected != Ty::Error)
+                    .cloned()
+                    .unwrap_or_else(|| default_ty.clone());
+                if ty == default_ty {
+                    let backing = Ty::Array(Box::new(Ty::U8), value.len() as u64);
+                    self.require_literal_protocol_impl(
+                        "core::literal::string_literal",
+                        "from_string_literal",
+                        &backing,
+                        &ty,
+                    );
+                    self.string_literals.insert(value.clone());
+                    return HirExpr {
+                        ty,
+                        kind: HirExprKind::String(value.clone()),
+                    };
                 }
-                self.string_literals.insert(value.clone());
-                HirExpr {
-                    ty,
-                    kind: HirExprKind::String(value.clone()),
+                let bytes = value
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| HirExpr {
+                        ty: Ty::U8,
+                        kind: HirExprKind::Integer(i128::from(*byte)),
+                    })
+                    .collect::<Vec<_>>();
+                let backing_ty = Ty::Array(Box::new(Ty::U8), bytes.len() as u64);
+                self.array_types.insert(backing_ty.clone());
+                self.ensure_array_trait_extensions(&backing_ty);
+                let backing = HirExpr {
+                    ty: backing_ty,
+                    kind: HirExprKind::Array(bytes),
+                };
+                if ty == backing.ty {
+                    self.require_literal_protocol_impl(
+                        "core::literal::string_literal",
+                        "from_string_literal",
+                        &backing.ty,
+                        &backing.ty,
+                    );
+                    return backing;
                 }
+                self.lower_literal_protocol_call(
+                    "core::literal::string_literal",
+                    "from_string_literal",
+                    backing,
+                    &ty,
+                    context,
+                )
             }
             Expr::Unit => HirExpr {
                 ty: Ty::Unit,
@@ -9737,8 +9826,13 @@ impl Analyzer {
             context.flow.reachable = false;
         }
         if let Some(expected) = expected {
-            if context.reference_value_depth == 0
-                || !reference_value_types_compatible(&lowered.ty, expected)
+            let array_unsizes_to_slice = matches!(
+                (&lowered.ty, expected),
+                (Ty::Array(actual, _), Ty::Slice(target)) if actual == target
+            );
+            if !array_unsizes_to_slice
+                && (context.reference_value_depth == 0
+                    || !reference_value_types_compatible(&lowered.ty, expected))
             {
                 self.require_same_type(&lowered.ty, expected, "expression");
             }

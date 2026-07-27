@@ -36,7 +36,9 @@ The implementation lives under `compiler/src`:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.
   - `access.rs` owns visibility boundary checks, effective member access, and public API leak
     validation over lowered types.
-  - `arrays.rs` lowers fixed-size array literals and static/dynamic array indexing.
+  - `arrays.rs` lowers fixed-size literal backing storage, dispatches array and
+    string literal construction through the source-backed core traits, performs
+    array-to-slice unsizing, and lowers static/dynamic array indexing.
   - `assignment.rs` lowers compound assignments through user-defined operator traits or builtin
     integer assignment paths.
   - `calls.rs` lowers call dispatch, internal callable adapters, named overloads, and labeled or
