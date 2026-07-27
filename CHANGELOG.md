@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.212.0 - 2026-07-27
+
 - Reworked the embedded library dependency architecture as
   `core ← alloc ← std`. The freestanding `core` no longer owns optional
   algebraic or higher-kinded functional abstractions; `std.algebra` and
