@@ -96,8 +96,6 @@ allocator or host symbol.
 | `core.unsafe` | `unsafety` and its handler boundary |
 | `core.async` | the accepted cold-future surface |
 | `core.foreign` | `abi` and the `foreign` initializer contract |
-| `core.algebra` | algebraic protocols |
-| `core.functional` | higher-kinded functional protocols |
 
 `core.lib` is a small root facade, not a second home for every declaration.
 Definition modules own canonical identities. Compatibility aliases are not
@@ -121,32 +119,54 @@ failure without weakening existing ownership guarantees.
 
 ### `std`
 
-`std` is an edition-matched source bundle above `core` and `alloc`. It
-re-exports lower-layer declarations through focused modules and adds host
-facilities.
+`std` is an edition-matched source bundle above `core` and `alloc`. It owns
+policy-bearing and host-facing facilities without mirroring lower layers.
 
 | Public module | Responsibility |
 | --- | --- |
-| `std.option`, `std.result` | fundamental value helpers |
-| `std.cmp`, `std.ops`, `std.flow`, `std.iter` | protocols and common algorithms |
-| `std.convert` | numeric and text conversions |
-| `std.text` | borrowed text and Unicode scalars |
-| `std.string` | owning strings and string formatting |
-| `std.array`, `std.slice`, `std.vec`, `std.boxed` | collection and owner surfaces |
-| `std.fmt` | parsing, formatting, writers, and builders |
-| `std.error`, `std.effect`, `std.unsafe`, `std.async` | explicit effect surfaces |
+| `std.async` | concrete executor policies and future host runtimes |
+| `std.algebra` | opt-in algebraic protocols |
+| `std.functional` | opt-in higher-kinded functional protocols and standard implementations |
 | `std.io` | byte readers/writers, standard streams, and `io_error` |
 | `std.process` | process arguments and exit information |
 | `std.fs` | paths, file options, owned files, and bounded convenience operations |
 | `std.test` | failure values and assertion helpers |
 
-The compiler embeds the edition-matched `library/std` sources and derives the
-mounted facade from their public aliases. The initial bundle is deliberately
-alias-only: each target must resolve to an already validated `core` or `alloc`
-identity, so the alias gains no compiler or runtime authority of its own.
-Definitions, private aliases, foreign targets, duplicate exports, and
-unsupported native targets are rejected. A user module or dependency cannot
-claim `core`, `alloc`, or `std`.
+The compiler embeds the edition-matched `library/std` sources. Public
+definitions receive ordinary `std` identities and no compiler authority;
+private lower-layer aliases may support implementation without expanding the
+mounted surface. Mirror re-exports are forbidden by policy. Duplicate
+exports, dependencies outside the three standard layers, and unsupported
+native targets are rejected. A user module or dependency cannot claim
+`core`, `alloc`, or `std`.
+
+The dependency order is `core ← alloc ← std`, where each arrow points to a
+dependency. `core` is freestanding and dependency-free; `alloc` adds only
+replaceable heap authority; `std` may use both and owns policy or host-facing
+implementations. A declaration belongs in the lowest layer that can implement
+it without importing a higher layer, but genericity alone does not make an
+abstraction fundamental. Consequently `option`, `result`, iteration, operator
+protocols, cold futures, and the executor protocol remain in `core`;
+`semigroup`, `monoid`, `functor`, `applicative`, `monad`, their standard
+implementations, and the concrete `spin` executor belong to `std`.
+Text, conversion, and formatting do not acquire parallel `std` modules:
+allocation-free protocols and operations use `core.text`, `core.convert`, and
+`core.fmt`, while owning strings and allocating format builders use
+`alloc.string` and `alloc.fmt`.
+
+This boundary follows current freestanding-library practice rather than file
+size or conceptual generality. Rust 1.97 describes `core` as dependency-free,
+without heap allocation, concurrency, I/O, system libraries, or libc, while
+its `alloc` layer owns heap-backed smart pointers and collections. Embedded
+Swift likewise preserves full-language semantics while excluding library
+facilities whose runtime dependencies are unavailable. Koka 3.2 keeps the
+effect calculus small enough that async and other control abstractions can be
+ordinary libraries. Salicin therefore classifies declarations by required
+authority and semantic necessity, not by whether they happen to be generic.
+[Rust `core`](https://doc.rust-lang.org/core/),
+[Rust `alloc`](https://doc.rust-lang.org/stable/alloc/),
+[Embedded Swift subset](https://docs.swift.org/embedded/documentation/embedded/languagesubset/),
+[Koka 3.2](https://github.com/koka-lang/koka).
 
 ## Prelude
 
@@ -281,9 +301,8 @@ requires its allocator ABI.
 
 ## Minimum API matrix
 
-Names below are the minimum acceptance surface. Inherent operations keep
-canonical identity in their definition module even when reached through a
-`std` facade.
+Names below are the minimum acceptance surface. Every operation keeps its
+canonical identity in the layer and definition module that owns it.
 
 | Area | Required surface |
 | --- | --- |

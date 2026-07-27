@@ -1,9 +1,8 @@
-//! Edition-pinned Salicin `std` facade sources.
+//! Edition-pinned Salicin `std` sources.
 //!
-//! Unlike `core`, this bundle owns no language items. Every declaration in
-//! the initial bundle is a public alias to an already validated `core` or
-//! `alloc` identity. Host-authority declarations will require explicit
-//! validation before they can be added here.
+//! Unlike `core`, this bundle owns no language items. It contains only
+//! higher-level, host-facing, or policy-bearing standard abstractions; lower
+//! layers remain available through their canonical `core` and `alloc` paths.
 
 use std::error::Error;
 use std::fmt;
@@ -15,67 +14,15 @@ use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
 const EDITION_2026_LIB: &str = include_str!("../../library/std/src/lib.sc");
-const EDITION_2026_PRELUDE: &str = include_str!("../../library/std/src/prelude.sc");
-const EDITION_2026_NEVER: &str = include_str!("../../library/std/src/never.sc");
-const EDITION_2026_MARKER: &str = include_str!("../../library/std/src/marker.sc");
-const EDITION_2026_OPTION: &str = include_str!("../../library/std/src/option.sc");
-const EDITION_2026_RESULT: &str = include_str!("../../library/std/src/result.sc");
-const EDITION_2026_ERROR: &str = include_str!("../../library/std/src/error.sc");
-const EDITION_2026_OPS: &str = include_str!("../../library/std/src/ops.sc");
-const EDITION_2026_OPS_ARITH: &str = include_str!("../../library/std/src/ops/arith.sc");
-const EDITION_2026_OPS_BIT: &str = include_str!("../../library/std/src/ops/bit.sc");
-const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/std/src/ops/assign.sc");
-const EDITION_2026_OPS_INDEX: &str = include_str!("../../library/std/src/ops/index.sc");
-const EDITION_2026_CMP: &str = include_str!("../../library/std/src/cmp.sc");
-const EDITION_2026_FLOW: &str = include_str!("../../library/std/src/flow.sc");
-const EDITION_2026_EFFECT: &str = include_str!("../../library/std/src/effect.sc");
 const EDITION_2026_ASYNC: &str = include_str!("../../library/std/src/async.sc");
-const EDITION_2026_UNSAFE: &str = include_str!("../../library/std/src/unsafe.sc");
-const EDITION_2026_SORTS: &str = include_str!("../../library/std/src/sorts.sc");
-const EDITION_2026_FOREIGN: &str = include_str!("../../library/std/src/foreign.sc");
-const EDITION_2026_PASSING: &str = include_str!("../../library/std/src/passing.sc");
-const EDITION_2026_BORROW: &str = include_str!("../../library/std/src/borrow.sc");
-const EDITION_2026_CONTROL: &str = include_str!("../../library/std/src/control.sc");
-const EDITION_2026_ITER: &str = include_str!("../../library/std/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/std/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/std/src/functional.sc");
-const EDITION_2026_BOXED: &str = include_str!("../../library/std/src/boxed.sc");
-const EDITION_2026_VEC: &str = include_str!("../../library/std/src/vec.sc");
-const EDITION_2026_STRING: &str = include_str!("../../library/std/src/string.sc");
-const EDITION_2026_ARRAY: &str = include_str!("../../library/std/src/array.sc");
-const EDITION_2026_SLICE: &str = include_str!("../../library/std/src/slice.sc");
 
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
-    ("prelude", EDITION_2026_PRELUDE),
-    ("never", EDITION_2026_NEVER),
-    ("marker", EDITION_2026_MARKER),
-    ("option", EDITION_2026_OPTION),
-    ("result", EDITION_2026_RESULT),
-    ("error", EDITION_2026_ERROR),
-    ("ops", EDITION_2026_OPS),
-    ("ops/arith", EDITION_2026_OPS_ARITH),
-    ("ops/bit", EDITION_2026_OPS_BIT),
-    ("ops/assign", EDITION_2026_OPS_ASSIGN),
-    ("ops/index", EDITION_2026_OPS_INDEX),
-    ("cmp", EDITION_2026_CMP),
-    ("flow", EDITION_2026_FLOW),
-    ("effect", EDITION_2026_EFFECT),
     ("async", EDITION_2026_ASYNC),
-    ("unsafe", EDITION_2026_UNSAFE),
-    ("sorts", EDITION_2026_SORTS),
-    ("foreign", EDITION_2026_FOREIGN),
-    ("passing", EDITION_2026_PASSING),
-    ("borrow", EDITION_2026_BORROW),
-    ("control", EDITION_2026_CONTROL),
-    ("iter", EDITION_2026_ITER),
     ("algebra", EDITION_2026_ALGEBRA),
     ("functional", EDITION_2026_FUNCTIONAL),
-    ("boxed", EDITION_2026_BOXED),
-    ("vec", EDITION_2026_VEC),
-    ("string", EDITION_2026_STRING),
-    ("array", EDITION_2026_ARRAY),
-    ("slice", EDITION_2026_SLICE),
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<StdBundle, StdBundleError>> = OnceLock::new();
@@ -189,23 +136,33 @@ impl StdBundle {
                     )],
                 )
             })?;
-            if !parsed.items.is_empty() {
-                return Err(StdBundleError::new(
-                    edition,
-                    vec![format!(
-                        "embedded std module `{module}` may contain only public aliases"
-                    )],
-                ));
+            let naming = naming_diagnostics(&parsed, "std");
+            if !naming.is_empty() {
+                return Err(StdBundleError::new(edition, naming));
+            }
+            for (item, visibility) in parsed.items.iter().zip(&parsed.item_visibilities) {
+                if *visibility != Visibility::Public {
+                    continue;
+                }
+                let Some(name) = standard_item_name(item) else {
+                    continue;
+                };
+                let mut target = vec!["std".to_owned()];
+                if module != "lib" {
+                    target.extend(module.split('/').map(str::to_owned));
+                }
+                target.push(name.to_owned());
+                exports.push(StdExport {
+                    module: if module == "lib" {
+                        String::new()
+                    } else {
+                        module.replace('/', ".")
+                    },
+                    name: name.to_owned(),
+                    target,
+                });
             }
             for import in parsed.uses {
-                if import.visibility != Visibility::Public {
-                    return Err(StdBundleError::new(
-                        edition,
-                        vec![format!(
-                            "embedded std module `{module}` alias must be public"
-                        )],
-                    ));
-                }
                 let Some(name) = import.alias else {
                     return Err(StdBundleError::new(
                         edition,
@@ -225,25 +182,26 @@ impl StdBundle {
                 }
                 if !matches!(
                     import.path.first().map(String::as_str),
-                    Some("core" | "alloc")
+                    Some("core" | "alloc" | "std")
                 ) {
                     return Err(StdBundleError::new(
                         edition,
                         vec![format!(
-                            "embedded std alias `{}` may target only `core` or `alloc`",
+                            "embedded std alias `{}` may target only `core`, `alloc`, or `std`",
                             display_export(module, &name)
                         )],
                     ));
                 }
-                exports.push(StdExport {
-                    module: if module == "lib" {
-                        String::new()
-                    } else {
-                        module.replace('/', ".")
-                    },
-                    name,
-                    target: import.path,
-                });
+                if import.visibility != Visibility::Public {
+                    continue;
+                }
+                return Err(StdBundleError::new(
+                    edition,
+                    vec![format!(
+                        "embedded std alias `{}` is a public mirror; reference its canonical lower-layer path directly",
+                        display_export(module, &name)
+                    )],
+                ));
             }
         }
         exports
@@ -293,6 +251,21 @@ impl StdBundle {
 
     pub(crate) fn exports(&self) -> &[StdExport] {
         &self.exports
+    }
+}
+
+fn standard_item_name(item: &Item) -> Option<&str> {
+    match item {
+        Item::Function(definition) => Some(&definition.name),
+        Item::Global(definition) => Some(&definition.name),
+        Item::Struct(definition) => Some(&definition.name),
+        Item::Enum(definition) => Some(&definition.name),
+        Item::Effect(definition) => Some(&definition.name),
+        Item::Sort(definition) => Some(&definition.name),
+        Item::TypeForm(definition) => Some(&definition.name),
+        Item::TypeAlias(definition) => Some(&definition.name),
+        Item::Trait(definition) => Some(&definition.name),
+        Item::Extend(_) => None,
     }
 }
 
@@ -366,30 +339,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn edition_2026_std_bundle_is_alias_only_and_resolves() {
+    fn edition_2026_std_bundle_owns_policy_without_mirrors() {
         let bundle = StdBundle::for_edition(Edition::Edition2026).unwrap();
-        assert!(bundle.program().items.is_empty());
-        assert!(bundle.exports().len() > 100);
+        assert!(!bundle.program().items.is_empty());
+        assert_eq!(bundle.exports().len(), 6);
         assert!(bundle.exports().iter().any(|export| {
-            export.module == "prelude"
-                && export.name == "movable"
-                && export.target == ["core", "marker", "movable"]
+            export.module == "algebra"
+                && export.name == "semigroup"
+                && export.target == ["std", "algebra", "semigroup"]
         }));
         assert!(bundle.exports().iter().any(|export| {
-            export.module == "array"
-                && export.name == "array"
-                && export.target == ["core", "memory", "array"]
+            export.module == "async"
+                && export.name == "spin"
+                && export.target == ["std", "async", "spin"]
         }));
+        assert!(bundle
+            .exports()
+            .iter()
+            .all(|export| export.target.first().is_some_and(|root| root == "std")));
     }
 
     #[test]
-    fn std_bundle_rejects_definitions_private_aliases_and_foreign_targets() {
+    fn std_bundle_accepts_definitions_and_private_implementation_aliases() {
+        StdBundle::from_modules(
+            Edition::Edition2026,
+            &[(
+                "owned",
+                "let option = core.option.option\npub let service = trait {}\n",
+            )],
+        )
+        .unwrap();
         for (source, expected) in [
-            ("pub let forged = effect {}", "only public aliases"),
-            ("let option = core.option.option", "alias must be public"),
+            ("pub let option = core.option.option", "is a public mirror"),
             (
                 "pub let forged = dependency.value",
-                "may target only `core` or `alloc`",
+                "may target only `core`, `alloc`, or `std`",
             ),
         ] {
             let error =

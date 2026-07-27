@@ -1,4 +1,4 @@
-let vec = std.vec.vec
+let vec = alloc.vec.vec
 
 /// Collection of owned products.
 pub(package) let inventory = struct {

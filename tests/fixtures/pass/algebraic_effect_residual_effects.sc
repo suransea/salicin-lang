@@ -1,7 +1,7 @@
-let result = std.result
+let result = core.result
 
-let throwing = std.error.throwing
-let unsafety = std.unsafe.unsafety
+let throwing = core.error.throwing
+let unsafety = core.unsafe.unsafety
 
 let supply = effect {
   let seed(): i32

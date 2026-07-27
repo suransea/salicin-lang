@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let option(comptime t: type) = enum {
   some(t),

@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let number = struct { value: i32 }
 

@@ -1,5 +1,5 @@
-let neg = std.ops.neg
-let not = std.ops.not
+let neg = core.ops.neg
+let not = core.ops.not
 
 let number = struct { value: i32 }
 let flag = struct { value: bool }

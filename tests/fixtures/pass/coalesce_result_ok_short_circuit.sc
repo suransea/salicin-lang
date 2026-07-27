@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let fallback(count: borrow(mut)(i32)): i32 = {
   count = count + 1

@@ -1086,7 +1086,13 @@ impl Analyzer {
                 body: Expr::Throw(Box::new(Expr::Name(ERROR_BINDING.to_owned()))),
             },
         ];
-        self.lower_match_with_scrutinee(operand, &arms, expected.or(Some(&info.payload)), context)
+        self.lower_match_with_scrutinee(
+            operand,
+            &arms,
+            expected.or(Some(&info.payload)),
+            context,
+            false,
+        )
     }
 
     pub(super) fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {

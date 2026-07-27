@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let choose(value: option(i32)): i32 = {
   match value

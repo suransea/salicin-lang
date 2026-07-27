@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Common values
 
-- [ ] **VALUE-1 — `option` and `result` ergonomics.** Add common state
-  inspection, borrowed views, transformations, error mapping, fallback, and
-  extraction helpers while keeping payload evaluation single-shot and
-  forwarding callback effects.
-
 - [ ] **VALUE-2 — Numeric utilities and conversions.** Add min/max/clamp,
   sign and magnitude helpers where defined, and explicit checked or fallible
   conversions between integer widths. Preserve the language's overflow and

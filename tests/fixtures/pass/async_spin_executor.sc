@@ -1,6 +1,6 @@
-let executor = std.async.executor
-let future = std.async.future
-let poll = std.async.poll
+let executor = core.async.executor
+let future = core.async.future
+let poll = core.async.poll
 let spin = std.async.spin
 
 let step = struct {

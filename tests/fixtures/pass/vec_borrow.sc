@@ -1,4 +1,4 @@
-let vec = std.vec.vec
+let vec = alloc.vec.vec
 
 let resource = struct { value: i32 }
 

@@ -6,6 +6,84 @@ pub let option(comptime t: type) = enum {
   none,
 }
 
+/// Common inspection, borrowing, transformation, fallback, and conversion
+/// operations for optional values.
+extend(option(t)) {
+  /// Returns whether this option contains a value.
+  let is_some(self: borrow(self))(): bool = {
+    match self
+      { some(_) -> true }
+      { none -> false }
+  }
+
+  /// Returns whether this option is empty.
+  let is_none(self: borrow(self))(): bool = {
+    match self
+      { some(_) -> false }
+      { none -> true }
+  }
+
+  /// Projects this borrowed option into an option of a payload borrow.
+  let as_ref(comptime a: access, comptime r: region)
+    (self: borrow(a)(r)(self))(): option(borrow(a)(r)(t)) = {
+    match self
+      { some(value) -> option.some(borrow(a)(value)) }
+      { none -> option.none }
+  }
+
+  /// Transforms `some` once and preserves `none`.
+  let map(comptime e: effects, comptime u: type)
+    (move self)
+    (move transform: (t): u with(e)): option(u) with(e) = {
+    match self
+      { some(value) -> option.some(transform(value)) }
+      { none -> option.none }
+  }
+
+  /// Runs `next` once for `some` and preserves `none`.
+  let and_then(comptime e: effects, comptime u: type)
+    (move self)
+    (move next: (t): option(u) with(e)): option(u) with(e) = {
+    match self
+      { some(value) -> next(value) }
+      { none -> option.none }
+  }
+
+  /// Extracts `some` or returns the eagerly evaluated fallback.
+  let unwrap_or(move self)(move fallback: t): t = {
+    match self
+      { some(value) -> value }
+      { none -> fallback }
+  }
+
+  /// Extracts `some` or evaluates `fallback` exactly once for `none`.
+  let unwrap_or_else(comptime e: effects)
+    (move self)
+    (move fallback: (): t with(e)): t with(e) = {
+    match self
+      { some(value) -> value }
+      { none -> fallback() }
+  }
+
+  /// Converts `some` to `ok` and `none` to the eagerly evaluated error.
+  let ok_or(comptime error: type)
+    (move self)
+    (move error: error): core.result(error)(t) = {
+    match self
+      { some(value) -> core.result.ok(value) }
+      { none -> core.result.err(error) }
+  }
+
+  /// Converts `some` to `ok` and lazily constructs the error for `none`.
+  let ok_or_else(comptime e: effects, comptime error: type)
+    (move self)
+    (move error: (): error with(e)): core.result(error)(t) with(e) = {
+    match self
+      { some(value) -> core.result.ok(value) }
+      { none -> core.result.err(error()) }
+  }
+}
+
 /// Provides `?.` chaining for `Option`.
 extend(option(t), core.flow.chain) {
   /// The payload type produced by a successful option.
@@ -46,49 +124,5 @@ extend(option(t), core.flow.unwrap) {
     match self
       { some(value) -> value }
       { none -> unsafe { raw_trap() } }
-  }
-}
-
-/// Implements `Functor` for `Option`.
-extend(option, core.functional.functor) {
-  /// Maps `Some` through `transform` and preserves `None`.
-  let map(comptime e: effects, comptime a: type, comptime b: type)
-    (self: option(a))
-    (transform: (a): b with(e)): option(b) with(e) = {
-    match self
-      { some(value) -> option.some(transform(value)) }
-      { none -> option.none }
-  }
-}
-
-/// Implements `Applicative` for `Option`.
-extend(option, core.functional.applicative) {
-  /// Wraps `value` in `Some`.
-  let pure(comptime a: type)
-    (value: a): option(a) = {
-    option.some(value)
-  }
-
-  /// Applies a `Some` function to a `Some` value and otherwise returns `None`.
-  let apply(comptime e: effects, comptime a: type, comptime b: type)
-    (self: option((a): b with(e)))
-    (value: option(a)): option(b) with(e) = {
-    match self
-      { some(transform) -> match value
-        { some(value) -> option.some(transform(value)) }
-        { none -> option.none } }
-      { none -> option.none }
-  }
-}
-
-/// Implements `Monad` for `Option`.
-extend(option, core.functional.monad) {
-  /// Runs `next` for `Some` and propagates `None`.
-  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
-    (self: option(a))
-    (next: (a): option(b) with(e)): option(b) with(e) = {
-    match self
-      { some(value) -> next(value) }
-      { none -> option.none }
   }
 }

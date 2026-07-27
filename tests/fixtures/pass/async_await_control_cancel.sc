@@ -1,6 +1,6 @@
-let poll = std.async.poll
-let future = std.async.future
-let unsafety = std.unsafe.unsafety
+let poll = core.async.poll
+let future = core.async.future
+let unsafety = core.unsafe.unsafety
 
 let first = struct {
   counter: ptr(mut)(i32)

@@ -1,4 +1,4 @@
-let unsafety = std.unsafe.unsafety
+let unsafety = core.unsafe.unsafety
 
 let step = effect {
   let delta(): i32

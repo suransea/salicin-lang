@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let next(): option(i32) = { none }
 

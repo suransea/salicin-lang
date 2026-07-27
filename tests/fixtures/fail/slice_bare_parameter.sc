@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let consume(value: slice(i32)): () = {}
 

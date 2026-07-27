@@ -1,9 +1,9 @@
-let option = std.option
-let result = std.result
-let throwing = std.error.throwing
-let iterator = std.iter.iterator
-let into_iterator = std.iter.into_iterator
-let owned_item = std.iter.owned_item
+let option = core.option
+let result = core.result
+let throwing = core.error.throwing
+let iterator = core.iter.iterator
+let into_iterator = core.iter.into_iterator
+let owned_item = core.iter.owned_item
 
 let counter = struct { current: i32, end: i32 }
 

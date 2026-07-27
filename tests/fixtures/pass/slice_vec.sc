@@ -1,4 +1,4 @@
-let vec = std.vec.vec
+let vec = alloc.vec.vec
 
 let read(value: borrow(i32)): i32 = { value }
 

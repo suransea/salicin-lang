@@ -1,4 +1,4 @@
-let into_iterator = std.iter.into_iterator
+let into_iterator = core.iter.into_iterator
 
 let iterable = struct {}
 let iter = struct {}

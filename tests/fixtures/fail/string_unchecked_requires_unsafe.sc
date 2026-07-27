@@ -1,5 +1,5 @@
-let string = std.string.string
-let vec = std.vec.vec
+let string = alloc.string.string
+let vec = alloc.vec.vec
 
 let main(): i32 = {
   let bytes = vec(u8).new()

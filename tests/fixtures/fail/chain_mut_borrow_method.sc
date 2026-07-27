@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let counter = struct { value: i32 }
 

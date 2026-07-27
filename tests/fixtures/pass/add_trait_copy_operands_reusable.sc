@@ -1,5 +1,5 @@
-let copyable = std.marker.copyable
-let add = std.ops.add
+let copyable = core.marker.copyable
+let add = core.ops.add
 
 let number = struct { value: i32 }
 

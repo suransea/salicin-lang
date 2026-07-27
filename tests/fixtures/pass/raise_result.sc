@@ -1,5 +1,5 @@
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let extract(move result: result(bool)(i32)): i32 with(throwing(bool)) = {
   result!

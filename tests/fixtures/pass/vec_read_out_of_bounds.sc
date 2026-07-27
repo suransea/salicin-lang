@@ -1,4 +1,4 @@
-let vec = std.vec.vec
+let vec = alloc.vec.vec
 
 let main(): i32 = {
   let values: vec(i32) = vec(i32).new()

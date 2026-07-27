@@ -878,7 +878,7 @@ fn registers_source_backed_core_lang_items() {
     let unsafe_name = analyzer.lang_item_name(LangItemKind::Unsafe);
     assert!(
         analyzer.function_templates[unsafe_name].body.is_some(),
-        "std.control.unsafe must remain source-backed"
+        "core.control.unsafe must remain source-backed"
     );
     assert!(analyzer.nominal_instances.len() >= 2);
     assert!(analyzer.nominal_instance_names.len() >= 2);
@@ -978,8 +978,8 @@ fn registers_source_backed_core_lang_items() {
 fn constructs_infers_and_matches_core_option_and_result() {
     let ir = compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let unwrap_option(move value: option(i32)): i32 = { value match {
   some(item) => item,
@@ -1036,8 +1036,8 @@ let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
 fn coalesce_lowers_option_and_result_through_lazy_match_control_flow() {
     let ir = compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let make(count: borrow(mut)(i32)): option(i32) = {
   count = count + 1
@@ -1073,8 +1073,8 @@ let main(): i32 = {
 fn throw_returns_the_enclosing_failure_error_variant() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let answer(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) }
@@ -1095,8 +1095,8 @@ let main(): i32 = {
 fn failure_calls_propagate_automatically_and_try_handles_them() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let read(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) }
@@ -1119,8 +1119,8 @@ err(_) => 0
 
     let unhandled = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let read(): i32 with(throwing(bool)) = { throw(true) }
 let main(): i32 = { read() }
@@ -1136,8 +1136,8 @@ let main(): i32 = { read() }
 fn try_infers_a_unique_escaping_failure_source_without_context() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let fail(flag: bool): i32 with(throwing(bool)) = { if flag { throw(true) } else { 41 } }
 let main(): i32 = {
@@ -1153,8 +1153,8 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let failure = struct { code: i32 }
 extend(failure, copyable) {}
@@ -1172,8 +1172,8 @@ let main(): i32 = {
 
     let ambiguous = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let left(): i32 with(throwing(bool)) = { throw(true) }
 let right(): i32 with(throwing(i64)) = { throw(1) }
@@ -1195,8 +1195,8 @@ let main(): i32 = {
 
     let handled = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let fail(): i32 with(throwing(bool)) = { throw(true) }
 let main(): i32 = {
@@ -1277,8 +1277,8 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let choose(fail: bool): i32 with(throwing(bool)) = { if fail { throw(true) } else { 42 } }
 let choose(value: i32): i32 = { value }
@@ -1350,8 +1350,8 @@ let main(): i32 = { counter { value: 40 }.add(2) }
 
     compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let counter = struct { value: i32 }
 extend(counter, copyable) {}
@@ -1514,8 +1514,8 @@ let main(): i32 = { 0 }
 fn effect_parameters_infer_forward_and_explicitly_select_failure_rows() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let invoke(comptime e: effects)(action: (): i32 with(e))(): i32 with(e) = { action() }
 let fail(): i32 with(throwing(bool)) = { throw(true) }
@@ -1552,7 +1552,7 @@ fn throw_requires_an_exact_active_failure_boundary() {
             "handle it with `try { ... }`",
         ),
     ] {
-        let source = format!("use std.option\nuse std.result\nuse std.error.throwing\n{source}");
+        let source = format!("use core.option\nuse core.result\nuse core.error.throwing\n{source}");
         let errors = compile_resolved_text(&source).expect_err("invalid throw(must) be rejected");
         assert!(
             errors.iter().any(|error| error.message.contains(expected)),
@@ -1565,7 +1565,7 @@ fn throw_requires_an_exact_active_failure_boundary() {
 fn coalesce_hir_keeps_the_fallback_call_in_the_residual_arm() {
     let program = resolve_text(
         r#"
-let option = std.option
+let option = core.option
 
 let fallback(): i32 = { 42 }
 let main(): i32 = { option(i32).some(20) ?? fallback() }
@@ -1720,7 +1720,7 @@ let main(): i32 = { picker {}.first(1)([42]) }
 
     compile_resolved_text(
         r#"
-let copy = std.copyable
+let copy = core.copyable
 let select = trait {
   let select(comptime value: type)(self: borrow(self))(move value: value): value
     where value: copyable
@@ -1777,7 +1777,7 @@ let main(): i32 = { unit {}.identity(i32)(42) }
 fn trait_implementation_cannot_strengthen_generic_method_predicates() {
     let errors = compile_resolved_text(
         r#"
-let copy = std.copyable
+let copy = core.copyable
 let select = trait {
   let select(comptime value: type)(self: borrow(self))(move value: value): value
 }
@@ -1994,7 +1994,7 @@ let main(): i32 = {
 fn coalesce_operator_dispatches_through_core_trait_for_user_types() {
     let program = resolve_text(
         r#"
-let coalesce = std.flow.coalesce
+let coalesce = core.flow.coalesce
 
 let choice = enum { present(i32), missing }
 
@@ -2048,7 +2048,7 @@ let main(): i32 = {
 fn generic_associated_type_constructor_rebinds_chain_result() {
     let program = resolve_text(
         r#"
-let chain = std.flow.chain
+let chain = core.flow.chain
 
 let boxed = struct { value: i32 }
 let maybe(comptime t: type) = enum { some(t), none }
@@ -2137,7 +2137,7 @@ let main(): i32 = { 0 }
 fn chain_operator_dispatches_through_core_trait_for_user_types() {
     let program = resolve_text(
         r#"
-let chain = std.flow.chain
+let chain = core.flow.chain
 
 let boxed = struct { value: i32 }
 let maybe(comptime t: type) = enum { some(t), none }
@@ -2200,7 +2200,7 @@ let main(): i32 = {
 fn generic_trait_implementation_can_rebind_chain_constructor() {
     let program = resolve_text(
         r#"
-let chain = std.flow.chain
+let chain = core.flow.chain
 
 let boxed = struct { value: i32 }
 let maybe(comptime t: type) = enum { some(t), none }
@@ -2266,8 +2266,8 @@ let main(): i32 = {
 fn coalesce_probe_participates_in_outer_inference_and_nests_right_associatively() {
     compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let identity(comptime t: type)(move value: t): t = { value }
 let boxed(comptime t: type) = struct { value: t }
@@ -2288,8 +2288,8 @@ let main(): i32 = {
 fn coalesce_infers_empty_standard_variants_from_expected_or_rhs_payloads() {
     compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let main(): i32 = {
   let inferred_option = option.none ?? 40
@@ -2309,7 +2309,7 @@ let main(): i32 = {
 #[test]
 fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
     let errors =
-        compile_resolved_text("use std.result\nlet main(): i32 = { result.ok(40) ?? 2 }\n")
+        compile_resolved_text("use core.result\nlet main(): i32 = { result.ok(40) ?? 2 }\n")
             .unwrap_err();
     assert!(errors.iter().any(|diagnostic| {
         diagnostic
@@ -2328,7 +2328,7 @@ fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
         == "operator `??` requires `option(t)` or `result(e)(t)` on the left, found `i32`"));
 
     let mismatch =
-        compile_resolved_text("use std.option\nlet main(): i32 = { option(i32).none ?? true }\n")
+        compile_resolved_text("use core.option\nlet main(): i32 = { option(i32).none ?? true }\n")
             .unwrap_err();
     assert!(mismatch
         .iter()
@@ -2336,7 +2336,7 @@ fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
 
     let moved = compile_resolved_text(
         r#"
-let result = std.result
+let result = core.result
 
 let main(): i32 = {
   let value = result(bool)(i32).ok(42)
@@ -2355,7 +2355,7 @@ let main(): i32 = {
 fn coalesce_joins_a_fallback_only_move_as_possibly_moved() {
     let errors = compile_resolved_text(
         r#"
-let option = std.option
+let option = core.option
 
 let boxed = struct { value: i32 }
 let consume(move value: boxed): i32 = { value.value }
@@ -2377,8 +2377,8 @@ let main(): i32 = {
 fn keeps_core_nominal_instances_structurally_isolated() {
     let program = resolve_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let main(): i32 = {
   let number = option.some(42)
@@ -2719,7 +2719,7 @@ fn ctfe_calls_resolved_cross_module_declarations() {
 fn ctfe_calls_reject_effects_borrows_and_foreign_bodies() {
     let effectful = compile_text(
         r#"
-let unsafe = std.unsafe.unsafe
+let unsafe = core.unsafe.unsafe
 let unsafe_length(): usize with(unsafe) = { unsafe { 1 } }
 let read(values: array(i32)(unsafe_length())): i32 = { values[0] }
 let main(): i32 = { 0 }
@@ -3030,7 +3030,7 @@ let main(): i32 = { 0 }
 
     let unsized_errors = compile_text(
         r#"
-let slice = std.slice
+let slice = core.memory.slice
 let view = struct { values: slice(i32) }
 let invalid_length(): usize = {
   let value: view = view { values: loop {} }
@@ -3050,7 +3050,7 @@ let main(): i32 = { 0 }
 
     let allocating = compile_text(
         r#"
-let box = std.boxed.box
+let box = alloc.boxed.box
 let owner = struct { value: box(usize) }
 let invalid_length(): usize = {
   let value: owner = owner { value: box.new(1) }
@@ -3075,8 +3075,8 @@ let main(): i32 = { 0 }
 fn ctfe_evaluates_enum_values_guards_and_standard_fallible_types() {
     let llvm = compile_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let point = struct { value: usize }
 let choice(comptime value: type) = enum {
@@ -3147,7 +3147,7 @@ let main(): i32 = { 0 }
 fn ctfe_rejects_enum_payloads_that_require_runtime_destruction() {
     let errors = compile_text(
         r#"
-let box = std.boxed.box
+let box = alloc.boxed.box
 let choice = enum {
   empty,
   owned(box(usize)),
@@ -3650,7 +3650,7 @@ fn public_generic_specializations_remain_consumer_owned_and_internal() {
 #[test]
 fn rejects_unsized_native_call_parameters_and_returns_before_emission() {
     let diagnostics = compile_library_text(
-        "let slice = std.slice\n\
+        "let slice = core.memory.slice\n\
          let invalid(value: slice(i32)): slice(i32) = { loop {} }\n",
     )
     .expect_err("unsized native call boundary must fail");
@@ -4145,7 +4145,7 @@ let main(): i32 = { allowed() }
 fn rejects_inferred_public_function_and_global_types_that_leak_private_nominals() {
     let errors = compile_resolved_with_origins(
         r#"
-let option = std.option
+let option = core.option
 
 let hidden = struct {}
 pub let expose() = { hidden {} }
@@ -4193,7 +4193,7 @@ let main(): i32 = { 0 }
 fn rejects_private_generic_fields_before_inference_and_through_optional_chaining() {
     let errors = compile_resolved_with_origins(
         r#"
-let option = std.option
+let option = core.option
 
 pub let cell(comptime t: type) = struct { value: t }
 pub let make(): option(cell(i32)) = { option(cell(i32)).some(cell(i32) { value: 42 }) }
@@ -5723,8 +5723,8 @@ let main(): i32 = { loop {
 fn do_transparently_forwards_failure_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
-let throwing = std.error.throwing
-let unsafe = std.unsafe.unsafety
+let throwing = core.error.throwing
+let unsafe = core.unsafe.unsafety
 
 let ui = effect
 let fail(flag: bool): i32 with(throwing(bool)) = {
@@ -5745,8 +5745,8 @@ let main(): i32 = { 0 }
 
     let errors = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let fail(): i32 with(throwing(i64)) = { throw(1) }
 let outer(): i32 with(throwing(bool)) = { do { return(fail()) } }
@@ -5843,8 +5843,8 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let supply = effect { let seed(): i32 }
 let ask = effect { let value(): i32 with(supply, throwing(bool)) }
@@ -5895,8 +5895,8 @@ let main(): i32 = { run() }
 
     compile_resolved_text(
         r#"
-let throwing = std.error.throwing
-let unsafe = std.unsafe.unsafety
+let throwing = core.error.throwing
+let unsafe = core.unsafe.unsafety
 
 let ask_unsafe = effect { let value(): i32 with(unsafe) }
 let unsafe_run(): i32 = { unsafe { ask_unsafe.handle value { (resume) -> resume(42) } action {
@@ -5918,8 +5918,8 @@ let main(): i32 = { 0 }
 
     let missing_unsafe = compile_resolved_text(
         r#"
-let result = std.result
-let unsafe = std.unsafe.unsafety
+let result = core.result
+let unsafe = core.unsafe.unsafety
 
 let ask = effect { let value(): i32 with(unsafe) }
 let run(): i32 = { ask.handle value { (resume) -> resume(42) } action { ask.value() } }
@@ -5933,8 +5933,8 @@ let main(): i32 = { run() }
 
     let missing_failure = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let ask = effect { let value(): i32 with(throwing(bool)) }
 let run(): i32 = { ask.handle value { (resume) -> resume(42) } action { ask.value() } }
@@ -6290,7 +6290,7 @@ let main(): i32 = { 0 }
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let pure(): i32 = { 42 }
 let accept_unsafe(action: (): i32 with(unsafe))(): i32 with(unsafe) = { action() }
@@ -6354,7 +6354,7 @@ let main(): i32 = {
 fn unsafetys_are_declared_forwarded_and_handled_at_calls() {
     let ir = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32)): i32 with(unsafe) = { *pointer }
 let forward(pointer: ptr(i32)): i32 with(unsafe) = { read(pointer) }
@@ -6369,7 +6369,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32)): i32 with(unsafe) = { *pointer }
 let main(): i32 = {
@@ -6390,7 +6390,7 @@ let main(): i32 = {
 fn unsafety_checks_survive_aliasing_and_partial_application() {
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -6408,7 +6408,7 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -6425,7 +6425,7 @@ let main(): i32 = {
 fn unsafetys_participate_in_method_and_trait_signatures() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let reader = struct { pointer: ptr(i32) }
 let read = trait {
@@ -6445,7 +6445,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let reader = struct { pointer: ptr(i32) }
 let read = trait {
@@ -6466,7 +6466,7 @@ let main(): i32 = { 0 }
 #[test]
 fn entry_point_cannot_export_an_unsafety() {
     let errors = compile_resolved_text(
-        "let unsafe = std.unsafe.unsafety\nlet main(): i32 with(unsafe) = { 42 }\n",
+        "let unsafe = core.unsafe.unsafety\nlet main(): i32 with(unsafe) = { 42 }\n",
     )
     .unwrap_err();
     assert!(errors.iter().any(|error| {
@@ -6480,7 +6480,7 @@ fn entry_point_cannot_export_an_unsafety() {
 fn effect_compile_parameters_select_pure_or_unsafe_instances() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }
 let forward(comptime e: effects)(value: i32): i32 with(e) = { tagged(e)(value) }
@@ -6491,7 +6491,7 @@ let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(e: unsafe
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let identity(comptime e: effects, comptime t: type)(value: t): t with(e) = { value }
 let main(): i32 = { identity(20) + unsafe { identity(e: unsafe, t: i32)(22) } }
@@ -6501,7 +6501,7 @@ let main(): i32 = { identity(20) + unsafe { identity(e: unsafe, t: i32)(22) } }
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }
 let forward(comptime e: effects)(value: i32): i32 with(e) = { tagged(e)(value) }
@@ -6518,7 +6518,7 @@ let main(): i32 = { forward(unsafe)(42) }
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(comptime e: effects)(pointer: ptr(i32)): i32 with(e) = { *pointer }
 let main(): i32 = {
@@ -6531,7 +6531,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let read(comptime e: effects)(pointer: ptr(i32)): i32 with(e) = { *pointer }
 let main(): i32 = {
@@ -6566,7 +6566,7 @@ let main(): i32 = { tagged(e: copyable)(42) }
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let always(comptime e: effects)(value: i32): i32 with(unsafe, e) = { value }
 let main(): i32 = { always(pure)(42) }
@@ -6656,7 +6656,7 @@ let main(): i32 = { run(e: copyable)() }
 fn effect_parameters_specialize_inherent_methods() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafety
+let unsafe = core.unsafe.unsafety
 
 let value = struct { value: i32 }
 extend(value) {
@@ -6675,8 +6675,8 @@ let main(): i32 = {
 fn failure_effects_lower_to_result_boundaries_and_propagate() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let fail(flag: bool): i32 with(throwing(bool)) = { if flag { throw(true) } else { 41 } }
 let forward(flag: bool): i32 with(throwing(bool)) = { fail(flag) }
@@ -6694,8 +6694,8 @@ let main(): i32 = {
 fn failure_and_unsafe_share_one_effect_row() {
     compile_resolved_library_text(
         r#"
-let throwing = std.error.throwing
-let unsafe = std.unsafe.unsafety
+let throwing = core.error.throwing
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32), fail: bool): i32 with(throwing(bool), unsafe) = {
   if fail { throw(true) }
@@ -6709,8 +6709,8 @@ let forward(pointer: ptr(i32), fail: bool): i32 with(throwing(bool), unsafe) = {
 
     let errors = compile_resolved_text(
         r#"
-let throwing = std.error.throwing
-let unsafe = std.unsafe.unsafety
+let throwing = core.error.throwing
+let unsafe = core.unsafe.unsafety
 
 let read(pointer: ptr(i32)): i32 with(throwing(bool), unsafe) = { *pointer }
 let main(): i32 = {
@@ -6729,8 +6729,8 @@ let main(): i32 = {
 fn try_handles_failure_while_forwarding_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
-let result = std.result
-let unsafe = std.unsafe.unsafety
+let result = core.result
+let unsafe = core.unsafe.unsafety
 
 let ui = effect
 let render(value: i32): i32 with(ui) = { value }
@@ -7496,8 +7496,8 @@ let main(): i32 = {
 fn core_option_and_result_implement_monad() {
     compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 let monad = std.functional.monad
 
 let add_one(value: i32): i32 = {
@@ -7542,6 +7542,113 @@ let main(): i32 = {
 "#,
     )
     .expect("core option and result should dispatch monad.flat_map");
+}
+
+#[test]
+fn option_and_result_common_helpers_preserve_borrows_and_forward_effects() {
+    let source = r#"
+let option = core.option
+let result = core.result
+let unsafety = core.unsafe.unsafety
+
+let option_ref(comptime r: region)
+  (value: borrow(r)(option(i32))): option(borrow(r)(i32)) = {
+  value.as_ref()
+}
+
+let option_ref_mut(comptime r: region)
+  (value: borrow(mut)(r)(option(i32))): option(borrow(mut)(r)(i32)) = {
+  value.as_ref(mut)()
+}
+
+let result_ref(comptime r: region)
+  (value: borrow(r)(result(bool)(i32))): result(borrow(r)(bool))(borrow(r)(i32)) = {
+  value.as_ref()
+}
+
+let result_ref_mut(comptime r: region)
+  (value: borrow(mut)(r)(result(bool)(i32))): result(borrow(mut)(r)(bool))(borrow(mut)(r)(i32)) = {
+  value.as_ref(mut)()
+}
+
+let add_one(value: i32): i32 with(unsafety) = { value + 1 }
+let keep_positive(value: i32): option(i32) with(unsafety) = {
+  if value > 0 { option.some(value) } else { option.none }
+}
+let keep_result(value: i32): result(bool)(i32) with(unsafety) = {
+  result.ok(value)
+}
+let map_error(value: bool): i32 with(unsafety) = {
+  if value { 1 } else { 0 }
+}
+let option_fallback(): i32 with(unsafety) = { 40 }
+let error_fallback(value: bool): i32 with(unsafety) = {
+  if value { 41 } else { 40 }
+}
+let make_error(): bool with(unsafety) = { true }
+
+let main(): i32 = { unsafe {
+  let mut maybe = option.some(1)
+  let mut outcome: result(bool)(i32) = result.ok(2)
+  do {
+    let option_shared = option_ref(maybe)
+  }
+  do {
+    let option_mut = option_ref_mut(maybe)
+  }
+  do {
+    let result_shared = result_ref(outcome)
+  }
+  do {
+    let result_mut = result_ref_mut(outcome)
+  }
+
+  let states =
+    if maybe.is_some() && !maybe.is_none() &&
+       outcome.is_ok() && !outcome.is_err() { 1 } else { 0 }
+  let mapped = option.some(1).map(add_one).and_then(keep_positive).unwrap_or(0)
+  let mapped_result =
+    result(bool)(i32).ok(2).map(add_one).and_then(keep_result).unwrap_or(0)
+  let mapped_error =
+    result(bool)(i32).err(true).map_error(map_error).err().unwrap_or(0)
+  let lazy_option = option(i32).none.unwrap_or_else(option_fallback)
+  let lazy_result = result(bool)(i32).err(false).unwrap_or_else(error_fallback)
+  let eager_error = option(i32).none.ok_or(true).err().unwrap_or(false)
+  let lazy_error = option(i32).none.ok_or_else(make_error).err().unwrap_or(false)
+  let success = result(bool)(i32).ok(1).ok().unwrap_or(0)
+  if eager_error && lazy_error {
+    states + mapped + mapped_result + mapped_error + lazy_option + lazy_result + success - 46
+  } else {
+    0
+  }
+} }
+"#;
+
+    compile_resolved_text(source)
+        .expect("option and result helpers should preserve loans and forward callback effects");
+}
+
+#[test]
+fn option_borrowed_view_cannot_escape_its_source() {
+    let diagnostics = compile_resolved_text(
+        r#"
+let option = core.option
+
+let escape(): option(borrow(i32)) = {
+  let value = option.some(42)
+  value.as_ref()
+}
+
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("borrow")),
+        "{diagnostics:?}"
+    );
 }
 
 #[test]
@@ -7611,7 +7718,7 @@ let main(): i32 = { 0 }
 fn lowers_core_add_trait_to_a_static_call() {
     let program = resolve_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(number)) {
   let output = i32
@@ -7640,10 +7747,10 @@ let main(): i32 = { number { value: 40 } + number { value: 2 } }
 fn lowers_all_core_arithmetic_traits_to_their_static_methods() {
     let program = resolve_text(
         r#"
-let sub = std.ops.sub
-let mul = std.ops.mul
-let div = std.ops.div
-let rem = std.ops.rem
+let sub = core.ops.sub
+let mul = core.ops.mul
+let div = core.ops.div
+let rem = core.ops.rem
 let number = struct { value: i32 }
 extend(number, sub(number)) {
   let output = number
@@ -7695,7 +7802,7 @@ let main(): i32 = {
 fn lowers_core_eq_and_ne_to_one_borrowing_static_call() {
     let program = resolve_text(
         r#"
-let eq = std.ops.eq
+let eq = core.ops.eq
 let number = struct { value: i32 }
 extend(number, eq(number)) {
   let eq(self: borrow(self))(rhs: borrow(number)): bool = { self.value == rhs.value }
@@ -7724,8 +7831,8 @@ let main(): i32 = {
 fn lowers_partial_ord_operators_through_four_state_results() {
     let program = resolve_text(
         r#"
-let partial_ord = std.ops.partial_ord
-let partial_ordering = std.ops.partial_ordering
+let partial_ord = core.ops.partial_ord
+let partial_ordering = core.ops.partial_ordering
 let number = struct { value: i32, unordered: bool }
 extend(number, partial_ord(number)) {
   let partial_cmp(self: borrow(self))(rhs: borrow(number)): partial_ordering = {
@@ -7767,8 +7874,8 @@ let main(): i32 = {
 fn lowers_unary_operator_traits_to_auto_static_calls() {
     let program = resolve_text(
         r#"
-let neg = std.ops.neg
-let not = std.ops.not
+let neg = core.ops.neg
+let not = core.ops.not
 let number = struct { value: i32 }
 let flag = struct { value: bool }
 extend(number, neg) {
@@ -7806,11 +7913,11 @@ let main(): i32 = { if invert(false) {
 fn lowers_bitwise_operator_traits_and_builtin_integer_ops() {
     let program = resolve_text(
         r#"
-let bit_and = std.ops.bit_and
-let bit_or = std.ops.bit_or
-let bit_xor = std.ops.bit_xor
-let shl = std.ops.shl
-let shr = std.ops.shr
+let bit_and = core.ops.bit_and
+let bit_or = core.ops.bit_or
+let bit_xor = core.ops.bit_xor
+let shl = core.ops.shl
+let shr = core.ops.shr
 let bits = struct { value: i32 }
 extend(bits, bit_and(bits)) {
   let output = bits
@@ -7883,7 +7990,7 @@ fn unary_operator_traits_report_missing_output_and_auto_move_errors() {
 
     let mismatch = compile_resolved_text(
         r#"
-let neg = std.ops.neg
+let neg = core.ops.neg
 let number = struct { value: i32 }
 extend(number, neg) {
   let output = i32
@@ -7900,7 +8007,7 @@ let main(): bool = { -number { value: 1 } }
 
     let moved = compile_resolved_text(
         r#"
-let neg = std.ops.neg
+let neg = core.ops.neg
 let resource = struct { value: i32 }
 extend(resource, neg) {
   let output = resource
@@ -7980,7 +8087,7 @@ let main(): i32 = { invalid }
 fn a_unique_operator_candidate_must_match_the_expected_output() {
     let errors = compile_resolved_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(i32)) {
   let output = bool
@@ -8001,7 +8108,7 @@ let main(): i32 = { number { value: 42 } + 42 }
 fn uninhabited_operator_output_coerces_when_no_exact_output_exists() {
     compile_resolved_text(
         r#"
-let sub = std.ops.sub
+let sub = core.ops.sub
 let number = struct { value: i32 }
 extend(number, sub(i32)) {
   let output = never
@@ -8017,7 +8124,7 @@ let main(): i32 = { number { value: 42 } - 1 }
 fn exact_operator_output_takes_precedence_over_uninhabited_output() {
     let program = resolve_text(
         r#"
-let sub = std.ops.sub
+let sub = core.ops.sub
 let number = struct { value: i32 }
 extend(number, sub(i32)) {
   let output = never
@@ -8059,7 +8166,7 @@ let main(): i32 = { number { value: 42 } - 1 }
 fn operator_candidates_probe_bindings_in_nonempty_rhs_blocks() {
     let program = resolve_text(
         r#"
-let sub = std.ops.sub
+let sub = core.ops.sub
 let number = struct { value: i32 }
 extend(number, sub(i32)) {
   let output = i32
@@ -8104,7 +8211,7 @@ let main(): i32 = { number { value: 1 } - do {
 fn non_add_output_participates_in_outer_generic_inference() {
     let ir = compile_resolved_text(
         r#"
-let sub = std.ops.sub
+let sub = core.ops.sub
 let number = struct { value: i32 }
 extend(number, sub(i32)) {
   let output = i64
@@ -8129,7 +8236,7 @@ let main(): i32 = {
 fn add_output_participates_in_outer_generic_inference() {
     let ir = compile_resolved_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(i32)) {
   let output = i32
@@ -8151,7 +8258,7 @@ let main(): i32 = { identity(number { value: 40 } + 2) }
 fn add_literal_range_eliminates_incompatible_rhs_candidates() {
     let program = resolve_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(i32)) {
   let output = i64
@@ -8192,7 +8299,7 @@ let main(): i32 = {
 fn add_lowering_is_independent_of_inferred_producer_declaration_order() {
     let program = resolve_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(number)) {
   let output = number
@@ -8233,7 +8340,7 @@ let make() = { 40 }
 fn add_reports_when_no_ambiguous_candidate_has_the_expected_output() {
     let errors = compile_resolved_text(
         r#"
-let add = std.ops.add
+let add = core.ops.add
 let number = struct { value: i32 }
 extend(number, add(i32)) {
   let output = bool
@@ -8305,8 +8412,8 @@ let main(): i32 = { number.construct(42).value }
 fn nominal_error_types_propagate_through_throwing() {
     let ir = compile_resolved_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let failure = struct { code: i32 }
 let read(fail: bool): i32 with(throwing(failure)) = {
@@ -8539,7 +8646,7 @@ let main(): i32 = {
 
     compile_text(
         r#"
-let future = std.async.future
+let future = core.async.future
 
 let main(): i32 = {
   let future = async { await child() }
@@ -8641,8 +8748,8 @@ let child() = { async { 1 } }
 
     let diagnostics = compile_text(
         r#"
-let poll = std.async.poll
-let future = std.async.future
+let poll = core.async.poll
+let future = core.async.future
 let number = struct {}
 let flag = struct {}
 extend(number, future(())) {
@@ -8709,8 +8816,8 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
 fn cold_async_future_polls_to_the_standard_ready_variant() {
     compile_text(
         r#"
-let poll = std.async.poll
-let future = std.async.future
+let poll = core.async.poll
+let future = core.async.future
 
 let poll_once(comptime e: effects, comptime f: type, comptime t: type)
   (future: borrow(mut)(f)): poll(t) with(e)
@@ -8734,8 +8841,8 @@ let main(): i32 = {
 fn cold_async_poll_preserves_its_residual_unsafety() {
     compile_text(
         r#"
-let future = std.async.future
-let unsafe = std.unsafe.unsafety
+let future = core.async.future
+let unsafe = core.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -8753,8 +8860,8 @@ let main(): i32 = {
 
     let diagnostics = compile_text(
         r#"
-let future = std.async.future
-let unsafe = std.unsafe.unsafety
+let future = core.async.future
+let unsafe = core.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -8775,8 +8882,8 @@ let main(): i32 = {
 fn tail_await_forwards_the_child_futures_unsafety() {
     compile_text(
         r#"
-let future = std.async.future
-let unsafe = std.unsafe.unsafety
+let future = core.async.future
+let unsafe = core.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -9032,10 +9139,10 @@ break(answer)
 #[test]
 fn lowers_for_through_validated_iteration_lang_items() {
     let ir = compile_resolved_text(
-        "use std.option\n\
-         let iterator = std.iter.iterator
-         let into_iterator = std.iter.into_iterator
-         let owned_item = std.iter.owned_item
+        "use core.option\n\
+         let iterator = core.iter.iterator
+         let into_iterator = core.iter.into_iterator
+         let owned_item = core.iter.owned_item
          let counter = struct { current: i32, end: i32 }\n\
          extend(counter) {\n\
            let into_iter(self: borrow(self))(): i32 = { self.current }\n\
@@ -9120,8 +9227,8 @@ fn emits_local_non_escaping_partial_application() {
 fn lowers_standard_optional_fields_and_methods_without_flattening() {
     let ir = compile_resolved_text(
         r#"
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let payload = struct { value: i32, nested: option(i32) }
 extend(payload) {
@@ -9147,7 +9254,7 @@ let main(): i32 = {
 fn optional_chain_expected_result_only_constrains_the_base_error_type() {
     compile_resolved_text(
         r#"
-let result = std.result
+let result = core.result
 
 let boxed = struct { value: i32 }
 let read(): result(bool)(i32) = { result.ok(boxed { value: 42 })?.value }
@@ -9196,7 +9303,7 @@ let main(): i32 = { 0 }
         ),
     ];
     for (source, expected) in cases {
-        let source = format!("use std.option\n{source}");
+        let source = format!("use core.option\n{source}");
         let errors = compile_resolved_text(&source).unwrap_err();
         assert!(
             errors.iter().any(|error| error.message.contains(expected)),
@@ -9545,8 +9652,8 @@ fn cleanup_plan_starts_storage_for_every_planner_temporary() {
 fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
     let plan = cleanup_plan_text(
         r#"
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let read(fail: bool): i32 with(throwing(bool)) = { if fail { throw(true) } else { 42 } }
 let propagate(fail: bool): i32 with(throwing(bool)) = {
@@ -10954,7 +11061,7 @@ let finish(): () = { let value = plain { value: 42 }; () }
 fn erased_effect_callable_uses_cps_entry_and_owned_environment() {
     let mut program = resolve_text(
         r#"
-let continuation = std.effect.continuation
+let continuation = core.effect.continuation
 
 let main(): i32 = {
   let continuation: (i32): i32 = { (value: i32) -> value + 2 }

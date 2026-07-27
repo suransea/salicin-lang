@@ -1,5 +1,5 @@
-let slice = std.slice
-let vec = std.vec.vec
+let slice = core.memory.slice
+let vec = alloc.vec.vec
 
 let main(): i32 = {
   let mut values = vec.new(t: i32)()

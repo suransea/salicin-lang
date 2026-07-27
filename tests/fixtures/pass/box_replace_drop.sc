@@ -1,4 +1,4 @@
-let box = std.boxed.box
+let box = alloc.boxed.box
 
 let resource = struct { counter: ptr(mut)(i32), value: i32 }
 

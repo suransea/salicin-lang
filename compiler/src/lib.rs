@@ -595,8 +595,8 @@ mod tests {
 
     #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
-        let source = "let box = std.boxed.box\n\
-                      let vec = std.vec.vec
+        let source = "let box = alloc.boxed.box\n\
+                      let vec = alloc.vec.vec
                       let main(): i32 = {\n\
                         let mut boxed = box.new(20)\n\
                         do {\n\
@@ -617,8 +617,8 @@ mod tests {
     #[test]
     fn alloc_helper_functions_are_not_public_api() {
         for (path, name) in [
-            ("std.boxed.box_new", "box_new"),
-            ("std.vec.vec_push", "vec_push"),
+            ("alloc.boxed.box_new", "box_new"),
+            ("alloc.vec.vec_push", "vec_push"),
         ] {
             let source = format!("let helper = {path}\nlet main(): i32 = {{ 0 }}\n");
             let errors = compile_source(&source).unwrap_err();
@@ -634,10 +634,10 @@ mod tests {
         let errors = compile_source("let main(): i32 = { box.new(42).read() }\n").unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `box` is not in the prelude")
-                && diagnostic.contains("let box = std.boxed.box")
+                && diagnostic.contains("let box = alloc.boxed.box")
         }));
 
-        let source = "use std.boxed.box as heap_box\n\
+        let source = "use alloc.boxed.box as heap_box\n\
                       let main(): i32 = { heap_box.new(42).read() }\n";
         compile_source(source).expect("renamed alloc import should compile");
     }
@@ -661,10 +661,10 @@ mod tests {
         let errors = compile_source(missing).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `add` is not in the prelude")
-                && diagnostic.contains("let add = std.ops.add")
+                && diagnostic.contains("let add = core.ops.add")
         }));
 
-        let imported = format!("use std.ops.add\n{missing}").replace(
+        let imported = format!("use core.ops.add\n{missing}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (number { value: 20 } + number { value: 22 }).value }",
         );
@@ -675,21 +675,21 @@ mod tests {
 
         let missing_order = "let number = struct { value: i32 }\n\
                              extend(number, partial_ord(number)) {\n\
-                               let partial_cmp(self: borrow(self))(rhs: borrow(number)): std.ops.partial_ordering = {\n\
-                                 std.ops.partial_ordering.equal\n\
+                               let partial_cmp(self: borrow(self))(rhs: borrow(number)): core.ops.partial_ordering = {\n\
+                                 core.ops.partial_ordering.equal\n\
                                }\n\
                              }\n\
                              let main(): i32 = { 0 }\n";
         let errors = compile_source(missing_order).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `partial_ord` is not in the prelude")
-                && diagnostic.contains("let partial_ord = std.ops.partial_ord")
+                && diagnostic.contains("let partial_ord = core.ops.partial_ord")
         }));
 
         let imported_order = format!(
-            "use std.ops.{{partial_ord, partial_ordering}}\n{missing_order}"
+            "use core.ops.{{partial_ord, partial_ordering}}\n{missing_order}"
         )
-        .replace("std.ops.partial_ordering", "partial_ordering")
+        .replace("core.ops.partial_ordering", "partial_ordering")
         .replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { if number { value: 1 } <= number { value: 2 } { 42 } else { 0 } }",
@@ -705,10 +705,10 @@ mod tests {
         let errors = compile_source(missing_unary).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `neg` is not in the prelude")
-                && diagnostic.contains("let neg = std.ops.neg")
+                && diagnostic.contains("let neg = core.ops.neg")
         }));
 
-        let imported_unary = format!("use std.ops.neg\n{missing_unary}").replace(
+        let imported_unary = format!("use core.ops.neg\n{missing_unary}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (-number { value: 42 }).value }",
         );
@@ -723,10 +723,10 @@ mod tests {
         let errors = compile_source(missing_bitwise).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `bit_and` is not in the prelude")
-                && diagnostic.contains("let bit_and = std.ops.bit_and")
+                && diagnostic.contains("let bit_and = core.ops.bit_and")
         }));
 
-        let imported_bitwise = format!("use std.ops.bit_and\n{missing_bitwise}").replace(
+        let imported_bitwise = format!("use core.ops.bit_and\n{missing_bitwise}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (bits { value: 6 } & bits { value: 3 }).value }",
         );
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn slice_is_a_non_prelude_unsized_core_type() {
         check_library_source(
-            "let slice = std.slice\n\
+            "let slice = core.memory.slice\n\
              let inspect(comptime r: region)(values: borrow(r)(slice(i32))): u64 = { 0 }\n",
         )
         .expect("borrowed slice types should be accepted");
@@ -788,13 +788,13 @@ mod tests {
         .expect_err("slice must require an ordinary standard-library alias");
         assert!(diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.contains("let slice = std.slice")));
+            .any(|diagnostic| diagnostic.contains("let slice = core.memory.slice")));
     }
 
     #[test]
     fn arrays_unsize_to_region_bound_slice_borrows() {
         let ir = compile_source(
-            "let slice = std.slice\n\
+            "let slice = core.memory.slice\n\
              let view(comptime r: region)\n\
                (values: borrow(r)(array(i32)(3))): borrow(r)(slice(i32)) = {\n\
                borrow(values)\n\
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn slice_methods_preserve_length_and_element_borrow_access() {
         let ir = compile_source(
-            "let slice = std.slice\n\
+            "let slice = core.memory.slice\n\
              let inspect(comptime r: region)\n\
                (values: borrow(r)(slice(i32))): i32 = {\n\
                let item = values.at(1)\n\
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn vec_slice_borrows_preserve_mutable_element_access() {
         let ir = compile_source(
-            "let vec = std.vec.vec\n\
+            "let vec = alloc.vec.vec\n\
              let main(): i32 = {\n\
                let mut values = vec.new(t: i32)()\n\
                values.push(1)\n\
@@ -854,7 +854,7 @@ mod tests {
     #[test]
     fn user_index_protocol_dispatches_bracket_reads() {
         let ir = compile_source(
-            "let index = std.ops.index\n\
+            "let index = core.ops.index\n\
              let bag = struct { value: i32 }\n\
              extend(bag, index(i32)) {\n\
                let output = i32\n\
@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn user_index_protocol_dispatches_bracket_assignment() {
         let ir = compile_source(
-            "let index = std.ops.index\n\
+            "let index = core.ops.index\n\
              let bag = struct { value: i32 }\n\
              extend(bag, index(i32)) {\n\
                let output = i32\n\
@@ -900,7 +900,7 @@ mod tests {
     #[test]
     fn user_index_protocol_preserves_explicit_borrows() {
         compile_source(
-            "let index = std.ops.index\n\
+            "let index = core.ops.index\n\
              let bag = struct { value: i32 }\n\
              extend(bag, index(i32)) {\n\
                let output = i32\n\
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn vec_index_protocol_supports_read_borrow_and_assignment() {
         compile_source(
-            "let vec = std.vec.vec\n\
+            "let vec = alloc.vec.vec\n\
              let read(value: borrow(i32)): i32 = { value }\n\
              let main(): i32 = {\n\
                let mut values = vec.new(t: i32)()\n\
@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn slice_index_protocol_supports_read_borrow_and_assignment() {
         compile_source(
-            "let slice = std.slice\n\
+            "let slice = core.memory.slice\n\
              let inspect(values: borrow(mut)(slice(i32))): i32 = {\n\
                values[1] = 42\n\
                let value = borrow(values[1])\n\

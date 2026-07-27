@@ -1,4 +1,4 @@
-let box = std.boxed.box
+let box = alloc.boxed.box
 
 let read_box(comptime t: type)(boxed: borrow(box(t))): t
 where t: copyable = { boxed.read() }

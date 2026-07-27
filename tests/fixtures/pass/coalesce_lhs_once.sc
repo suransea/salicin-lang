@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let make(count: borrow(mut)(i32)): option(i32) = {
   count = count + 1

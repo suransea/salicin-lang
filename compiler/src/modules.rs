@@ -501,15 +501,7 @@ const CORE_EFFECT_EXPORTS: &[&str] = &["continuation", "effect_callable", "handl
 const CORE_RESULT_EXPORTS: &[&str] = &["result"];
 const CORE_ERROR_EXPORTS: &[&str] = &["throwing", "try", "throw"];
 const CORE_UNSAFE_EXPORTS: &[&str] = &["unsafety", "unsafe"];
-const CORE_ASYNC_EXPORTS: &[&str] = &[
-    "suspension",
-    "poll",
-    "future",
-    "executor",
-    "spin",
-    "async",
-    "await",
-];
+const CORE_ASYNC_EXPORTS: &[&str] = &["suspension", "poll", "future", "executor", "async", "await"];
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
@@ -549,8 +541,6 @@ const CORE_ITER_EXPORTS: &[&str] = &[
     "owned_item",
     "borrowed_item",
 ];
-const CORE_ALGEBRA_EXPORTS: &[&str] = &["semigroup", "monoid"];
-const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["functor", "applicative", "monad"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -1110,12 +1100,6 @@ fn install_standard_namespaces(
         for name in CORE_MEMORY_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.memory.{name}"));
         }
-        for name in CORE_ALGEBRA_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
-        }
-        for name in CORE_FUNCTIONAL_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.functional.{name}"));
-        }
         for name in CORE_ITER_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
         }
@@ -1551,28 +1535,6 @@ fn install_core_namespace(
                 "<core>",
             );
         }
-        for name in CORE_ALGEBRA_EXPORTS {
-            insert_standard_symbol(
-                symbols,
-                package_root,
-                &core_root,
-                "algebra",
-                name,
-                &format!("core::algebra::{name}"),
-                "<core>",
-            );
-        }
-        for name in CORE_FUNCTIONAL_EXPORTS {
-            insert_standard_symbol(
-                symbols,
-                package_root,
-                &core_root,
-                "functional",
-                name,
-                &format!("core::functional::{name}"),
-                "<core>",
-            );
-        }
         for name in CORE_ITER_EXPORTS {
             insert_standard_symbol(
                 symbols,
@@ -1703,21 +1665,25 @@ fn install_std_namespace(
     module_paths.insert(std_root.clone());
     for export in exports {
         insert_standard_module_path(module_paths, &std_root, &export.module);
-        let mut target_path = package_root.to_vec();
-        target_path.extend(export.target.iter().cloned());
-        let Some(target) = symbols.get(&target_path) else {
-            diagnostics.push(format!(
-                "<std>: error: std export `{}` targets unavailable declaration `{}`",
-                if export.module.is_empty() {
-                    format!("std.{}", export.name)
-                } else {
-                    format!("std.{}.{}", export.module, export.name)
-                },
-                export.target.join(".")
-            ));
-            continue;
+        let canonical = if export.target.first().is_some_and(|root| root == "std") {
+            export.target.join("::")
+        } else {
+            let mut target_path = package_root.to_vec();
+            target_path.extend(export.target.iter().cloned());
+            let Some(target) = symbols.get(&target_path) else {
+                diagnostics.push(format!(
+                    "<std>: error: std export `{}` targets unavailable declaration `{}`",
+                    if export.module.is_empty() {
+                        format!("std.{}", export.name)
+                    } else {
+                        format!("std.{}.{}", export.module, export.name)
+                    },
+                    export.target.join(".")
+                ));
+                continue;
+            };
+            target.canonical.clone()
         };
-        let canonical = target.canonical.clone();
         let mut logical_path = std_root.clone();
         if !export.module.is_empty() {
             logical_path.extend(export.module.split('.').map(str::to_owned));
@@ -4220,7 +4186,7 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "use std.option\n\
+                "use core.option\n\
                  let keep(math: i32): i32 = {\n\
                    let local = { (math: i32) -> math }\n\
                    option.some(math) match { option.some(math) => local(math), _ => math }\n\
@@ -5430,7 +5396,7 @@ let main(): i32 = { option {} }
         let program = resolve_sources(&[unit(
             "main.sc",
             &[],
-            "use std.boxed.box as heap_box\nuse std.vec.vec\n\
+            "use alloc.boxed.box as heap_box\nuse alloc.vec.vec\n\
              let keep(move boxed: heap_box(i32)): heap_box(i32) = { boxed }\n\
              let empty(): vec(i32) = { vec(i32).new() }\n",
             true,
@@ -5448,7 +5414,7 @@ let main(): i32 = { option {} }
         let operator = resolve_sources(&[unit(
             "operator.sc",
             &[],
-            "use std.ops.add as plus\n\
+            "use core.ops.add as plus\n\
              let number = struct { value: i32 }\n\
              extend(number, plus(number)) {\n\
                let output = number\n\
@@ -5466,8 +5432,8 @@ let main(): i32 = { option {} }
         let flow = resolve_sources(&[unit(
             "flow.sc",
             &[],
-            "let chain = std.flow.chain\n\
-             let ops_coalesce = std.ops.coalesce\n\
+            "let chain = core.flow.chain\n\
+             let ops_coalesce = core.ops.coalesce\n\
              let legacy_coalesce = core.ops.coalesce\n\
              let maybe(comptime t: type) = enum { some(t), none }\n\
              let legacy_maybe(comptime t: type) = enum { some(t), none }\n\
@@ -5491,7 +5457,7 @@ let main(): i32 = { option {} }
         let standard_modules = resolve_sources(&[unit(
             "standard.sc",
             &[],
-            "use std.async.async\n\
+            "use core.async.async\n\
              let semigroup = std.algebra.semigroup
              let monoid = std.algebra.monoid
              let number = struct { value: i32 }\n\
@@ -5519,12 +5485,12 @@ let main(): i32 = { option {} }
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::algebra::semigroup"))
+                    Some(Type::Named(name, _)) if name == "std::algebra::semigroup"))
         }));
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::algebra::monoid"))
+                    Some(Type::Named(name, _)) if name == "std::algebra::monoid"))
         }));
 
         let bare = resolve_sources(&[unit(
@@ -5536,7 +5502,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `box` is not in the prelude")
-                && diagnostic.contains("let box = std.boxed.box")
+                && diagnostic.contains("let box = alloc.boxed.box")
         }));
 
         let bare_option = resolve_sources(&[unit(
@@ -5548,7 +5514,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare_option.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `option` is not in the prelude")
-                && diagnostic.contains("let option = std.option")
+                && diagnostic.contains("let option = core.option")
         }));
 
         let bare_result = resolve_sources(&[unit(
@@ -5560,7 +5526,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare_result.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `result` is not in the prelude")
-                && diagnostic.contains("let result = std.result")
+                && diagnostic.contains("let result = core.result")
         }));
 
         let bare_operator = resolve_sources(&[unit(
@@ -5576,7 +5542,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare_operator.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `add` is not in the prelude")
-                && diagnostic.contains("let add = std.ops.add")
+                && diagnostic.contains("let add = core.ops.add")
         }));
 
         let bare_flow = resolve_sources(&[unit(
@@ -5589,7 +5555,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare_flow.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `chain` is not in the prelude")
-                && diagnostic.contains("let chain = std.flow.chain")
+                && diagnostic.contains("let chain = core.flow.chain")
         }));
 
         let bare_effect = resolve_sources(&[unit(
@@ -5601,7 +5567,7 @@ let main(): i32 = { option {} }
         .unwrap_err();
         assert!(bare_effect.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `async` is not in the prelude")
-                && diagnostic.contains("let async = std.async.async")
+                && diagnostic.contains("let async = core.async.async")
         }));
 
         let bare_algebra = resolve_sources(&[unit(
@@ -5721,12 +5687,6 @@ let main(): i32 = { option {} }
             .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
-            .chain(CORE_ALGEBRA_EXPORTS.iter().map(|name| ("algebra", *name)))
-            .chain(
-                CORE_FUNCTIONAL_EXPORTS
-                    .iter()
-                    .map(|name| ("functional", *name)),
-            )
             .collect::<BTreeSet<_>>();
         assert_eq!(core_exports, expected_core);
 
@@ -5773,12 +5733,9 @@ let main(): i32 = { option {} }
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(module_paths.contains(&vec!["std".to_owned()]));
-        assert!(module_paths.contains(&vec!["std".to_owned(), "vec".to_owned()]));
-        assert!(module_paths.contains(&vec![
-            "std".to_owned(),
-            "ops".to_owned(),
-            "index".to_owned()
-        ]));
+        assert!(module_paths.contains(&vec!["std".to_owned(), "functional".to_owned()]));
+        assert!(module_paths.contains(&vec!["std".to_owned(), "async".to_owned()]));
+        assert!(!module_paths.contains(&vec!["std".to_owned(), "vec".to_owned()]));
         for export in std.exports() {
             let mut logical_path = vec!["std".to_owned()];
             logical_path.extend(

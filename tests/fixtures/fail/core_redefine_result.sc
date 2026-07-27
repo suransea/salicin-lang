@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let result(e: type)(comptime t: type) = enum {
   ok(t),

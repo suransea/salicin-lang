@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let payload = struct {
   value: i32,

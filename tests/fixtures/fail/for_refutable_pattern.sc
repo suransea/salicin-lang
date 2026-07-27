@@ -1,7 +1,7 @@
-let option = std.option
-let iterator = std.iter.iterator
-let into_iterator = std.iter.into_iterator
-let owned_item = std.iter.owned_item
+let option = core.option
+let iterator = core.iter.iterator
+let into_iterator = core.iter.into_iterator
+let owned_item = core.iter.owned_item
 
 let values = struct { done: bool }
 let choice = enum { some(i32), none }

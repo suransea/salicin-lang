@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+- Reworked the embedded library dependency architecture as
+  `core ← alloc ← std`. The freestanding `core` no longer owns optional
+  algebraic or higher-kinded functional abstractions; `std.algebra` and
+  `std.functional` now own those protocols and the `option`/`result`
+  implementations. The concrete `spin` executor moved to `std.async`, while
+  the allocation-free `future` and `executor` contracts remain in `core`.
+- Made `std` a validated source-owning layer rather than an alias-only facade.
+  Public definitions receive ordinary `std` identities, private lower-layer
+  aliases may support implementations, and public mirror aliases are
+  rejected. Removed the one-file-per-re-export mirror tree; callers now use
+  canonical `core`, `alloc`, or genuinely owned `std` paths.
+- Added allocation-free `option` and `result` inspection, region-preserving
+  borrowed views, mapping and chaining, eager and lazy fallback, error
+  mapping, and value projection helpers. Borrowed enum matching now inspects
+  discriminants without moving payloads, and callback effects are forwarded.
+
 ## 0.211.0 - 2026-07-27
 
 - Added the edition-matched `library/std` source bundle above `core` and

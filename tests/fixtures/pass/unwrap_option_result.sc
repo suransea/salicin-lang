@@ -1,5 +1,5 @@
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let main(): i32 = {
   let option = option.some(20)

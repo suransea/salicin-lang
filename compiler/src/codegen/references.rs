@@ -316,8 +316,17 @@ impl Analyzer {
         else {
             return;
         };
+        let inferred_origin = self.reference_origin_for_hir_expr(value, context);
+        let compatible_parameter_origin = || {
+            context
+                .borrowed_parameter_regions
+                .values()
+                .filter(|(region, _)| expected_region.is_none() || region == expected_region)
+                .max_by_key(|(_, mutable)| *mutable)
+                .cloned()
+        };
         let Some((source_region, source_mutable)) =
-            self.reference_origin_for_hir_expr(value, context)
+            inferred_origin.or_else(compatible_parameter_origin)
         else {
             self.error("cannot return a reference value whose source is local or cannot be proven");
             return;

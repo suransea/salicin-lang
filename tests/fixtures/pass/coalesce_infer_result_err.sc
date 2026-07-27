@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let main(): i32 = { result(e: bool).err(false) ?? 42 }
 

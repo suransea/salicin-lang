@@ -1,5 +1,5 @@
-let option = std.option
-let unsafety = std.unsafe.unsafety
+let option = core.option
+let unsafety = core.unsafe.unsafety
 let applicative = std.functional.applicative
 let functor = std.functional.functor
 let monad = std.functional.monad

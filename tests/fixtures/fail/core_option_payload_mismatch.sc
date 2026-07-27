@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let main(): i32 = {
   let value = option(i32).some(true)

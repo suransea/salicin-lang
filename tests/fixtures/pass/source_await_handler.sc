@@ -1,7 +1,7 @@
-let suspension = std.async.suspension
-let poll = std.async.poll
-let future = std.async.future
-let await_source = std.async.await
+let suspension = core.async.suspension
+let poll = core.async.poll
+let future = core.async.future
+let await_source = core.async.await
 
 let step = struct { ready: bool }
 

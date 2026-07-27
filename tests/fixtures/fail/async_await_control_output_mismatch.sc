@@ -1,5 +1,5 @@
-let poll = std.async.poll
-let future = std.async.future
+let poll = core.async.poll
+let future = core.async.future
 
 let number = struct {}
 let flag = struct {}

@@ -1,7 +1,7 @@
-let future = std.async.future
-let poll = std.async.poll
-let result = std.result
-let throwing = std.error.throwing
+let future = core.async.future
+let poll = core.async.poll
+let result = core.result
+let throwing = core.error.throwing
 
 let resource = struct {
   drops: ptr(mut)(i32),

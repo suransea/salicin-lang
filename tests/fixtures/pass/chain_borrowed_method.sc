@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let number = struct { value: i32 }
 

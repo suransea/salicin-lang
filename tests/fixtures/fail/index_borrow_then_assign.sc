@@ -1,4 +1,4 @@
-let index = std.ops.index
+let index = core.ops.index
 
 let bag = struct { value: i32 }
 extend(bag, index(i32)) {

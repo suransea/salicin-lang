@@ -1,5 +1,5 @@
-let future = std.async.future
-let poll = std.async.poll
+let future = core.async.future
+let poll = core.async.poll
 
 let ask = effect {
   let ask(): i32

@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let write(target: borrow(mut)(i32))(value: i32): () = {
   target = value

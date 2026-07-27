@@ -1,7 +1,7 @@
-let sub = std.ops.sub
-let mul = std.ops.mul
-let div = std.ops.div
-let rem = std.ops.rem
+let sub = core.ops.sub
+let mul = core.ops.mul
+let div = core.ops.div
+let rem = core.ops.rem
 
 let number = struct { value: i32 }
 

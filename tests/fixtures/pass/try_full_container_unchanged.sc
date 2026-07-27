@@ -1,5 +1,5 @@
-let option = std.option
-let result = std.result
+let option = core.option
+let result = core.result
 
 let option_tail(): option(i32) = { option(i32).some(10) }
 

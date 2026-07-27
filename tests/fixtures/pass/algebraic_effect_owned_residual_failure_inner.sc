@@ -1,5 +1,5 @@
-let result = std.result
-let throwing = std.error.throwing
+let result = core.result
+let throwing = core.error.throwing
 
 let step = effect {
   let delta(): i32

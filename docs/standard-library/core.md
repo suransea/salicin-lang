@@ -50,7 +50,24 @@ pub let result(comptime e: type)
 ```
 
 Naming `option` or `result` requires an ordinary root alias such as
-`let option = std.option` or `let result = std.result`.
+`let option = core.option` or `let result = core.result`.
+
+Their inherent helper surface is allocation-free:
+
+| Type | Inspection/view | Transform | Fallback/conversion |
+| --- | --- | --- | --- |
+| `option(t)` | `is_some`, `is_none`, `as_ref` | `map`, `and_then` | `unwrap_or`, `unwrap_or_else`, `ok_or`, `ok_or_else` |
+| `result(error)(t)` | `is_ok`, `is_err`, `as_ref` | `map`, `map_error`, `and_then` | `unwrap_or`, `unwrap_or_else`, `ok`, `err` |
+
+`as_ref()` preserves the receiver region and defaults to shared access;
+`as_ref(mut)()` requires an exclusive receiver and produces exclusive payload
+borrows. Matching a borrowed enum inspects its discriminant and aliases its
+payload storage instead of moving it. The returned view therefore cannot
+outlive the source, and an exclusive view blocks overlapping access.
+Transform callbacks and lazy fallbacks forward their declared effect row and
+run only in the selected variant. `unwrap_or` and `ok_or` take eagerly
+evaluated values; the `_else` forms evaluate their callback only on `none` or
+`err`. All consuming helpers evaluate and move each payload at most once.
 
 `movable` is an automatically satisfied structural marker for relocatable values. `copyable` has the
 supertrait constraint `where self: movable`, while `droppable` remains independent: an owning resource may
@@ -62,13 +79,13 @@ declarations directly; aliasing is only required when source code writes the sho
 `core.ops` is a compatibility facade over smaller protocol modules. `core.ops.arith` defines
 `add`, `sub`, `mul`, `div`, `rem`, and `neg`; `core.ops.bit` defines `not`, `bit_and`, `bit_or`,
 `bit_xor`, `shl`, and `shr`; `core.ops.assign` defines the compound-assignment protocols; and
-`core.cmp` defines `eq`, `partial_ordering`, and `partial_ord`. The `std.ops` facade re-exports the
+`core.cmp` defines `eq`, `partial_ordering`, and `partial_ord`. The `core.ops` facade re-exports the
 operator-facing names for ordinary aliases. They are not in the prelude.
 Arithmetic and bitwise protocols accept their operands with automatic passing and use an associated
 `output` type. copyable operands remain usable; resource operands move:
 
 ```sc fragment
-let add = std.ops.add
+let add = core.ops.add
 
 extend(number, add(number)) {
   let output = number
@@ -81,7 +98,7 @@ extend(number, add(number)) {
 negates its result:
 
 ```sc fragment
-let eq = std.ops.eq
+let eq = core.ops.eq
 
 extend(number, eq(number)) {
   let eq(self: borrow(self))
@@ -94,8 +111,8 @@ whose variants are `less`, `equal`, `greater`, and `unordered`. All four orderin
 the method once; an `unordered` result makes each operator false:
 
 ```sc fragment
-let partial_ord = std.ops.partial_ord
-let partial_ordering = std.ops.partial_ordering
+let partial_ord = core.ops.partial_ord
+let partial_ordering = core.ops.partial_ordering
 
 extend(number, partial_ord(number)) {
   let partial_cmp(self: borrow(self))
@@ -171,7 +188,7 @@ capture outer method-call arguments still require the general callable-to-functi
 facade `core.option`/`core.result` paths remain available as standard-library specializations.
 
 `core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
-should alias these identities through `std.effect`:
+should alias these identities through `core.effect`:
 
 ```sc fragment
 pub let unsafety = effect {}
@@ -307,8 +324,10 @@ not ordinary source-level standard-library functions.
 
 `core.async` makes the asynchronous model explicit in source. `future(e)` is a `movable` trait with an
 associated `output` and a mutable-borrowing `poll` method returning `poll`. `executor.run` is
-explicit, and the ordinary zero-field `spin` implementation repeatedly polls one owned future
-until `ready` without allocation. Constructing a cold future does not select or run an executor.
+an allocation-free protocol. The ordinary zero-field `std.async.spin`
+implementation repeatedly polls one owned future until `ready`; the concrete
+polling policy is intentionally above the freestanding protocol.
+Constructing a cold future does not select or run an executor.
 `async` remains the direct intrinsic that materializes the anonymous future
 state selected for its action, while `await` is source-defined. Their
 signatures expose their effect rows and `future(e, output = t)` relationship.
@@ -429,7 +448,7 @@ pub let slice_iter(comptime a: access)(comptime t: type) = struct { ... }
 ```
 
 Implementing or naming either trait requires aliases such as
-`let iterator = std.iter.iterator` and `let into_iterator = std.iter.into_iterator`. The `for`
+`let iterator = core.iter.iterator` and `let into_iterator = core.iter.into_iterator`. The `for`
 syntax itself needs no alias and dispatches only through these validated identities. It evaluates
 the iterable once, moves it into `into_iterator.into_iter`, repeatedly mutably borrows the resulting
 iterator for `iterator.next`, and stops on `none`. An inherent or unrelated trait method named
@@ -445,14 +464,14 @@ iteration for all element types. Its iterator transfers the allocation, moves va
 order, and on early exit drops exactly the unyielded suffix before releasing storage.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
-effect identities such as `throwing` remain normal `std.effect` exports when named in source, backed
+effect identities such as `throwing` remain normal `core.effect` exports when named in source, backed
 by `core.effect` identities. An ordinary same-named declaration cannot acquire lang-item lowering
 behavior. future control features
 follow the same rule: for example, async lowering must add `future`, `async`, and handler contracts
 to the matching core release when it becomes executable, rather than reserving undocumented compiler
 magic in advance.
 
-`core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
+`std.algebra` contains opt-in first-order algebra protocols rather than putting them in `core` or the prelude:
 
 ```sc fragment
 pub let semigroup = trait {
@@ -465,7 +484,7 @@ where self: semigroup{let empty(): self}
 
 The compiler does not prove algebraic laws.
 
-`core.functional` contains higher-kinded protocols over compile-time type constructors. It is not
+`std.functional` contains higher-kinded protocols over compile-time type constructors. It is not
 part of the prelude:
 
 ```sc fragment
@@ -511,7 +530,7 @@ The standard library implements `functor`, `applicative`, and `monad` for `core.
 each partially applied `core.result(error)` constructor:
 
 ```sc fragment
-let result = std.result
+let result = core.result
 let monad = std.functional.monad
 
 let next(value: i32): result(bool)(i32) = {

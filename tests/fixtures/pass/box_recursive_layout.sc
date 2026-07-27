@@ -1,6 +1,6 @@
-let option = std.option
+let option = core.option
 
-let box = std.boxed.box
+let box = alloc.boxed.box
 
 let node = struct { value: i32, next: option(box(node)) }
 

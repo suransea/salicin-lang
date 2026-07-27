@@ -35,8 +35,8 @@ The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`
 public naming, prelude exclusions, ownership modes, failure policy, error
 families, explicit `io` authority, initial native target matrix, and minimum
-text, collection, conversion, I/O, and test APIs. Its source-backed facade and
-target boundary are implemented; host APIs remain planned work.
+text, collection, conversion, I/O, and test APIs. Its source-backed canonical
+layers and target boundary are implemented; host APIs remain planned work.
 
 The command-line surface is:
 
@@ -236,7 +236,7 @@ Implemented data and control features include:
 - a direct intrinsic `core.async.async` entry point for anonymous future state
   and a source-defined `core.async.await` over the ordinary
   `poll`/`suspension.suspend` protocol;
-- the explicit allocation-free `core.async.spin` executor for one owned future;
+- the explicit allocation-free `std.async.spin` executor for one owned future;
 - handler specialization for non-suspending futures with a custom residual
   effect, including standard `throwing(error)`, and by-value `copyable`, move-only,
   shared-borrow, or mutable-borrow captures, including exact once-only
@@ -354,7 +354,7 @@ uninhabited `never` as its output.
 For unit-valued general iteration bodies, the compiler rewrites control exits at the current loop
 depth into early iteration-future step returns and distributes normal fallthrough across nested
 `if` and `match` exits. Nested loops and nested async blocks remain separate control boundaries.
-`core.async.spin` is an ordinary zero-field library value implementing `executor`; it repeatedly
+`std.async.spin` is an ordinary zero-field library value implementing `executor`; it repeatedly
 polls one owned future until `ready` and introduces no implicit allocation or runtime selection.
 
 ## Modules, Packages, and FFI
@@ -411,17 +411,23 @@ The source library is split into:
 
 - `core`: allocation-free language contracts and primitives;
 - `alloc`: owning heap-backed containers;
-- `std`: an edition-matched source facade above `core` and `alloc`, with host
-  facilities still to be added.
+- `std`: an edition-matched source-owning layer above `core` and `alloc`, with
+  host facilities still to be added.
 
-The compiler embeds `library/std`, validates that its declarations are public
-aliases targeting only `core` or `alloc`, resolves every target, and mounts
-each alias with the target's canonical identity. The bundle participates in
-incremental fingerprints and semantic preprocessing. It cannot define
-language items or host authority, and ordinary source cannot reserve the
-`std`, `core`, or `alloc` namespaces. Host-library loading is accepted only on
+The compiler embeds `library/std`. Ordinary public definitions receive `std`
+identities; private lower-layer aliases may support implementation, while
+public mirror aliases are rejected. The bundle participates in incremental
+fingerprints and semantic preprocessing. It cannot define language items or
+acquire authority by name, and ordinary source cannot reserve the `std`,
+`core`, or `alloc` namespaces. Host-library loading is accepted only on
 Linux/x86-64 and macOS/arm64; other host pairs receive a target-specific
 diagnostic.
+
+The enforced dependency order is `core ← alloc ← std`. Algebraic and
+higher-kinded functional protocols plus their `option`/`result`
+implementations are owned by `std`; the concrete `spin` executor is likewise
+in `std.async`. Freestanding data types, operator/iteration/control
+protocols, cold futures, and the executor protocol remain in `core`.
 
 Public embedded-library declarations use strict ASCII `snake_case` and
 semantic category vocabulary: value types use entity or state nouns, traits
@@ -436,8 +442,9 @@ Implemented `core` facilities include:
 - primitive declarations and compile-time sorts;
 - `borrow`, `ptr`, `array`, `slice`, `size_of`, and `align_of`;
 - ownership markers and operator traits;
-- `option`, `result`, iteration, indexing, and flow protocols;
-- functional constructor traits;
+- `option` and `result`, including inspection, region-preserving views,
+  transformations, fallback, and extraction helpers;
+- iteration, indexing, and flow protocols;
 - effects, handlers, and control contracts.
 
 Implemented `alloc` facilities include:

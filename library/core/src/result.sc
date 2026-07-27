@@ -7,6 +7,90 @@ pub let result(comptime e: type)
   err(e),
 }
 
+/// Common inspection, borrowing, transformation, fallback, and projection
+/// operations for success-or-error values.
+extend(result(error)(t)) {
+  /// Returns whether this result contains a success value.
+  let is_ok(self: borrow(self))(): bool = {
+    match self
+      { ok(_) -> true }
+      { err(_) -> false }
+  }
+
+  /// Returns whether this result contains an error.
+  let is_err(self: borrow(self))(): bool = {
+    match self
+      { ok(_) -> false }
+      { err(_) -> true }
+  }
+
+  /// Projects this borrowed result into borrowed success and error payloads.
+  let as_ref(comptime a: access, comptime r: region)
+    (self: borrow(a)(r)(self))
+    (): result(borrow(a)(r)(error))(borrow(a)(r)(t)) = {
+    match self
+      { ok(value) -> result.ok(borrow(a)(value)) }
+      { err(error) -> result.err(borrow(a)(error)) }
+  }
+
+  /// Transforms `ok` once and preserves `err`.
+  let map(comptime e: effects, comptime u: type)
+    (move self)
+    (move transform: (t): u with(e)): result(error)(u) with(e) = {
+    match self
+      { ok(value) -> result.ok(transform(value)) }
+      { err(error) -> result.err(error) }
+  }
+
+  /// Transforms `err` once and preserves `ok`.
+  let map_error(comptime e: effects, comptime mapped_error: type)
+    (move self)
+    (move transform: (error): mapped_error with(e)): result(mapped_error)(t) with(e) = {
+    match self
+      { ok(value) -> result.ok(value) }
+      { err(error) -> result.err(transform(error)) }
+  }
+
+  /// Runs `next` once for `ok` and preserves `err`.
+  let and_then(comptime e: effects, comptime u: type)
+    (move self)
+    (move next: (t): result(error)(u) with(e)): result(error)(u) with(e) = {
+    match self
+      { ok(value) -> next(value) }
+      { err(error) -> result.err(error) }
+  }
+
+  /// Extracts `ok` or returns the eagerly evaluated fallback.
+  let unwrap_or(move self)(move fallback: t): t = {
+    match self
+      { ok(value) -> value }
+      { err(_) -> fallback }
+  }
+
+  /// Extracts `ok` or evaluates `fallback` exactly once for `err`.
+  let unwrap_or_else(comptime e: effects)
+    (move self)
+    (move fallback: (error): t with(e)): t with(e) = {
+    match self
+      { ok(value) -> value }
+      { err(error) -> fallback(error) }
+  }
+
+  /// Converts `ok` to `some` and `err` to `none`.
+  let ok(move self)(): core.option(t) = {
+    match self
+      { ok(value) -> core.option.some(value) }
+      { err(_) -> core.option.none }
+  }
+
+  /// Converts `err` to `some` and `ok` to `none`.
+  let err(move self)(): core.option(error) = {
+    match self
+      { ok(_) -> core.option.none }
+      { err(error) -> core.option.some(error) }
+  }
+}
+
 /// Provides `?.` chaining for `Result`.
 extend(result(error)(t), core.flow.chain) {
   /// The success payload type.
@@ -59,49 +143,5 @@ extend(result(e)(t), core.flow.raise) {
     match self
       { ok(value) -> value }
       { err(error) -> core.error.throwing(e).raise(error) }
-  }
-}
-
-/// Implements `Functor` for `Result(Error)`.
-extend(result(error), core.functional.functor) {
-  /// Maps `Ok` through `transform` and preserves `Err`.
-  let map(comptime e: effects, comptime a: type, comptime b: type)
-    (self: result(error)(a))
-    (transform: (a): b with(e)): result(error)(b) with(e) = {
-    match self
-      { ok(value) -> result.ok(transform(value)) }
-      { err(error) -> result.err(error) }
-  }
-}
-
-/// Implements `Applicative` for `Result(Error)`.
-extend(result(error), core.functional.applicative) {
-  /// Wraps `value` in `Ok`.
-  let pure(comptime a: type)
-    (value: a): result(error)(a) = {
-    result.ok(value)
-  }
-
-  /// Applies an `Ok` function to an `Ok` value and propagates the first `Err`.
-  let apply(comptime e: effects, comptime a: type, comptime b: type)
-    (self: result(error)((a): b with(e)))
-    (value: result(error)(a)): result(error)(b) with(e) = {
-    match self
-      { ok(transform) -> match value
-        { ok(value) -> result.ok(transform(value)) }
-        { err(error) -> result.err(error) } }
-      { err(error) -> result.err(error) }
-  }
-}
-
-/// Implements `Monad` for `Result(Error)`.
-extend(result(error), core.functional.monad) {
-  /// Runs `next` for `Ok` and propagates `Err`.
-  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
-    (self: result(error)(a))
-    (next: (a): result(error)(b) with(e)): result(error)(b) with(e) = {
-    match self
-      { ok(value) -> next(value) }
-      { err(error) -> result.err(error) }
   }
 }

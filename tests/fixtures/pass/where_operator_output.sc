@@ -1,4 +1,4 @@
-let add = std.ops.add
+let add = core.ops.add
 
 let twice(comptime t: type)(copy value: t): t
 where t: add(t, output = t),

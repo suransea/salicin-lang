@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let invalid(): borrow(slice(i32)) = {
   let values = [20, 22]

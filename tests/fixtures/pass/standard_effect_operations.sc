@@ -1,7 +1,7 @@
-let result = std.result
+let result = core.result
 
-let throwing = std.error.throwing
-let suspension = std.async.suspension
+let throwing = core.error.throwing
+let suspension = core.async.suspension
 
 let fail_with_answer(): never with(throwing(i32)) = {
   throwing(i32).raise(42)

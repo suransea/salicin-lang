@@ -1,4 +1,4 @@
-let string = std.string.string
+let string = alloc.string.string
 
 let main(): i32 = {
   let mut text = string.new()

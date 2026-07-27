@@ -1,5 +1,5 @@
-let unsafety = std.unsafe.unsafety
-let defer = std.control.defer
+let unsafety = core.unsafe.unsafety
+let defer = core.control.defer
 
 let allocate(): ptr(mut)(i32) with(unsafety) = {
   unsafe {

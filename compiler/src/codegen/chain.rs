@@ -497,7 +497,7 @@ impl Analyzer {
                 body: residual,
             },
         });
-        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
+        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context, false)
     }
 
     pub(super) fn lower_chain(
@@ -653,7 +653,13 @@ impl Analyzer {
                 body: wrap("err", Some(Expr::Name(ERROR_BINDING.to_owned()))),
             },
         });
-        self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
+        self.lower_match_with_scrutinee(
+            scrutinee,
+            &arms,
+            Some(&Ty::Enum(canonical)),
+            context,
+            false,
+        )
     }
 
     pub(super) fn lower_custom_chain_call(

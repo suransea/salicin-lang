@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let fail(): option(i32) = {
   throw(true)

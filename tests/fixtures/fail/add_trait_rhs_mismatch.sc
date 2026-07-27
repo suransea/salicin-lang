@@ -1,4 +1,4 @@
-let add = std.ops.add
+let add = core.ops.add
 
 let number = struct { value: i32 }
 let offset = struct { value: i32 }

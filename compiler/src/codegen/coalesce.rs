@@ -154,7 +154,7 @@ impl Analyzer {
                 fallback_arm("err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
         };
-        self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
+        self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context, false)
     }
 
     pub(super) fn lower_custom_coalesce(
@@ -239,6 +239,6 @@ impl Analyzer {
                 fallback_arm("err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
         };
-        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
+        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context, false)
     }
 }

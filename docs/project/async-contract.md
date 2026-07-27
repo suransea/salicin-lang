@@ -258,7 +258,7 @@ separate design for construction, projection, drop, and unsafe escape.
 
 ## executor
 
-The initial executor is the ordinary zero-field library value `core.async.spin`. It implements
+The initial executor is the ordinary zero-field library value `std.async.spin`. It implements
 `executor`; its `run` method owns and polls one future repeatedly until `ready`, then returns the
 output.
 

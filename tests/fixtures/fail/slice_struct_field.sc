@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let invalid = struct {
   values: slice(i32),

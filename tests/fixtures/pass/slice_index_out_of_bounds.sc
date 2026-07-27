@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let main(): i32 = {
   let values = [1, 2]

@@ -1,8 +1,8 @@
-let bit_and = std.ops.bit_and
-let bit_or = std.ops.bit_or
-let bit_xor = std.ops.bit_xor
-let shl = std.ops.shl
-let shr = std.ops.shr
+let bit_and = core.ops.bit_and
+let bit_or = core.ops.bit_or
+let bit_xor = core.ops.bit_xor
+let shl = core.ops.shl
+let shr = core.ops.shr
 
 let bits = struct { value: i32 }
 

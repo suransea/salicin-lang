@@ -1,10 +1,10 @@
 // A complete effectful batch-processing program over the frozen M0 core. The
 // process exits with 42 after applying four valid transactions, or 1 on overdraft.
 
-let option = std.option
-let iterator = std.iter.iterator
-let into_iterator = std.iter.into_iterator
-let owned_item = std.iter.owned_item
+let option = core.option
+let iterator = core.iter.iterator
+let into_iterator = core.iter.into_iterator
+let owned_item = core.iter.owned_item
 
 let transaction = enum {
   credit(i32),

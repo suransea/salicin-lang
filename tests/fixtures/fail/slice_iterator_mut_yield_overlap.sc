@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let main(): i32 = {
   let mut values: array(i32)(2) = [40, 2]

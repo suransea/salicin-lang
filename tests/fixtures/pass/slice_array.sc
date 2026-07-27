@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let read(value: borrow(i32)): i32 = { value }
 

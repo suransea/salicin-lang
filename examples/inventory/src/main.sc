@@ -1,6 +1,6 @@
-let result = std.result
-let string = std.string.string
-let vec = std.vec.vec
+let result = core.result
+let string = alloc.string.string
+let vec = alloc.vec.vec
 
 let bytes(first: u8): vec(u8) = {
   let mut values = vec(u8).new()

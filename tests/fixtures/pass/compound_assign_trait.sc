@@ -1,5 +1,5 @@
-let add_assign = std.ops.add_assign
-let bit_xor_assign = std.ops.bit_xor_assign
+let add_assign = core.ops.add_assign
+let bit_xor_assign = core.ops.bit_xor_assign
 
 let counter = struct { value: i32 }
 

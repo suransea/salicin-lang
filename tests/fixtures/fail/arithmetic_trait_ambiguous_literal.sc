@@ -1,4 +1,4 @@
-let mul = std.ops.mul
+let mul = core.ops.mul
 
 let number = struct { value: i32 }
 

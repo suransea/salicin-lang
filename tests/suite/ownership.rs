@@ -1,6 +1,16 @@
 use crate::support::*;
 
 #[test]
+fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "value_helpers.sc"))
+        .output()
+        .expect("run option and result helper fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn raw_pointer_read_and_write_run_with_expected_result() {
     let fixtures = [
         "raw_pointer_read.sc",
@@ -782,7 +792,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
     let directory = TestDirectory::new();
     let source = directory.write(
         "main.sc",
-        "use std.vec.vec\n\nlet main(): i32 = {\n  let values: vec(i32) = vec(i32).new()\n  values.len()\n  0\n}\n",
+        "use alloc.vec.vec\n\nlet main(): i32 = {\n  let values: vec(i32) = vec(i32).new()\n  values.len()\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
     let executable = directory.join("main");
@@ -1218,7 +1228,7 @@ fn borrow_value_parameter_errors_report_their_cause() {
         ("borrow_value_partial.sc", "partial application"),
         (
             "borrow_value_local_escape.sc",
-            "source is local or cannot be proven",
+            "source must be a region-bound borrow parameter",
         ),
     ] {
         let output = salic()

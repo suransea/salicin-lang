@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let inner = struct { answer: i32 }
 let middle = struct { inner: inner }

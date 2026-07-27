@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let adder = struct { base: i32 }
 

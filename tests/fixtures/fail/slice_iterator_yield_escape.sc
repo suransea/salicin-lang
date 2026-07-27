@@ -1,4 +1,4 @@
-let slice = std.slice
+let slice = core.memory.slice
 
 let escape(): borrow(i32) = {
   let values: array(i32)(1) = [42]

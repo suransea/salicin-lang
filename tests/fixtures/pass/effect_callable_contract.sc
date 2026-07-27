@@ -1,4 +1,4 @@
-let effect_callable = std.effect.effect_callable
+let effect_callable = core.effect.effect_callable
 
 let abandon(move action: effect_callable(i32, i32, i32)): () = { () }
 

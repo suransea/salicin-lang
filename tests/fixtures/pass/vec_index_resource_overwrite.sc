@@ -1,4 +1,4 @@
-let vec = std.vec.vec
+let vec = alloc.vec.vec
 
 let resource = struct { counter: ptr(mut)(i32), value: i32 }
 

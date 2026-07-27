@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let main(): i32 = {
   let choose: (option(i32)): core.control.attempt(option(i32))(i32) = {

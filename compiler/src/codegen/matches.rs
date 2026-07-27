@@ -46,7 +46,13 @@ impl Analyzer {
             return self.lower_scalar_match(scrutinee, arms, expected, context, &scalar_ty);
         }
         let inspect_handler_input = matches!(scrutinee, Expr::Name(name) if name.starts_with("$handler$match$inspect$input$"));
-        let scrutinee = if inspect_handler_input {
+        let inspect_borrowed_enum = matches!(
+            self.probe_expr_ty(scrutinee, None, context),
+            TypeProbe::Known(Ty::Reference { pointee, .. })
+                | TypeProbe::KnownSource(Ty::Reference { pointee, .. }, _)
+                if matches!(pointee.as_ref(), Ty::Enum(_))
+        );
+        let scrutinee = if inspect_handler_input || inspect_borrowed_enum {
             let Some(place) = self.lower_place(scrutinee, context) else {
                 return error_expr();
             };
@@ -62,7 +68,7 @@ impl Analyzer {
         } else {
             self.lower_expr(scrutinee, None, context)
         };
-        self.lower_match_with_scrutinee(scrutinee, arms, expected, context)
+        self.lower_match_with_scrutinee(scrutinee, arms, expected, context, inspect_borrowed_enum)
     }
 
     fn lower_scalar_match(
@@ -209,6 +215,7 @@ impl Analyzer {
         arms: &[MatchArm],
         expected: Option<&Ty>,
         context: &mut LowerCtx,
+        aliases_all_inspected_bindings: bool,
     ) -> HirExpr {
         if matches!(scrutinee.ty, Ty::Tuple(_) | Ty::Struct(_)) {
             return self.lower_irrefutable_match_with_scrutinee(scrutinee, arms, expected, context);
@@ -251,14 +258,14 @@ impl Analyzer {
                 }
             }
             if let Some(root) = &inspected_place {
-                for binding in bindings.iter().filter(|binding| binding.moves) {
+                for binding in bindings
+                    .iter()
+                    .filter(|binding| aliases_all_inspected_bindings || binding.moves)
+                {
                     let mut alias = root.clone();
                     alias.projections.extend(binding.path.iter().copied());
                     alias.ty = binding.ty.clone();
-                    let capability = match binding.ty {
-                        Ty::Reference { mutable: true, .. } => LocalCapability::MutParam,
-                        _ => LocalCapability::SharedParam,
-                    };
+                    let capability = root.capability;
                     alias.capability = capability;
                     let local = context
                         .scopes
@@ -278,7 +285,11 @@ impl Analyzer {
                         },
                     );
                 }
-                bindings.retain(|binding| !binding.moves);
+                if aliases_all_inspected_bindings {
+                    bindings.clear();
+                } else {
+                    bindings.retain(|binding| !binding.moves);
+                }
             }
             if self.type_has_custom_drop(&scrutinee.ty)
                 && bindings

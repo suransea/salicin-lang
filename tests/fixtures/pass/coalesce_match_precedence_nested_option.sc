@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let main(): i32 = {
   let inner = option(i32).some(42)

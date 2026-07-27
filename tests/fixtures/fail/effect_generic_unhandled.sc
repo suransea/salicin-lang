@@ -1,4 +1,4 @@
-let unsafety = std.unsafe.unsafety
+let unsafety = core.unsafe.unsafety
 
 let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }
 let forward(comptime e: effects)(value: i32): i32 with(e) = { tagged(e)(value) }

@@ -1,6 +1,6 @@
-let result = std.result
-let string = std.string.string
-let vec = std.vec.vec
+let result = core.result
+let string = alloc.string.string
+let vec = alloc.vec.vec
 
 let valid(move bytes: vec(u8), expected_length: u64): bool = {
   match string.from_utf8(bytes)

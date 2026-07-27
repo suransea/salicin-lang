@@ -1,4 +1,4 @@
-let result = std.result
+let result = core.result
 
 let main(): i32 = {
   let outer = result(bool)(result(bool)(i32)).err(false)

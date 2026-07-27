@@ -8,16 +8,16 @@ helpers. The implementation package is not part of the intended prelude.
 Owning container names are not implicitly visible. Alias the types a module uses:
 
 ```sc fragment
-let box = std.boxed.box
-let vec = std.vec.vec
+let box = alloc.boxed.box
+let vec = alloc.vec.vec
 ```
 
-Qualified paths such as `std.boxed.box` are also valid. The underlying `alloc` layer is supplied by
+Qualified paths such as `alloc.boxed.box` are also valid. The underlying `alloc` layer is supplied by
 the toolchain and does not need to appear in `salicin.toml`. Prefixed helpers such as `box_new` and
-`vec_push` are private implementation details; `std.boxed` and `std.vec` export only the owning
-types and their inherent APIs.
+`vec_push` are private implementation details. Owning types keep their
+canonical `alloc` paths rather than acquiring mirror paths in `std`.
 
-## `std.boxed`
+## `alloc.boxed`
 
 `box(t)` owns one heap allocation. `box.new(value)` constructs it; `boxed.as_ref()` borrows the
 pointee with shared access and `boxed.as_ref(mut)()` borrows it with exclusive access. The rest of
@@ -27,7 +27,7 @@ unique ownership from a pointer produced by `into_raw`. The caller must not rebu
 owner or pass any other pointer to `from_raw`. Destruction recursively drops the pointee before
 releasing storage.
 
-## `std.vec`
+## `alloc.vec`
 
 `vec(t)` owns contiguous storage and supports both copyable and resource elements. Its API includes
 construction, capacity management, push/pop, insertion/removal, append, truncation, swaps, and
@@ -51,7 +51,7 @@ widening the caller's effect row.
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
-## `std.string`
+## `alloc.string`
 
 `string` is a private `vec(u8)` wrapper whose initialized bytes are
 always valid UTF-8. Length and capacity are byte-based; safe code receives only shared byte views,

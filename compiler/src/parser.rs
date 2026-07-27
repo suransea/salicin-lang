@@ -5016,6 +5016,7 @@ fn infer_extend_pattern(
         Type::Named(name, arguments) => {
             if arguments.is_empty() {
                 let is_concrete = schema.concrete_types.contains(name)
+                    || (root && (name.contains("::") || name.contains('.')))
                     || (expected.is_access()
                         && (matches!(
                             name.as_str(),
@@ -6690,7 +6691,7 @@ mod tests {
     #[test]
     fn parses_qualified_let_bindings_as_transparent_entity_aliases() {
         let program = parse(
-            "let option = std.option\n\
+            "let option = core.option\n\
              let http_client = net.http.client\n\
              pub let status = net.http.status\n\
              pub(package) let value = root.core.value\n\
@@ -6704,7 +6705,7 @@ mod tests {
             vec![
                 UseDecl {
                     visibility: Visibility::Private,
-                    path: vec!["std".into(), "option".into()],
+                    path: vec!["core".into(), "option".into()],
                     alias: Some("option".into()),
                 },
                 UseDecl {
@@ -9376,6 +9377,25 @@ mod tests {
             extension.trait_ref,
             Some(Type::Named("chain".into(), Vec::new()))
         );
+    }
+
+    #[test]
+    fn qualified_extend_roots_are_not_inferred_as_parameters() {
+        let program = parse(
+            "let functor = trait(comptime self: (comptime value: type): type) {}\n\
+             extend(core.option.option, functor) {}\n\
+             extend(core.result.result(error), functor) {}\n",
+        )
+        .unwrap();
+        let Item::Extend(option) = &program.items[1] else {
+            panic!("expected qualified option extension");
+        };
+        assert!(option.compile_groups.is_empty());
+        let Item::Extend(result) = &program.items[2] else {
+            panic!("expected qualified result extension");
+        };
+        assert_eq!(result.compile_groups[0][0].name, "error");
+        assert_eq!(result.compile_groups[0][0].kind, Sort::Type);
     }
 
     #[test]

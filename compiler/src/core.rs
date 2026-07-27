@@ -43,8 +43,6 @@ const EDITION_2026_PASSING: &str = include_str!("../../library/core/src/passing.
 const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
-const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
-const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
@@ -71,20 +69,10 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("borrow", EDITION_2026_BORROW),
     ("control", EDITION_2026_CONTROL),
     ("iter", EDITION_2026_ITER),
-    ("algebra", EDITION_2026_ALGEBRA),
-    ("functional", EDITION_2026_FUNCTIONAL),
     ("memory", EDITION_2026_MEMORY),
 ];
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
-    "primitives",
-    "effect",
-    "control",
-    "iter",
-    "passing",
-    "algebra",
-    "functional",
-];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["primitives", "effect", "control", "iter", "passing"];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
 
@@ -1543,13 +1531,6 @@ pub const fn embedded_iter_source(edition: Edition) -> &'static str {
     }
 }
 
-/// Return the algebra protocol source compiled into this compiler.
-pub const fn embedded_algebra_source(edition: Edition) -> &'static str {
-    match edition {
-        Edition::Edition2026 => EDITION_2026_ALGEBRA,
-    }
-}
-
 fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, CoreBundleError> {
     let mut diagnostics = crate::standard::naming_diagnostics(program, "core");
 
@@ -1982,7 +1963,7 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
 fn is_core_support_item(name: &str) -> bool {
     matches!(
         name,
-        "array_into_iter" | "slice_iter" | "owned_item" | "borrowed_item" | "spin"
+        "array_into_iter" | "slice_iter" | "owned_item" | "borrowed_item"
     )
 }
 
@@ -4229,8 +4210,6 @@ pub let index(comptime key: type) = trait {
             ("borrow", EDITION_2026_BORROW),
             ("control", EDITION_2026_CONTROL),
             ("iter", EDITION_2026_ITER),
-            ("algebra", EDITION_2026_ALGEBRA),
-            ("functional", EDITION_2026_FUNCTIONAL),
             ("memory", EDITION_2026_MEMORY),
         ];
         for (module, source) in overrides {
@@ -4250,7 +4229,7 @@ pub let index(comptime key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 319);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 308);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);

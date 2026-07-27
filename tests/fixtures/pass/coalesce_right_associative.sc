@@ -1,4 +1,4 @@
-let option = std.option
+let option = core.option
 
 let main(): i32 = {
   let first = option(i32).none

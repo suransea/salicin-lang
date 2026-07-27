@@ -1,4 +1,4 @@
-let box = std.boxed.box
+let box = alloc.boxed.box
 
 let main(): i32 = {
   let pointer = box.new(42).into_raw()

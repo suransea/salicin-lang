@@ -746,7 +746,7 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use std.option
+        r#"use core.option
 
 pub let number = struct { value: i32 }
 let secret = trait {
@@ -847,8 +847,8 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use std.option
-let add = std.ops.add
+        r#"use core.option
+let add = core.ops.add
 
 pub let number = struct { value: i32 }
 extend(number, add(number)) {
@@ -1339,8 +1339,8 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"use std.result
-let throwing = std.error.throwing
+        r#"use core.result
+let throwing = core.error.throwing
 let stop(): never = { loop {} }
 let absurd(move value: never): i32 = { value }
 let propagate(move value: never): result(())(i32) = { value }
