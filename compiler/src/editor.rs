@@ -589,6 +589,8 @@ mod tests {
 
     #[test]
     fn every_failure_fixture_produces_ranged_editor_diagnostics() {
+        use std::sync::{Arc, Mutex};
+
         let directory =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fail");
         let mut paths = std::fs::read_dir(directory)
@@ -597,24 +599,39 @@ mod tests {
             .filter(|path| path.extension().is_some_and(|extension| extension == "sc"))
             .collect::<Vec<_>>();
         paths.sort();
-        for path in paths {
-            let source = std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
-            let analysis = analyze(&source, DocumentTarget::Binary);
-            assert!(
-                !analysis.diagnostics.is_empty(),
-                "{} unexpectedly had no diagnostics",
-                path.display()
-            );
-            assert!(
-                analysis
-                    .diagnostics
-                    .iter()
-                    .all(|diagnostic| diagnostic.range.is_some()),
-                "{} had an unranged diagnostic: {:?}",
-                path.display(),
-                analysis.diagnostics
-            );
-        }
+        let worker_count = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
+            .unwrap_or(2)
+            .clamp(1, 8)
+            .min(paths.len());
+        let jobs = Arc::new(Mutex::new(paths.into_iter()));
+
+        std::thread::scope(|scope| {
+            for _ in 0..worker_count {
+                let jobs = Arc::clone(&jobs);
+                scope.spawn(move || loop {
+                    let Some(path) = jobs.lock().expect("lock failure fixtures").next() else {
+                        break;
+                    };
+                    let source = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
+                    let analysis = analyze(&source, DocumentTarget::Binary);
+                    assert!(
+                        !analysis.diagnostics.is_empty(),
+                        "{} unexpectedly had no diagnostics",
+                        path.display()
+                    );
+                    assert!(
+                        analysis
+                            .diagnostics
+                            .iter()
+                            .all(|diagnostic| diagnostic.range.is_some()),
+                        "{} had an unranged diagnostic: {:?}",
+                        path.display(),
+                        analysis.diagnostics
+                    );
+                });
+            }
+        });
     }
 }

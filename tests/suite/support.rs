@@ -157,23 +157,30 @@ pub(crate) fn trapping_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(Strin
         .collect::<Vec<_>>();
     let jobs = Arc::new(Mutex::new(paths.into_iter().enumerate()));
     let results = Arc::new(Mutex::new(Vec::new()));
+    let worker_count = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(2)
+        .clamp(1, 8)
+        .min(names.len());
     thread::scope(|scope| {
-        let jobs = Arc::clone(&jobs);
-        let results = Arc::clone(&results);
-        thread::Builder::new()
-            .name("salic-trapping-fixture".into())
-            .stack_size(16 * 1024 * 1024)
-            .spawn_scoped(scope, move || loop {
-                let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
-                    break;
-                };
-                let output = run_source_in_process(&path);
-                results
-                    .lock()
-                    .expect("lock native results")
-                    .push((index, path, output));
-            })
-            .expect("spawn trapping-fixture worker");
+        for _ in 0..worker_count {
+            let jobs = Arc::clone(&jobs);
+            let results = Arc::clone(&results);
+            thread::Builder::new()
+                .name("salic-trapping-fixture".into())
+                .stack_size(16 * 1024 * 1024)
+                .spawn_scoped(scope, move || loop {
+                    let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
+                        break;
+                    };
+                    let output = run_source_in_process(&path);
+                    results
+                        .lock()
+                        .expect("lock native results")
+                        .push((index, path, output));
+                })
+                .expect("spawn trapping-fixture worker");
+        }
     });
     let mut results = Arc::try_unwrap(results)
         .expect("native workers released results")

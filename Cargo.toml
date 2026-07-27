@@ -21,3 +21,7 @@ sha2 = "0.10"
 toml = "0.9"
 unicode-ident = "1"
 unicode-normalization = "0.1"
+
+[profile.test]
+opt-level = 1
+debug = 1
