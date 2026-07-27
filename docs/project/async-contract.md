@@ -24,42 +24,42 @@ It does not introduce a general runtime trait-object model.
 `core.marker` owns the mobility marker:
 
 ```sc future
-pub let Move = trait {}
+pub let movable = trait {}
 ```
 
 `core.async` owns the allocation-free async contracts:
 
 ```sc future
-pub let Poll(T: type) = enum {
-  Pending
-  Ready(T)
+pub let poll(comptime t: type) = enum {
+  pending
+  ready(t)
 }
 
-pub let Future(E: effects) = trait
-where Self: Move {
-  let Output: type
-  let poll(R: region)
-    (self: borrow(mut)(R)(Self))(): Poll(Output) with(E)
+pub let future(comptime e: effects) = trait
+where self: movable {
+  let output: type
+  let poll(comptime r: region)
+    (self: borrow(mut)(r)(self))(): poll(output) with(e)
 }
 
-pub let Executor = trait {
-  let run(E: effects, F: type)
-    (self: borrow(mut)(Self))
-    (move future: F): F.Output with(E)
-  where F: Future(E)
+pub let executor = trait {
+  let run(comptime e: effects, comptime f: type)
+    (self: borrow(mut)(self))
+    (move future: f): f.output with(e)
+  where f: future(e)
 }
 ```
 
 The compiler validates these declarations as language items before privileged async lowering.
 Names alone have no authority.
 
-`Move` is a source-backed auto marker for types whose values may be relocated without invalidating
-their internal state. `Copy` requires `Move`. Scalars, borrows, raw pointers, and nominal values
-whose fields are all `Move` satisfy it structurally. A compiler-generated value with an internal
+`movable` is a source-backed auto marker for types whose values may be relocated without invalidating
+their internal state. `copyable` requires `movable`. Scalars, borrows, raw pointers, and nominal values
+whose fields are all `movable` satisfy it structurally. A compiler-generated value with an internal
 self-reference does not.
 
-`Future(E)` is parameterized by the residual effect row of `poll`. The internal suspension effect
-is discharged by the generated state machine and is not part of `E`.
+`future(e)` is parameterized by the residual effect row of `poll`. The internal suspension effect
+is discharged by the generated state machine and is not part of `e`.
 
 ## Async Expressions
 
@@ -74,35 +74,35 @@ let future = async {
 Evaluating `async { body }`:
 
 1. evaluates and transfers its captures from left to right;
-2. creates a cold anonymous value implementing `Future(E)`;
+2. creates a cold anonymous value implementing `future(e)`;
 3. does not execute `body`.
 
 The body starts on the first `poll`. Each `await operand` evaluates `operand` once, stores the
-resulting future, and polls it. `Ready(value)` resumes the body with `value`; `Pending` stores the
-current state and returns `Pending` from the outer future.
+resulting future, and polls it. `ready(value)` resumes the body with `value`; `pending` stores the
+current state and returns `pending` from the outer future.
 
 `await` is contextual and valid only within an async body. It cannot cross a named function,
 closure, handler clause, or nested async boundary.
 
-The type and residual effects of the body determine `Future(E).Output` and `E`. Handling an effect
-inside the body removes it normally. Unhandled `Throws(Error)`, `Unsafe`, and custom effects remain
+The type and residual effects of the body determine `future(e).output` and `e`. Handling an effect
+inside the body removes it normally. Unhandled `throws(error)`, `unsafe_effect`, and custom effects remain
 requirements of `poll`.
 
 The implemented suspended residual slice accepts a first segment ending in
 one `await`, optionally followed by a finite linear sequence of pure await
-segments. The first segment may retain custom effects or `Throws`; later
-child poll rows may not. Every segment may capture by-value `Copy` or
+segments. The first segment may retain custom effects or `throws`; later
+child poll rows may not. Every segment may capture by-value `copyable` or
 move-only values, or retain a region-checked shared or mutable reference to
 external storage. Pre-await locals used by a continuation may likewise be
-retained when the resulting state remains structural `Move`. The enclosing handler specializes the generated
+retained when the resulting state remains structural `movable`. The enclosing handler specializes the generated
 poll source. On the cold transition, the parent marks transferred factory
 captures unavailable before evaluating the child factory; an abort therefore
 cannot clean the same capture again. A distinct starting state retains
 move-only continuation captures while factory locals remain under ordinary
 scope cleanup. After the factory returns, the child and retained locals enter
-the suspended state together. A `Pending` child remains stored, and later
+the suspended state together. A `pending` child remains stored, and later
 polls invoke only the active child rather than replaying an earlier factory or
-its residual effects. Each Ready transition destroys its completed child
+its residual effects. Each ready transition destroys its completed child
 before constructing the next. Completion, error, and cancellation each
 destroy every initialized child, retained local, and continuation capture
 once. A borrow of storage retained in the same future remains rejected as
@@ -116,18 +116,18 @@ is then transferred through a pure bridge into the private active-variant
 state. When pre-await locals are live in the continuation, the same bridge
 constructs the complete `(selected child, retained...)` bundle so the child
 and retained fields enter the suspended state atomically. Selection and the
-chosen factory execute once; Pending, Ready, and cancellation touch only the
+chosen factory execute once; pending, ready, and cancellation touch only the
 selected child, while every initialized retained value is cleaned exactly
-once. After a pure child becomes Ready, a final continuation that does not
-suspend again may retain custom effects or `Throws`. The pure state-machine
+once. After a pure child becomes ready, a final continuation that does not
+suspend again may retain custom effects or `throws`. The pure state-machine
 transition first destroys the completed child and transfers the await output,
 continuation captures, and retained locals into one private tuple. The source
 poll wrapper then executes that continuation under the enclosing handler.
 Pending and cancellation never execute it; success, error, and handler
 abandonment clean every transferred value once. A later sequential segment
 may construct and poll another residual child. Handler ownership transfers to
-that active child only after cold construction; Pending returns it to the
-parent, Ready advances once, and cancellation or handler abandonment destroys
+that active child only after cold construction; pending returns it to the
+parent, ready advances once, and cancellation or handler abandonment destroys
 exactly the initialized child.
 
 ## State Machines
@@ -154,76 +154,76 @@ nesting of anonymous futures. Conceptually, one suspended iteration completes wi
 compiler-internal outcomes:
 
 ```sc future
-let AsyncLoopStep(Carry: type, Output: type) = enum {
-  Continue(Carry)
-  Break(Output)
+let async_loop_step(comptime carry: type, comptime output: type) = enum {
+  continue_effect(carry)
+  break_effect(output)
 }
 ```
 
-This is a lowering model, not a public standard-library declaration. `Carry` contains exactly the
+This is a lowering model, not a public standard-library declaration. `carry` contains exactly the
 values live across the loop backedge. Each iteration takes those values by value. A `continue` or
-fallthrough transfers them to `Continue`; a value-producing `break` transfers its value to
-`Break`. A `while` condition that becomes false is the unit-valued break path.
+fallthrough transfers them to `continue_effect`; a value-producing `break` transfers its value to
+`break_effect`. A `while` condition that becomes false is the unit-valued break path.
 
 The parent future stores one active iteration child and reuses that storage after the child
 completes:
 
-1. `Pending` leaves the active child and carried values initialized and returns `Pending`;
-2. `Ready(Continue(carry))` destroys the completed child, constructs the next iteration in the same
+1. `pending` leaves the active child and carried values initialized and returns `pending`;
+2. `ready(continue_effect(carry))` destroys the completed child, constructs the next iteration in the same
    child slot from `carry`, and polls it immediately;
-3. `Ready(Break(output))` destroys the completed child, marks the parent completed, and returns
-   `Ready(output)`.
+3. `ready(break_effect(output))` destroys the completed child, marks the parent completed, and returns
+   `ready(output)`.
 
 Immediate iterations are consumed in an ordinary poll-local loop. They do not add observable
 suspension points or recurse in either the generated type or the host call stack. The implementation
 may impose a documented fairness budget later, but the initial allocation-free contract runs until
-a child returns `Pending` or the source loop exits.
+a child returns `pending` or the source loop exits.
 
 A pre-test `while` evaluates its condition before constructing the first iteration and after each
-`Continue`; a post-test loop skips only the first condition check. A false condition is
-`Break(())`, and no condition is evaluated while an active iteration is Pending. The current
+`continue_effect`; a post-test loop skips only the first condition check. A false condition is
+`break_effect(())`, and no condition is evaluated while an active iteration is pending. The current
 implementation requires a recurring condition to be pure. Effectful conditions
 require a distinct resumable condition state and are rejected before lowering.
 
 When one source iteration contains multiple sequential suspension points, it is lowered to a
 finite, non-recursive iteration future. That child owns only the currently active nested segment
-and eventually produces the same step outcome. Its `Break(Output)` type is inferred after binding
-each awaited `Future.Output` in source order. Cancelling the parent delegates cleanup through this
+and eventually produces the same step outcome. Its `break_effect(output)` type is inferred after binding
+each awaited `future.output` in source order. Cancelling the parent delegates cleanup through this
 finite child chain. If that iteration child's own `poll` retains a residual
 effect row, recurring handler specialization is not yet composed through the
 nested poll and the source program is rejected.
 
 A recurring loop with one residual child factory per iteration is specialized
 under the enclosing handler. The child is constructed cold after a true
-pre-test condition, and never before it. Each completed `Continue` yields
-`Pending` at the source wrapper boundary, then constructs the next effectful
-child on the following external poll. `Ready`, child `Pending`, cancellation,
-`Throws`, and handler abandonment preserve one-shot construction and cleanup.
+pre-test condition, and never before it. Each completed `continue_effect` yields
+`pending` at the source wrapper boundary, then constructs the next effectful
+child on the following external poll. `ready`, child `pending`, cancellation,
+`throws`, and handler abandonment preserve one-shot construction and cleanup.
 Post-test loops skip only the first condition check.
 
 For a general unit-valued iteration body, `break` and `continue` at the current loop depth become
 early returns from that iteration future. Normal exits from nested `if` and `match` branches receive
-the fallthrough `Continue(())` outcome. Rewriting does not cross a nested loop, closure, or async
+the fallthrough `continue_effect(())` outcome. Rewriting does not cross a nested loop, closure, or async
 boundary.
 
 Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
 fallthrough, values not transferred into the step outcome are dropped before the control transfer.
 Dropping the parent while suspended drops only the active iteration and then the parent fields;
 completed iterations are never retained or dropped again. Loop-carried borrows remain subject to
-the same `Move` rule as every other value stored across `await`; in particular, an iteration cannot
-return a borrow into its own storage as `Carry`.
+the same `movable` rule as every other value stored across `await`; in particular, an iteration cannot
+return a borrow into its own storage as `carry`.
 
-Move-only parent values referenced by the post-await continuation are explicit fields of `Carry`.
-The continuation moves them into every reachable `Continue`, and the parent reinitializes their
-state fields before constructing the next child. A `Break` path instead consumes or drops them in
-that continuation. A source loop with no reachable `Break` uses the standard uninhabited `Never`
-type as `Output`; the internal break variant cannot be constructed.
+Move-only parent values referenced by the post-await continuation are explicit fields of `carry`.
+The continuation moves them into every reachable `continue_effect`, and the parent reinitializes their
+state fields before constructing the next child. A `break_effect` path instead consumes or drops them in
+that continuation. A source loop with no reachable `break_effect` uses the standard uninhabited `never`
+type as `output`; the internal break variant cannot be constructed.
 
 ## Ownership And Cancellation
 
-An anonymous future is an owned resource unless all of its stored state is structurally `Copy` and
+An anonymous future is an owned resource unless all of its stored state is structurally `copyable` and
 the compiler can prove that copying cannot duplicate an active computation. The initial
-implementation does not make active futures `Copy`.
+implementation does not make active futures `copyable`.
 
 Dropping a not-started or suspended future cancels it:
 
@@ -233,51 +233,51 @@ Dropping a not-started or suspended future cancels it:
 - moved-out and never-initialized fields are skipped;
 - cancellation performs no implicit effect handling or unwind.
 
-After `Ready(output)`, ownership of `output` leaves the state machine and remaining state is cleaned
+After `ready(output)`, ownership of `output` leaves the state machine and remaining state is cleaned
 exactly once.
 
-## Move And Borrowing
+## `movable` and Borrowing
 
 The first version rejects a borrow whose referent is stored in the same generated state machine
 when that borrow is live across `await`. This includes references to captured fields, earlier local
-fields, and projections of either. Such a state machine cannot implement `Move`, which is required
-by the initial `Future(E)` contract. Diagnostics identify the source borrow, suspension point, and
-failed `Move` requirement.
+fields, and projections of either. Such a state machine cannot implement `movable`, which is required
+by the initial `future(e)` contract. Diagnostics identify the source borrow, suspension point, and
+failed `movable` requirement.
 
 A future may retain a borrow of an external source when the future's lifetime is proven not to
 outlive that source. The loan remains active for the lifetime of the future and ordinary shared or
 mutable alias rules continue to apply.
 
 Explicit `move` parameter passing, returning an owned value, relocation assignment, and moving a
-value into reallocating storage require `Move`. Initializing a value directly in its final storage
+value into reallocating storage require `movable`. Initializing a value directly in its final storage
 does not. Polling requires an exclusive borrow, so a future cannot move while a poll is active.
 
-No public `Pin` type is introduced. If Salicin later admits non-`Move` futures, they must be
+No public `pin` type is introduced. If Salicin later admits non-`movable` futures, they must be
 constructed and polled in stable storage through explicit in-place APIs. That change requires a
 separate design for construction, projection, drop, and unsafe escape.
 
-## Executor
+## executor
 
-The initial executor is the ordinary zero-field library value `core.async.Spin`. It implements
-`Executor`; its `run` method owns and polls one future repeatedly until `Ready`, then returns the
+The initial executor is the ordinary zero-field library value `core.async.spin`. It implements
+`executor`; its `run` method owns and polls one future repeatedly until `ready`, then returns the
 output.
 
-`Pending` grants permission to poll again but does not imply a wake notification. This bounded spin
+`pending` grants permission to poll again but does not imply a wake notification. This bounded spin
 executor is sufficient to validate state transitions, nested awaits, cancellation, and effects. A
-later host executor may add an explicit wake contract without changing `Future(E)` only if polling
+later host executor may add an explicit wake contract without changing `future(e)` only if polling
 without a context remains sound; otherwise that addition is a new contract revision.
 
 Creating or polling a future never selects an executor. Heap erasure, when needed for recursive or
-heterogeneous storage, uses a dedicated allocation-layer `BoxFuture(E)(T)` adapter and is always an
+heterogeneous storage, uses a dedicated allocation-layer `box_future(e)(t)` adapter and is always an
 explicit operation.
 
 ## Recursion And Erasure
 
 Non-recursive private functions may infer an anonymous future result. Public APIs must expose a
-named concrete future or an explicit `BoxFuture(E)(T)`.
+named concrete future or an explicit `box_future(e)(t)`.
 
 Direct async recursion is rejected because it creates an infinitely sized state machine. Recursion
-requires an explicit allocation and erasure boundary such as `BoxFuture`. This adapter is a
+requires an explicit allocation and erasure boundary such as `box_future`. This adapter is a
 dedicated linear future representation, not general dynamic trait dispatch.
 
 ## Rejection Boundaries
@@ -285,13 +285,13 @@ dedicated linear future representation, not general dynamic trait dispatch.
 The compiler rejects:
 
 - `await` outside an async body;
-- a generated future that cannot satisfy its `Move` requirement, including a self-reference live
+- a generated future that cannot satisfy its `movable` requirement, including a self-reference live
   across suspension;
 - a future escaping an external borrow region;
 - moving or polling a future while it is borrowed;
 - polling a completed future when statically evident;
 - recursive anonymous future layouts without explicit indirection;
-- effect rows that cannot be determined for the generated `Future(E)` implementation;
+- effect rows that cannot be determined for the generated `future(e)` implementation;
 - public anonymous future results;
 - generated state whose size or cleanup plan exceeds compiler limits.
 
@@ -300,8 +300,8 @@ The compiler rejects:
 Implementation tasks must cover:
 
 - cold creation and first poll;
-- immediate `Ready` and one or more `Pending` transitions;
-- nested await and residual `Throws`, `Unsafe`, and custom effects;
+- immediate `ready` and one or more `pending` transitions;
+- nested await and residual `throws`, `unsafe_effect`, and custom effects;
 - move captures and locals live across suspension;
 - suspended `while` and `loop` iterations, including `continue`, fallthrough, false conditions, and
   value-producing `break`;
@@ -309,5 +309,5 @@ Implementation tasks must cover:
 - cancellation before start and at every suspension point;
 - cancellation in a suspended iteration without retaining or redropping completed iterations;
 - external shared and mutable borrow retention;
-- structural `Move`, self-reference, escape, double-poll, recursion, and public-API rejection;
+- structural `movable`, self-reference, escape, double-poll, recursion, and public-API rejection;
 - deterministic IR, source-level diagnostics, and exactly-once native cleanup.

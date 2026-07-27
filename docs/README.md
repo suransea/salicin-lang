@@ -41,6 +41,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 - [Implementation status](project/status.md): supported behavior and known boundaries.
 - [Project roadmap](project/roadmap.md): milestone order, exit conditions, and deferrals.
 - [Project TODO](project/todo.md): unfinished tasks and their acceptance criteria.
+- [Initial standard-library surface](project/standard-library-surface.md): accepted module,
+  naming, ownership, failure, host-authority, portability, and minimum-API contract.
 - [Experimental ABI review](project/abi-review.md): current runtime representations and boundary
   gaps.
 - [Native calling convention](project/native-calling-convention.md): parameter flattening,

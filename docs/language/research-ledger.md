@@ -23,7 +23,7 @@ close to staged compilation:
 - [Staged Compilation with Two-Level Type Theory (2022)](https://arxiv.org/abs/2209.09729)
 - [When Do Staging Annotations Preserve Semantics? (2026)](https://arxiv.org/abs/2606.30854)
 
-The implementation consequence is strict: effects, mutation, borrowing, handlers, foreign calls,
+The implementation consequence is comptime strict: effects, mutation, borrowing, handlers, foreign calls,
 and runtime closures do not enter type-level evaluation. Compile-time arithmetic is checked and
 evaluation failure is a diagnostic rather than undefined behavior.
 
@@ -38,9 +38,9 @@ uninterpreted classifier without elimination, equality, normalization, and ABI r
 an unsound extension point rather than useful abstraction.
 
 Syntax metadata uses the same static-language boundary. `abi = sort { c }` is finite, with
-decidable member equality; `String` is compiler-owned and currently introduced only by syntax
+decidable member equality; `string` is compiler-owned and currently introduced only by syntax
 positions such as test registration names. Both are erased before runtime lowering. A metadata
-The compile-time `String` value is the decoded UTF-8 literal payload and is never implicitly
+The compile-time `string` value is the decoded UTF-8 literal payload and is never implicitly
 converted to the future
 runtime text representation.
 
@@ -112,6 +112,26 @@ This direction is checked against Koka's row-polymorphic effect model:
 
 - [Programming with Row-polymorphic Effect Types](https://koka-lang.github.io/koka/doc/book.html)
 
+### Host Authority and Host Errors Are Separate
+
+The accepted [standard-library surface](../project/standard-library-surface.md)
+uses a validated `io` effect to make host authority visible, owned resource
+handles to attenuate that authority to particular files, and
+`result(io_error)(t)` values for recoverable failures. Effect rows, capability
+handles, and errors therefore keep distinct static roles.
+
+This direction follows WASI's distinction between link-time capabilities and
+unforgeable runtime handles. It is also consistent with recent work comparing
+row-polymorphic, capability-passing, and modal effect systems: the models can
+cooperate without pretending that a row label itself identifies a particular
+runtime resource.
+
+Primary references reviewed on 2026-07-27:
+
+- [WASI capabilities](https://github.com/WebAssembly/WASI/blob/main/docs/Capabilities.md)
+- [Rows and Capabilities as Modal Effects (HOPE 2025)](https://conf.researchr.org/details/icfp-splash-2025/hope-2025-papers/5/Rows-and-Capabilities-as-Modal-Effects-Extended-Abstract)
+- [Zero-Overhead Lexical Effect Handlers (OOPSLA 2025)](https://cs.uwaterloo.ca/~yizhou/papers/zero-oopsla2025.pdf)
+
 ## Review Gate
 
 Before extending the static language:
@@ -119,7 +139,7 @@ Before extending the static language:
 1. Record the new construct's Sort and normalization rule.
 2. State whether equality remains decidable and how ambiguity is diagnosed.
 3. Prove or test phase separation: runtime effects and storage cannot leak into static evaluation.
-4. Add positive, rejection, substitution, and nontermination/complexity tests.
+4. add positive, rejection, substitution, and nontermination/complexity tests.
 5. Compare the change with primary literature or current production-language specifications and
    date this ledger.
 

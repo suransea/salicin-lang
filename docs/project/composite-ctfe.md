@@ -126,7 +126,7 @@ the operand width. There is no LLVM poison, wrapping fallback, or
 host-language overflow.
 
 Conversions are explicit and fallible unless the destination can represent
-every source value. Array indexes are `usize`; an index greater than or equal
+every source value. array indexes are `usize`; an index greater than or equal
 to the array length fails before reading an element.
 
 ## Equality and Normalization

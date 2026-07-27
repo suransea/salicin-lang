@@ -22,10 +22,10 @@ requires it.
 Conceptually, `if` has this shape:
 
 ```sc fragment
-let if(E: effects, T: type)
-  (condition: Bool)
-  (move then: (): T with(E))
-  (move else: (): T with(E)): T with(E)
+let if(comptime e: effects, comptime t: type)
+  (condition: bool)
+  (move then: (): t with(e))
+  (move else: (): t with(e)): t with(e)
 ```
 
 The ordinary surface form:
@@ -44,7 +44,7 @@ must therefore preserve these properties:
 - invoke exactly one branch;
 - preserve the selected branch's effects;
 - clean captures of the unselected branch exactly once;
-- produce one common result type, allowing `Never` coercion.
+- produce one common result type, allowing `never` coercion.
 
 `while` evaluates its condition before each iteration. `do ... while` evaluates its condition after
 each iteration. `loop` has the type selected by its reachable `break` values.
@@ -57,7 +57,7 @@ each iteration. `loop` has the type selected by its reachable `break` values.
 - `break(value)` exits the nearest loop.
 - `continue()` starts the next iteration of the nearest loop.
 
-Each exit has type `Never`. Lowering must run cleanup for every initialized value whose scope is
+Each exit has type `never`. Lowering must run cleanup for every initialized value whose scope is
 left, without dropping transferred values or running cleanup twice.
 
 ## Deferred Actions
@@ -71,7 +71,7 @@ begin. Deferred actions therefore cannot change the selected exit value. A `cont
 registered in the iteration body before starting the next iteration; a break or continue belonging
 to a nested loop does not exit an enclosing block outside that loop.
 
-`defer` is valid only as a standalone statement. Its action has type `(): () with(E)`, so ordinary
+`defer` is valid only as a standalone statement. Its action has type `(): () with(e)`, so ordinary
 effect checking and handler selection apply to the invocation. Lowering must preserve the action's
 capture ownership and must not expose compiler-generated binding names in diagnostics.
 
@@ -96,11 +96,11 @@ optimization must preserve ordinary ownership, borrowing, effect, and cleanup se
 
 ```sc fragment
 match option {
-  Some(value) if value > 0 -> value
+  some(value) if value > 0 -> value
 } {
-  Some(_) -> 0
+  some(_) -> 0
 } {
-  None -> -1
+  none -> -1
 }
 ```
 
@@ -118,12 +118,12 @@ Compiler-generated internal match names must never appear in user diagnostics.
 
 ## For
 
-`for pattern in iterable { body }` is governed by `IntoIterator` and `Iterator`:
+`for pattern in iterable { body }` is governed by `into_iterator` and `iterator`:
 
 ```sc fragment
-let Iterator = trait {
-  let Item(R: region): type
-  let next(R: region)(self: borrow(mut)(R)(Self)): core.Option(Item(R))
+let iterator = trait {
+  let item(comptime r: region): type
+  let next(comptime r: region)(self: borrow(mut)(r)(self)): core.option(item(r))
 }
 ```
 

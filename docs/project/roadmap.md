@@ -15,7 +15,7 @@ can support daily development. The near-term order is deliberately:
 
 1. make compile-time evaluation understand ordinary scalar and composite
    values;
-2. make ordinary programs practical with text, collections, host IO, and test
+2. make ordinary programs practical with text, collections, host I/O, and test
    support;
 3. make unchanged builds reusable;
 4. make source analysis continuously available to editors;
@@ -51,41 +51,42 @@ history remains in the changelog.
 
 The language core can already express ownership-sensitive containers and
 effectful programs, but the library surface is not yet sufficient for ordinary
-command-line applications. `String` owns validated UTF-8 but lacks borrowed
-text, character iteration, search, and formatting. `Array`, `Slice`, and
-`Vec` do not yet share a consistent safe-access and algorithm vocabulary.
+command-line applications. `string` owns validated UTF-8 but lacks borrowed
+text, character iteration, search, and formatting. `array`, `slice`, and
+`vec` do not yet share a consistent safe-access and algorithm vocabulary.
 There is no host-facing `std` layer, and `test("name")` registrations return
 only a boolean without standard assertions or structured failures.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:
 
-1. fix the module, error, naming, and ownership contracts for the minimum
-   standard-library surface;
+1. implement the accepted
+   [module, error, naming, and ownership contract](standard-library-surface.md)
+   for the minimum standard-library surface;
 2. complete UTF-8 text and common collection operations;
-3. add parsing and source-backed formatting needed by IO and test messages;
+3. add parsing and source-backed formatting needed by I/O and test messages;
 4. add explicit synchronous console, process, and filesystem authority;
-5. build assertion helpers and runner ergonomics on the same formatting and IO
+5. build assertion helpers and runner ergonomics on the same formatting and I/O
    contracts.
 
 The small prelude remains small. APIs live in explicit `std` modules, safe
 operations preserve UTF-8 and collection initialization invariants, and host
-operations require visible authority rather than introducing ambient IO.
+operations require visible authority rather than introducing ambient I/O.
 
 Exit conditions:
 
-- a standard-library surface document records the initial module map,
-  naming conventions, ownership modes, error types, trap-versus-`Option` or
-  `Result` behavior, and portability boundary;
+- the accepted [standard-library surface](standard-library-surface.md) records the initial module map,
+  naming conventions, ownership modes, error types, trap-versus-`option` or
+  `result` behavior, and portability boundary;
 - text has a zero-allocation runtime string literal, an invariant-preserving
   borrowed UTF-8 view, a Unicode scalar value, byte and scalar iteration,
   boundary-safe slicing, comparison, common search, and corresponding
-  `String` construction and mutation operations;
-- `Array`, `Slice`, and `Vec` share `len`, `is_empty`, checked access,
+  `string` construction and mutation operations;
+- `array`, `slice`, and `vec` share `len`, `is_empty`, checked access,
   first/last access, slicing or slice conversion, shared and mutable
   iteration, common mutation, and search/fold predicates where their ownership
   permits;
-- `Option` and `Result` expose common inspection, borrowing, transformation,
+- `option` and `result` expose common inspection, borrowing, transformation,
   and fallback operations, and primitive numbers expose bounded conversion
   and basic utility functions without bypassing checked arithmetic;
 - integer, boolean, Unicode scalar, and text parsing or formatting is
@@ -93,20 +94,20 @@ Exit conditions:
   macros or reflection;
 - a real `std` host layer provides process arguments, synchronous stdin,
   stdout and stderr, and deterministic file open/read/write/close with
-  explicit IO authority and recoverable errors;
+  explicit io authority and recoverable errors;
 - standard test support provides `assert`, equality and inequality
-  assertions, explicit failure, common `Option`/`Result` expectations, and
+  assertions, explicit failure, common `option`/`result` expectations, and
   messages that identify the failing registration without aborting the
   remaining runner;
 - `salic test` can list and filter registrations, while dependency tests
   remain isolated unless their package is selected;
 - native examples exercise text parsing, collection processing, file or
-  console IO, and standard assertions with deterministic cleanup and no
+  console I/O, and standard assertions with deterministic cleanup and no
   allocation leaks.
 
 The first milestone does not include Unicode normalization, locale-sensitive
 case mapping or collation, grapheme segmentation, regex, hash collections,
-networking, asynchronous IO, formatting macros or interpolation syntax,
+networking, asynchronous I/O, formatting macros or interpolation syntax,
 property testing, mocking, or benchmarking.
 
 ## Later: Persistent Incremental Builds
@@ -224,7 +225,7 @@ the executable queue:
 - per-package incremental reuse based on dependency interface digests;
 - compile-time mutation, loop normalization, allocation, and resource values;
 - runtime nominal types as compile-parameter classifiers;
-- networking, asynchronous IO, time, subprocess, and platform-service APIs;
+- networking, asynchronous I/O, time, subprocess, and platform-service APIs;
 - Unicode normalization, grapheme segmentation, locale-sensitive text, and
   regular expressions;
 - hash maps, hash sets, and a stable hashing contract;
@@ -246,7 +247,7 @@ a roadmap outcome.
 The following remain intentionally outside the accepted roadmap:
 
 - multi-shot continuations;
-- implicit ambient IO or allocation authority;
+- implicit ambient I/O or allocation authority;
 - garbage collection as a second ownership model;
 - runtime trait objects and open-world dispatch;
 - macros, reflection, and general compile-time execution;

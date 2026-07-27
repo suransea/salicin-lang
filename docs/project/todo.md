@@ -24,12 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Foundation
 
-- [ ] **STD-1 — Usability surface contract.** Define the initial `core`,
-  `alloc`, and host `std` module map; public naming; prelude exclusions;
-  ownership and borrow modes; trap-versus-`Option`/`Result` policy; error
-  families; target support; and the minimum API matrix for text, collections,
-  conversion, IO, and tests.
-
 - [ ] **STD-2 — Host library boundary.** Add the edition-matched `library/std`
   source layer above `core` and `alloc`, its embedding and module-resolution
   rules, and explicit rejection on unsupported targets. Do not give ordinary
@@ -37,7 +31,7 @@ status and changelog instead of remaining as a checked archive.
 
 ### Common values
 
-- [ ] **VALUE-1 — `Option` and `Result` ergonomics.** Add common state
+- [ ] **VALUE-1 — `option` and `result` ergonomics.** Add common state
   inspection, borrowed views, transformations, error mapping, fallback, and
   extraction helpers while keeping payload evaluation single-shot and
   forwarding callback effects.
@@ -58,7 +52,7 @@ status and changelog instead of remaining as a checked archive.
   and from existing byte slices. Compile-time test names and foreign symbols
   remain metadata rather than runtime allocations.
 
-- [ ] **TEXT-2 — Core `String` operations.** Add construction from borrowed
+- [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
   text and scalars; borrowed text access; `push`, `push_str`, truncation,
   checked byte-boundary slicing, comparison, prefix/suffix checks, and search.
   Preserve valid UTF-8 after every safe mutation and retain ownership on
@@ -71,32 +65,32 @@ status and changelog instead of remaining as a checked archive.
 
 - [ ] **FMT-1 — Parsing and formatting protocols.** Define source-backed,
   statically dispatched parsing and formatting contracts for integers,
-  booleans, Unicode scalars, borrowed text, and `String`, including overflow,
+  booleans, Unicode scalars, borrowed text, and `string`, including overflow,
   invalid input, allocation, and residual-effect behavior.
 
 - [ ] **FMT-2 — Formatting implementation.** Implement radix-aware integer
-  parsing, decimal formatting, boolean and scalar formatting, a `String`
-  writer/builder, and minimal display/debug output sufficient for IO and test
+  parsing, decimal formatting, boolean and scalar formatting, a `string`
+  writer/builder, and minimal display/debug output sufficient for I/O and test
   failure messages. Do not introduce formatting syntax, macros, reflection,
-  locale rules, or implicit IO.
+  locale rules, or implicit I/O.
 
 ### Arrays, slices, vectors, and iteration
 
-- [ ] **COLL-1 — Consistent contiguous access.** Give `Array`, `Slice`, and
-  `Vec` a consistent `len`, `is_empty`, checked `get`, trapping `at`/index,
+- [ ] **COLL-1 — Consistent contiguous access.** Give `array`, `slice`, and
+  `vec` a consistent `len`, `is_empty`, checked `get`, trapping `at`/index,
   first/last, slice conversion, and shared or mutable access contract. Checked
-  operations return `Option` and never form an out-of-bounds borrow.
+  operations return `option` and never form an out-of-bounds borrow.
 
-- [ ] **COLL-2 — Slice and array iteration.** Complete shared and mutable
+- [ ] **COLL-2 — `slice` and `array` iteration.** Complete shared and mutable
   iteration for arrays and slices, remove the current copy-only limitation
   from borrowed array traversal, and preserve exclusive yielded-borrow rules.
 
-- [ ] **COLL-3 — Array and slice mutation.** Add swap, reverse, copy/fill
+- [ ] **COLL-3 — `array` and `slice` mutation.** Add swap, reverse, copy/fill
   where element bounds permit, and overlap-safe copy behavior for mutable
   arrays and slices. Validate bounds before mutation and define partial
   progress and cleanup for every effectful operation.
 
-- [ ] **COLL-4 — Common `Vec` operations.** Add checked access and slice-based
+- [ ] **COLL-4 — Common `vec` operations.** Add checked access and slice-based
   extension/copy operations that complement the existing push, insert,
   remove, append, truncate, reverse, and capacity APIs. Allocation failure,
   partial copy, overlap, and move-only element behavior must be explicit.
@@ -106,13 +100,13 @@ status and changelog instead of remaining as a checked archive.
   iterator or slice contracts, forwarding callback effects and preserving
   early-exit cleanup.
 
-### Synchronous host IO
+### Synchronous host I/O
 
-- [ ] **IO-1 — Explicit host IO contract.** Define the `IO` authority/effect,
-  entry-point handling, `IoError`, byte-versus-text boundaries, partial
+- [ ] **IO-1 — Explicit host I/O contract.** Define the `io` authority effect,
+  entry-point handling, `io_error`, byte-versus-text boundaries, partial
   operations, interruption, resource ownership, close behavior, and the
   supported host matrix. No safe host operation may silently acquire
-  `Unsafe` or ambient authority.
+  `unsafe_effect` or ambient authority.
 
 - [ ] **IO-2 — Console and process support.** Implement process arguments and
   synchronous stdin, stdout, and stderr byte/text operations, including flush,
@@ -121,7 +115,7 @@ status and changelog instead of remaining as a checked archive.
   from compiler diagnostics.
 
 - [ ] **IO-3 — Filesystem basics.** Implement owned file handles with
-  deterministic `Drop`, open/create options, read, write, flush, seek where
+  deterministic cleanup, open/create options, read, write, flush, seek where
   supported, and whole-file convenience functions with bounded allocation and
   recoverable path/permission/encoding errors.
 
@@ -134,8 +128,8 @@ status and changelog instead of remaining as a checked archive.
   simple boolean migration path while the compiler is experimental.
 
 - [ ] **TEST-2 — Common assertions.** Add `assert`, `assert_eq`, `assert_ne`,
-  `fail`, and common `Option`/`Result` expectation helpers with static
-  `Eq`/formatting bounds, single evaluation of operands, useful failure
+  `fail`, and common `option`/`result` expectation helpers with static
+  `eq`/formatting bounds, single evaluation of operands, useful failure
   messages, and no generated names in output.
 
 - [ ] **TEST-3 — Runner selection and reporting.** Add deterministic
@@ -260,7 +254,7 @@ A task is complete only when:
 - per-package incremental compilation and dependency interface hashes;
 - compile-time mutation, loops, allocation, and resource-bearing values;
 - runtime nominal values as compile-parameter classifiers;
-- networking, asynchronous IO, time, subprocess, and platform services;
+- networking, asynchronous I/O, time, subprocess, and platform services;
 - advanced Unicode, regex, hashing, and unordered collections;
 - completion and partial-program recovery;
 - unsupported async and executor shapes;
@@ -271,7 +265,7 @@ A task is complete only when:
 ## Deferred
 
 - multi-shot continuations;
-- implicit IO or allocation effects;
+- implicit I/O or allocation effects;
 - garbage collection;
 - runtime trait objects and open-world dispatch;
 - macros, reflection, or general compile-time execution;

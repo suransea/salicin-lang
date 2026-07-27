@@ -27,14 +27,14 @@ The following foreign parameter and result mappings are accepted:
 | `u8`, `u16`, `u32`, `u64` | `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` |
 | `i128`, `u128` | Clang `__int128`, `unsigned __int128` extension |
 | `isize`, `usize` | `intptr_t`, `uintptr_t` |
-| `Ptr(A)(T)` | a C object pointer with compatible pointee use |
+| `ptr(a)(t)` | a C object pointer with compatible pointee use |
 | result `()` | C `void` |
 
 `i128` and `u128` are supported because the current boundary is explicitly a
 Clang ABI, not portable ISO C source. Parameters of type `()` are rejected;
 an empty Salicin parameter group represents a C `(void)` parameter list.
 
-`Bool` is not accepted. Correct C `_Bool` calls require target ABI extension
+`bool` is not accepted. Correct C `_Bool` calls require target ABI extension
 attributes that the current foreign lowering does not yet model.
 
 ## Foreign Signatures
@@ -45,8 +45,8 @@ A foreign declaration:
 - has no compile-time parameter group;
 - uses only inferred parameter modes;
 - has an explicit result;
-- has no explicit `Throws` or custom effect;
-- implicitly requires `Unsafe` at every call;
+- has no explicit `throws` or custom effect;
+- implicitly requires `unsafe_effect` at every call;
 - uses `foreign(c)` for the local declaration name or
   `foreign(c, "symbol")` for an explicit validated ASCII C symbol.
 
@@ -58,9 +58,9 @@ function values, closures, continuations, and effect callables are rejected
 as by-value foreign parameters and results.
 
 C array parameters decay to pointers and must therefore be declared as
-`Ptr(T)` or `Ptr(mut)(T)`. C aggregates must likewise cross the current
+`ptr(t)` or `ptr(mut)(t)`. C aggregates must likewise cross the current
 function boundary behind a raw pointer. Typed C function pointers are not yet
-part of the foreign surface; an opaque address may be stored in `Ptr`, but
+part of the foreign surface; an opaque address may be stored in `ptr`, but
 Salicin does not infer a callable C signature from it.
 
 ## C Data Layout
@@ -77,7 +77,7 @@ size, and alignment exactly as for the corresponding C declaration. Generic
 `struct(c)` instances are checked after compile-time substitution, so an
 invalid concrete field type is rejected at its instantiation.
 
-`Bool`, Unit, Never, borrows, slices, tuples, enums, ordinary Salicin structs,
+`bool`, Unit, never, borrows, slices, tuples, enums, ordinary Salicin structs,
 callables, and zero-length arrays are not valid fields. Salicin does not
 provide packed C structs, unions, bit-fields, flexible arrays, explicit
 alignment overrides, or C enums.
@@ -88,7 +88,7 @@ Target C ABIs do not pass aggregates using their in-memory LLVM struct type in
 all cases. For example, the current AArch64 Darwin Clang ABI coerces some
 small records to integer arrays and lowers larger returns through `sret`.
 Salicin therefore rejects by-value aggregate signatures until it has an
-explicit target ABI classifier. Passing a `struct(c)` behind `Ptr` preserves
+explicit target ABI classifier. Passing a `struct(c)` behind `ptr` preserves
 the verified data layout without pretending that ordinary Salicin aggregate
 calling convention matches C.
 

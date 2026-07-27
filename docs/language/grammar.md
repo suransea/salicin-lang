@@ -65,7 +65,7 @@ test_registration =
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
 identifier outside this top-level form. The edition-owned
-`let test(Name: String)(move body: (): Bool): () = builtin()` declaration validates both
+`pub let test(comptime name: string)(move body: (): bool): () = builtin()` declaration validates both
 metadata and body contracts; the string is compile-time runner metadata.
 
 ### 2.1 Let Declarations
@@ -105,9 +105,9 @@ foreign_initializer =
     ")" ;
 ```
 
-`let Name: type` declares an opaque nominal type. Compiler-owned sources may declare an abstract
-sort with `let Name: sort`; user sources must declare finite sorts.
-`let Name = sort { ... }` declares a sort with a known member set. Bare `= sort`, `= type`,
+`let name: type` declares an opaque nominal type. Compiler-owned sources may declare an abstract
+sort with `let name: sort`; user sources must declare finite sorts.
+`let name = sort { ... }` declares a sort with a known member set. Bare `= sort`, `= type`,
 and `= type { ... }` are not productions.
 
 `builtin()` is a complete initializer available only to the embedded `core`
@@ -122,6 +122,7 @@ compile_parameter_group =
     "(", compile_parameter, { ",", compile_parameter }, [ "," ], ")" ;
 
 compile_parameter =
+    contextual("comptime"),
     [ "..." ], compile_parameter_name, ":", compile_parameter_sort,
     [ "=", compile_parameter_default ] ;
 
@@ -130,7 +131,7 @@ compile_parameter_name = IDENT | REGION ;
 compile_parameter_sort =
     contextual("type")
   | contextual("usize")
-  | contextual("String")
+  | contextual("string")
   | contextual("region")
   | contextual("effect")
   | contextual("effects")
@@ -147,11 +148,13 @@ constructor_sort_group =
     { ",", constructor_sort_parameter }, [ "," ], ")" ;
 
 constructor_sort_parameter =
-    IDENT, ":", compile_parameter_sort ;
+    contextual("comptime"), IDENT, ":", compile_parameter_sort ;
 ```
 
-Whether a parenthesized declaration group is compile-time or runtime is determined by its
-parameter forms. The two classes cannot be mixed in one group.
+A compile-time parameter is always introduced by `comptime`. Whether a
+parenthesized declaration group is compile-time or runtime is therefore
+determined by its parameter forms. The two classes cannot be mixed in one
+group.
 
 ### 2.3 Runtime Parameters
 
@@ -228,7 +231,7 @@ trait_decl =
     { trait_member, separators },
     "}" ;
 
-self_parameter = contextual("Self"), ":", compile_parameter_sort ;
+self_parameter = contextual("self"), ":", compile_parameter_sort ;
 
 trait_member =
     "let", IDENT,
@@ -285,7 +288,7 @@ associated_binding =
 
 Positional trait arguments precede associated bindings. A generic associated constructor equation
 declares its local binders on the left, for example
-`Item(R: region) = borrow(R)(T)`.
+`item(comptime r: region) = borrow(r)(t)`.
 
 ### 2.6 Foreign Declarations
 
@@ -321,9 +324,9 @@ compiler-owned edition contract and is removed before code generation.
 Trait requirements, effect operations, and user opaque types remain
 bodyless declarations rather than builtin definitions.
 
-The root `core` module also contains the private declarations
-`let foreign(ABI: abi): Never = builtin()` and
-`let test(Name: String)(move body: (): Bool): () = builtin()`. They authorize the
+The root `core` module also contains the public declarations
+`pub let foreign(comptime abi: abi): never = builtin()` and
+`pub let test(comptime name: string)(move body: (): bool): () = builtin()`. They authorize the
 `foreign(c, ...)` initializer and top-level test registration respectively;
 `c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.
 
@@ -386,9 +389,9 @@ with_clause =
 effect_ref = path, [ type_argument_group ] ;
 ```
 
-`()` is unit, while `(T,)` is a one-element tuple. Curried constructor applications retain each
+`()` is unit, while `(t,)` is a one-element tuple. Curried constructor applications retain each
 argument group in the AST. The `array_type` production applies when `path` resolves to the
-edition's validated `Array` type form; other constructor arguments remain type expressions.
+edition's validated `array` type form; other constructor arguments remain type expressions.
 `static_usize_expression` admits literals, static names, checked operators, and calls to eligible
 ordinary pure functions.
 
@@ -521,8 +524,8 @@ match_case =
 ```
 
 `c` selects the C data representation and may appear at most once. It is
-orthogonal to named options such as `derive: Copy`; for example,
-`struct(c, derive: Copy) { ... }`. Empty option lists retain the ordinary
+orthogonal to named options such as `derive: copyable`; for example,
+`struct(c, derive: copyable) { ... }`. Empty option lists retain the ordinary
 Salicin representation.
 
 ```ebnf
@@ -578,16 +581,16 @@ let grouped = (value)
 f
 (x)
 
-let curried = make(T)(value)
+let curried = make(t)(value)
 let field = value.member
 let chained = value?.member
 
 if condition then { left() } else { right() }
 
 match value {
-  Some(item) -> item
+  some(item) -> item
 } {
-  None -> fallback
+  none -> fallback
 }
 ```
 

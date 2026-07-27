@@ -8,9 +8,9 @@ This document defines the implementation contract for source-declared algebraic 
 An effect is a nominal compile-time identity with zero or more operations:
 
 ```sc fragment
-let State(S: type) = effect {
-  let get(): S
-  let put(move value: S): ()
+let state(comptime s: type) = effect {
+  let get(): s
+  let put(move value: s): ()
 }
 ```
 
@@ -26,15 +26,15 @@ rules. A declaration with the same operation name in another effect is unrelated
 `with(...)` is part of a function type:
 
 ```sc fragment
-let increment(): i32 with(State(i32)) = {
-  let value = State(i32).get()
-  State(i32).put(value + 1)
+let increment(): i32 with(state(i32)) = {
+  let value = state(i32).get()
+  state(i32).put(value + 1)
   value
 }
 ```
 
 Rows are unordered sets of nominal effect identities. Handling one identity removes exactly that
-identity and forwards every other requirement. A compile-time `E: effects` parameter may represent
+identity and forwards every other requirement. A `comptime e: effects` parameter may represent
 an abstract residual row and is instantiated before runtime lowering.
 The singular `effect` sort classifies one identity; the plural `effects` sort classifies the empty
 row (`pure`) or any normalized combination of identities and row variables.
@@ -44,7 +44,7 @@ by library types and APIs unless they explicitly declare an effect.
 
 ## Handler Shape
 
-Every source effect is validated against `core.effect.Handle`. Its derived `handle` member
+Every source effect is validated against `core.effect.handle`. Its derived `handle` member
 accepts:
 
 - one labeled clause for each operation;
@@ -54,7 +54,7 @@ accepts:
 Conceptually:
 
 ```sc fragment
-let answer = State(i32).handle
+let answer = state(i32).handle
   get { resume -> resume(41) }
   put { (value, resume) -> resume(()) }
   action {
@@ -65,7 +65,7 @@ let answer = State(i32).handle
 Clause parameter and result types come from the effect declaration. Overloaded operations retain
 their declared labels so each clause remains unambiguous.
 
-An operation returning `Never` is abortive. Its clause has no continuation and directly produces
+An operation returning `never` is abortive. Its clause has no continuation and directly produces
 the handler answer.
 
 ## Continuations
@@ -85,11 +85,11 @@ duplicate drops, or silently skip destructors.
 
 ## Standard Effects
 
-`core.error.Throws(Error)` is the standard abortive error effect. Its `raise` operation returns
-`Never`. `throw(error)` invokes that operation. `try { action }` is one standard interpreter that
-handles it into `core.Result(Error)(Value)`; the effect itself is independent of `Result`.
+`core.error.throws(error)` is the standard abortive error effect. Its `raise` operation returns
+`never`. `throw(error)` invokes that operation. `try { action }` is one standard interpreter that
+handles it into `core.result(error)(value)`; the effect itself is independent of `result`.
 
-`core.unsafe.Unsafe` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary.
+`core.unsafe.unsafe_effect` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary.
 Authorization does not weaken type checking, ownership, region checking, or cleanup.
 
 Standard effects use the same nominal row and handler machinery as user effects. Their source
@@ -117,7 +117,7 @@ specialize into CPS frames. An unknown callable must not be silently treated as 
 
 ## Runtime Contracts
 
-`Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` are
+`continuation(input, output)` and `effect_callable(input, output, answer)` are
 source-declared type forms with complete core-private `= builtin()`
 initializers and compiler-owned representations. They are not empty
 structures, and their values are linear resources.
@@ -125,7 +125,7 @@ structures, and their values are linear resources.
 The runtime representation may use generated frames and adapters, but those details are not
 observable language entities. Generated names must not appear in user diagnostics or participate in
 source lookup. A continuation currently cannot escape its handler clause.
-Consequently `Async.handle` can interpret `Async.suspend()` directly, but a
+Consequently `async_effect.handle` can interpret `async_effect.suspend()` directly, but a
 source handler cannot yet store the suspended continuation as future state;
 `core.async.async` remains the compiler boundary that materializes that state.
 

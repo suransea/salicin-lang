@@ -16,114 +16,114 @@ primitives remain ordinary Salicin definitions: the core implementation does
 not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
-`let foreign(ABI: abi): Never = builtin()` and
-`let test(Name: String)(move body: (): Bool): () = builtin()`. These are canonical syntax
+`pub let foreign(comptime abi: abi): never = builtin()` and
+`pub let test(comptime name: string)(move body: (): bool): () = builtin()`. These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
-`abi` sort selected by `foreign(c, ...)`; registration names inhabit the compiler-owned
-`String` sort. ABI/link and registration-name metadata is erased before runtime lowering.
+`abi` sort selected by `foreign(c)`; registration names inhabit the compiler-owned
+`string` sort. ABI/link and registration-name metadata is erased before runtime lowering.
 
 ## Modules
 
-`core.lib` is the root facade. It only re-exports the public root surface: `Never`, `Move`, `Copy`,
-`Drop`, `Option`, and `Result`.
+`core.lib` is the root facade. It only re-exports the public root surface: `never`, `movable`, `copyable`,
+`droppable`, `option`, and `result`.
 
 `core.prelude` is also only a facade and contains the deliberately small implicit surface:
 
-- the uninhabited `Never` type
-- the `Move`, `Copy`, and `Drop` traits
+- the uninhabited `never` type
+- the `movable`, `copyable`, and `droppable` traits
 
-The definitions live in focused modules. `core.never` owns `Never`, `core.marker` owns `Move`,
-`Copy`, and `Drop`, and `core.option` and `core.result` own fundamental ordinary data types that are
+The definitions live in focused modules. `core.never` owns `never`, `core.marker` owns `movable`,
+`copyable`, and `droppable`, and `core.option` and `core.result` own fundamental ordinary data types that are
 intentionally not prelude names:
 
 ```sc fragment
-pub let Option(T: type) = enum {
-  Some(T),
-  None,
+pub let option(comptime t: type) = enum {
+  some(t),
+  none,
 }
 
-pub let Result(E: type)
-  (T: type) = enum {
-  Ok(T),
-  Err(E),
+pub let result(comptime e: type)
+  (comptime t: type) = enum {
+  ok(t),
+  err(e),
 }
 ```
 
-Naming `Option` or `Result` requires an ordinary root alias such as
-`let Option = std.Option` or `let Result = std.Result`.
+Naming `option` or `result` requires an ordinary root alias such as
+`let option = std.option` or `let result = std.result`.
 
-`Move` is an automatically satisfied structural marker for relocatable values. `Copy` has the
-supertrait constraint `where Self: Move`, while `Drop` remains independent: an owning resource may
-be movable without being copyable. Source code does not need handwritten `Move` implementations
+`movable` is an automatically satisfied structural marker for relocatable values. `copyable` has the
+supertrait constraint `where self: movable`, while `droppable` remains independent: an owning resource may
+be movable without being copyable. Source code does not need handwritten `movable` implementations
 for ordinary aggregates.
 Operators and syntax that lower through these identities use the validated standard-library
 declarations directly; aliasing is only required when source code writes the short names.
 
 `core.ops` is a compatibility facade over smaller protocol modules. `core.ops.arith` defines
-`Add`, `Sub`, `Mul`, `Div`, `Rem`, and `Neg`; `core.ops.bit` defines `Not`, `BitAnd`, `BitOr`,
-`BitXor`, `Shl`, and `Shr`; `core.ops.assign` defines the compound-assignment protocols; and
-`core.cmp` defines `Eq`, `PartialOrdering`, and `PartialOrd`. The `std.ops` facade re-exports the
+`add`, `sub`, `mul`, `div`, `rem`, and `neg`; `core.ops.bit` defines `not`, `bit_and`, `bit_or`,
+`bit_xor`, `shl`, and `shr`; `core.ops.assign` defines the compound-assignment protocols; and
+`core.cmp` defines `eq`, `partial_ordering`, and `partial_ord`. The `std.ops` facade re-exports the
 operator-facing names for ordinary aliases. They are not in the prelude.
 Arithmetic and bitwise protocols accept their operands with automatic passing and use an associated
-`Output` type. Copy operands remain usable; resource operands move:
+`output` type. copyable operands remain usable; resource operands move:
 
 ```sc fragment
-let Add = std.ops.Add
+let add = std.ops.add
 
-extend(Number, Add(Number)) {
-  let Output = Number
+extend(number, add(number)) {
+  let output = number
   let add(self)
-    (rhs: Number): Number = { ... }
+    (rhs: number): number = { ... }
 }
 ```
 
-`Eq(Rhs)` borrows both operands and returns `Bool`; `!=` invokes the same method exactly once and
+`eq(rhs)` borrows both operands and returns `bool`; `!=` invokes the same method exactly once and
 negates its result:
 
 ```sc fragment
-let Eq = std.ops.Eq
+let eq = std.ops.eq
 
-extend(Number, Eq(Number)) {
-  let eq(self: borrow(Self))
-    (rhs: borrow(Number)): Bool = { self.value == rhs.value }
+extend(number, eq(number)) {
+  let eq(self: borrow(self))
+    (rhs: borrow(number)): bool = { self.value == rhs.value }
 }
 ```
 
-`PartialOrd(Rhs)` also borrows both operands. Its `partial_cmp` method returns `PartialOrdering`,
-whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four ordering operators invoke
-the method once; an `Unordered` result makes each operator false:
+`partial_ord(rhs)` also borrows both operands. Its `partial_cmp` method returns `partial_ordering`,
+whose variants are `less`, `equal`, `greater`, and `unordered`. All four ordering operators invoke
+the method once; an `unordered` result makes each operator false:
 
 ```sc fragment
-let PartialOrd = std.ops.PartialOrd
-let PartialOrdering = std.ops.PartialOrdering
+let partial_ord = std.ops.partial_ord
+let partial_ordering = std.ops.partial_ordering
 
-extend(Number, PartialOrd(Number)) {
-  let partial_cmp(self: borrow(Self))
-    (rhs: borrow(Number)): PartialOrdering = { ... }
+extend(number, partial_ord(number)) {
+  let partial_cmp(self: borrow(self))
+    (rhs: borrow(number)): partial_ordering = { ... }
 }
 ```
 
-`Neg` and `Not` use automatic passing for their operand and define an associated `Output` type. Consequently an
+`neg` and `not` use automatic passing for their operand and define an associated `output` type. Consequently an
 overloaded `!` may return a non-boolean result; only the built-in boolean operation is fixed to
-`Bool`. The boolean implementation is ordinary source control flow, and signed
+`bool`. The boolean implementation is ordinary source control flow, and signed
 integer negation is defined as subtraction from zero. Generic code can state
 the same output relationship in a normal where predicate.
 
-`BitAnd(Rhs)`, `BitOr(Rhs)`, `BitXor(Rhs)`, `Shl(Rhs)`, and `Shr(Rhs)` have the same two automatic
-parameter groups and associated `Output` shape as arithmetic protocols. Built-in integer shifts use
+`bit_and(rhs)`, `bit_or(rhs)`, `bit_xor(rhs)`, `shl(rhs)`, and `shr(rhs)` have the same two automatic
+parameter groups and associated `output` shape as arithmetic protocols. Built-in integer shifts use
 arithmetic right shift for signed integers and logical right shift for unsigned integers. Negative
 or out-of-width shift counts trap instead of exposing backend undefined behavior.
 
-`AddAssign(Rhs)`, `SubAssign(Rhs)`, `MulAssign(Rhs)`, `DivAssign(Rhs)`, `RemAssign(Rhs)`,
-`BitAndAssign(Rhs)`, `BitOrAssign(Rhs)`, `BitXorAssign(Rhs)`, `ShlAssign(Rhs)`, and
-`ShrAssign(Rhs)` are separate mutation protocols. Each mutably borrows `self`, accepts `rhs` with
+`add_assign(rhs)`, `sub_assign(rhs)`, `mul_assign(rhs)`, `div_assign(rhs)`, `rem_assign(rhs)`,
+`bit_and_assign(rhs)`, `bit_or_assign(rhs)`, `bit_xor_assign(rhs)`, `shl_assign(rhs)`, and
+`shr_assign(rhs)` are separate mutation protocols. Each mutably borrows `self`, accepts `rhs` with
 automatic passing, and
 returns `()`:
 
 ```sc fragment
-pub let AddAssign(Rhs: type) = trait {
-  let add_assign(self: borrow(mut)(Self))
-    (rhs: Rhs): ()
+pub let add_assign(comptime rhs: type) = trait {
+  let add_assign(self: borrow(mut)(self))
+    (rhs: rhs): ()
 }
 ```
 
@@ -141,64 +141,64 @@ direct member access.
 `core.flow` contains the standard protocols for `?.` and `??`. They are not in the prelude:
 
 ```sc fragment
-pub let Chain = trait {
-  let Item: type
-  let Rebind(Value: type): type
+pub let chain = trait {
+  let item: type
+  let rebind(comptime value: type): type
 
-  let chain(E: effects, U: type)
+  let chain(comptime e: effects, comptime u: type)
     (self)
-    (transform: (Item): U with(E)): Rebind(U) with(E)
+    (transform: (item): u with(e)): rebind(u) with(e)
 }
 
-pub let Coalesce = trait {
-  let Item: type
+pub let coalesce = trait {
+  let item: type
 
-  let coalesce(E: effects)
+  let coalesce(comptime e: effects)
     (self)
-    (fallback: (): Item with(E)): Item with(E)
+    (fallback: (): item with(e)): item with(e)
 }
 ```
 
 The protocols use the same trait and generic-associated-constructor syntax as user declarations.
 The compiler lowers GAT references in trait method signatures and supports direct constructor
-implementations such as `let Rebind = Maybe` plus partially applied type aliases. GAT parameters
+implementations such as `let rebind = maybe` plus partially applied type aliases. GAT parameters
 may carry `type`, `access`, `region`, `usize`, and closed-value sorts; implementation constructors
-must match those sorts and parameter-group boundaries, not merely their arity. `??` dispatches non-`Option`/`Result` nominal
-values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
-dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
+must match those sorts and parameter-group boundaries, not merely their arity. `??` dispatches non-`option`/`result` nominal
+values through `coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
+dispatches non-`option`/`result` nominal values through `chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
 capture outer method-call arguments still require the general callable-to-function bridge. The
-facade `core.Option`/`core.Result` paths remain available as standard-library specializations.
+facade `core.option`/`core.result` paths remain available as standard-library specializations.
 
 `core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
 should alias these identities through `std.effect`:
 
 ```sc fragment
-pub let Unsafe = effect {}
+pub let unsafe_effect = effect {}
 
-pub let Throws(Error: type) = effect {
-  let raise(move error: Error): Never
+pub let throws(comptime error: type) = effect {
+  let raise(move error: error): never
 }
 
-pub let Async = effect {
+pub let async_effect = effect {
   let suspend(): ()
 }
 ```
 
-`Unsafe`, `Throws(Error)`, and `Async` are validated lang-item identities, but their declarations use
-the same source-level effect forms as user code. `Throws.raise` is an ordinary `Never`-returning
+`unsafe_effect`, `throws(error)`, and `async_effect` are validated lang-item identities, but their declarations use
+the same source-level effect forms as user code. `throws.raise` is an ordinary `never`-returning
 effect operation and can be handled with a normal abort clause such as `raise: { (error) -> ... }`.
-Standard and user effect identities use type-like nominal spelling: effect declarations and the
-final segment of a `with(...)` effect path must start with an uppercase letter. Effect row parameters
-such as `E: effects` are still resolved as parameters rather than nominal effects.
+Standard and user effect identities follow the universal `snake_case` naming rule, including the
+final segment of a `with(...)` effect path. Effect
+row parameters such as `comptime e: effects` are resolved as parameters rather than nominal effects.
 Source `throw(error)` targets this ordinary operation when the current effect row has exactly one
-active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(Error)(T)` handles
-ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
-`raise -> Err`. Without an explicit `Result` context, direct calls and local function-value calls
-to ordinary `Throws(Error)` functions infer the same handler result when the success type is
-probeable and the escaping error type is unique. `Async` currently exposes only a minimal
+active `throws(error)`. Contextual `try { ... }` with an expected `result(error)(t)` handles
+ordinary `throws(error)` through the same algebraic handler path, using `done -> ok` and
+`raise -> err`. Without an explicit `result` context, direct calls and local function-value calls
+to ordinary `throws(error)` functions infer the same handler result when the success type is
+probeable and the escaping error type is unique. `async_effect` currently exposes only a minimal
 `suspend(): ()` operation; executable
-async/Future lowering will add its handler contracts in the same implementation slice rather than
+async/future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
 
 `core.sorts` owns standard compile-time sorts, also outside the prelude:
@@ -209,14 +209,14 @@ pub let region: sort
 pub let effect: sort
 pub let effects: sort
 pub let parameters: sort
-pub let String: sort
+pub let string: sort
 pub let abi = sort {
   c
 }
 ```
 
 `effect` classifies one nominal effect identity; `effects` classifies a normalized zero-or-more
-effect row. `String` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
+effect row. `string` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
 calling-convention sort whose first supported value is `c`.
 
 `core.borrow` owns the finite access sort and its unqualified aliases:
@@ -233,233 +233,234 @@ pub let shared = access.shared
 `core.passing` owns the parameter modifier functions:
 
 ```sc fragment
-pub let copy(P: parameters): parameters
-pub let move(P: parameters): parameters
+pub let copy(comptime p: parameters): parameters
+pub let move(comptime p: parameters): parameters
 ```
 
-Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
-`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the finite access sort; generic
-passing modifiers use the `(P: parameters): parameters` function sort.
+Borrow types and values are written with the declared `borrow` form: `borrow(t)`,
+`borrow(mut)(t)`, and `borrow(a)(r)(t)`. `borrow(a)` refers to the finite access sort; generic
+passing modifiers use the `(comptime p: parameters): parameters` function sort.
 
-`core.memory` declares the fixed-size `Array(T)(L)`, unsized `Slice(T)`, and
-`Ptr(A: access = shared)(T)` raw-pointer family. `Slice(T)` is never a first-class stored value:
-programs use `borrow(A)(R)(Slice(T))`, represented as a pointer and length while retaining the
-source loan and region. Array borrows unsize contextually, and `Vec(T).as_slice(A)()` borrows its
+`core.memory` declares the fixed-size `array(t)(l)`, unsized `slice(t)`, and
+`ptr(comptime a: access = shared)(t)` raw-pointer family. `slice(t)` is never a first-class stored value:
+programs use `borrow(a)(r)(slice(t))`, represented as a pointer and length while retaining the
+source loan and region. array borrows unsize contextually, and `vec(t).as_slice(a)()` borrows its
 initialized prefix without transferring ownership.
 
-The source-backed Slice extension provides `len()` and bounds-checked `at(index)`. Shared access is
-the default; `at(mut)(index)` returns a mutable element borrow when the Slice borrow is mutable.
+The source-backed slice extension provides `len()` and bounds-checked `at(index)`. Shared access is
+the default; `at(mut)(index)` returns a mutable element borrow when the slice borrow is mutable.
 Out-of-bounds access traps. The pointer extension provides `offset(index)` for either access and
-`init(value)` / `take()` only for `Ptr(mut)(T)`. Pointer methods retain the `Unsafe` requirement of
+`init(value)` / `take()` only for `ptr(mut)(t)`. Pointer methods retain the `unsafe_effect` requirement of
 their underlying raw intrinsics; `init` expects uninitialized storage and `take` leaves storage
 uninitialized.
 
-`core.ops.index.Index(Key)` is the single bracket protocol. Its `index(A: access)` method returns
-`borrow(A)(Output)`, so shared reads, explicit element borrows, and mutable assignment use one
-implementation without a separate `IndexMut`. Arrays implement `Index(usize)` through a validated
-core intrinsic; Slice implements `Index(u64)` in source by forwarding to `at`.
+`core.ops.index.index(key)` is the single bracket protocol. Its `index(comptime a: access)` method returns
+`borrow(a)(output)`, so shared reads, explicit element borrows, and mutable assignment use one
+implementation without a separate `index_mut`. Arrays implement `index(usize)` through a validated
+core intrinsic; slice implements `index(u64)` in source by forwarding to `at`.
 
 Capability modules are separated by semantics:
 
 - `core.effect` owns generic handler infrastructure.
-- `core.error` owns `Throws`, `throw`, and the `try` interpreter into `Result`.
-- `core.async` owns `Async`, `Poll`, `Future`, `Executor`, `async`, and `await`.
-- `core.unsafe` owns the `Unsafe` authority effect and its lexical interpreter.
-- `core.result` owns only the `Result` data type and its ordinary protocols.
+- `core.error` owns `throws`, `throw`, and the `try` interpreter into `result`.
+- `core.async` owns `async_effect`, `poll`, `future`, `executor`, `async`, and `await`.
+- `core.unsafe` owns the `unsafe_effect` authority effect and its lexical interpreter.
+- `core.result` owns only the `result` data type and its ordinary protocols.
 - `core.control` owns structural control flow: `break`, `continue`, `return`, `do`, `loop`,
   `while`, `if`, `match`, `for`, and lexical `defer`.
 
-`throw` and `Throws` are not Result-specific. `Throws(Error)` is an independent effect, while
-`try` is one interpreter that chooses `Result(Error)(T)` as its output. Other handlers may
+`throw` and `throws` are not result-specific. `throws(error)` is an independent effect, while
+`try` is one interpreter that chooses `result(error)(t)` as its output. Other handlers may
 interpret the same effect differently.
 
 `core.effect` declares the protocol and erased runtime contracts used by algebraic handler lowering:
 
 ```sc fragment
-pub let Continuation(Input: type, Output: type): type
-pub let EffectCallable(Input: type, Output: type, Answer: type): type
-pub let Handle = trait(Self: effect) {
-  let Clauses(Value: type, Answer: type): parameters
-  let handle(Value: type, Answer: type, Rest: effects)
-    ...Clauses(Value, Answer)
-    (move action: (): Value with(Self, Rest)): Answer with(Rest)
+pub let continuation(comptime input: type, comptime output: type): type
+pub let effect_callable(comptime input: type, comptime output: type, comptime answer: type): type
+pub let handle = trait(comptime self: effect) {
+  let clauses(comptime value: type, comptime answer: type): parameters
+  let handle(comptime value: type, comptime answer: type, comptime rest: effects)
+    ...clauses(value, answer)
+    (move action: (): value with(self, rest)): answer with(rest)
 }
 ```
 
-`Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
-handler-supplied continuation from `Output` to `Answer`; `Input` is the action's packed runtime input.
+`continuation` is a one-shot suspended computation. `effect_callable` is an owned action awaiting a
+handler-supplied continuation from `output` to `answer`; `input` is the action's packed runtime input.
 Both native values carry call and drop entries, an environment pointer, and an ownership flag. They
 are `core.effect` exports rather than prelude names and cannot be replaced by same-named user
 declarations.
 The compiler-internal action entry has the logical signature
-`(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
+`(environment, input, continuation(output, answer)): answer`. Erasing or invoking an action consumes
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
 entry. Within an active handler, compatible open runtime action parameters use this representation
 when crossing named effectful frames or another reusable handler. The source closure may have
 shared, mutable, or moved captures, but the erased owner itself is always one-shot and cannot escape
-with a borrow-capturing environment. `Handle` is an effect-kinded lang trait automatically satisfied by every source
-`effect` declaration. Its `Clauses` associated parameter schema names the compiler-derived labeled
+with a borrow-capturing environment. `handle` is an effect-kinded lang trait automatically satisfied by every source
+`effect` declaration. Its `clauses` associated parameter schema names the compiler-derived labeled
 clause groups used by `.handle`; `...` expands that schema into an ordered sequence of runtime
 parameter groups. Consequently source calls use named trailing closures directly, for example
-`State(i32).handle get { ... } put { ... } action { ... }`, while the generated implementation has exactly the
+`state(i32).handle get { ... } put { ... } action { ... }`, while the generated implementation has exactly the
 shape declared by the trait. These low-level operations and generated handler implementations are
 not ordinary source-level standard-library functions.
 
-`core.async` makes the asynchronous model explicit in source. `Future(E)` is a `Move` trait with an
-associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Executor.run` is
-explicit, and the ordinary zero-field `Spin` implementation repeatedly polls one owned future
-until `Ready` without allocation. Constructing a cold future does not select or run an executor.
+`core.async` makes the asynchronous model explicit in source. `future(e)` is a `movable` trait with an
+associated `output` and a mutable-borrowing `poll` method returning `poll`. `executor.run` is
+explicit, and the ordinary zero-field `spin` implementation repeatedly polls one owned future
+until `ready` without allocation. Constructing a cold future does not select or run an executor.
 `async` remains the direct intrinsic that materializes the anonymous future
 state selected for its action, while `await` is source-defined. Their
-signatures expose their effect rows and `Future(E, Output = T)` relationship.
-`await` repeatedly calls `poll`; `Pending` invokes
-`Async.suspend()`, and `Ready(value)` exits the source loop. The compiler may
+signatures expose their effect rows and `future(e, output = t)` relationship.
+`await` repeatedly calls `poll`; `pending` invokes
+`async_effect.suspend()`, and `ready(value)` exits the source loop. The compiler may
 take an equivalent syntax-directed state-machine path for `await`.
 Compiler-generated futures without suspension already
-implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
-once. `E` may be empty, `Unsafe`, or a custom residual effect. A body without suspension can poll
+implement the inferred `future(e)` instance and transition from cold state to `poll.ready` exactly
+once. `e` may be empty, `unsafe_effect`, or a custom residual effect. A body without suspension can poll
 under the corresponding algebraic handler through generated poll/resume source specialization
-when its captures are by-value `Copy` or move-only values. Move-only fields transfer exactly once
-and are not dropped again with completed future state. Borrowed, suspended, and `Throws`-residual
+when its captures are by-value `copyable` or move-only values. Move-only fields transfer exactly once
+and are not dropped again with completed future state. Borrowed, suspended, and `throws`-residual
 bodies remain compiler work. Polling
-enforces `E` while construction remains pure. A single tail-position `await` creates its child on the first parent poll,
-stores it across `Pending`, and completes the parent from `Ready`; cancellation drops a stored child
+enforces `e` while construction remains pure. A single tail-position `await` creates its child on the first parent poll,
+stores it across `pending`, and completes the parent from `ready`; cancellation drops a stored child
 exactly once. One non-tail `let value = await child` may continue with a linear suffix whose captures
 are retained in parent state. Sequential awaits compose through nested continuation futures and
-preserve earlier results across later Pending states. Suspension nested in control flow remains
+preserve earlier results across later pending states. Suspension nested in control flow remains
 compiler work. Locals live across a sequential suspension are state fields with ordinary ownership
 and cleanup. A borrow cannot cross suspension together with a local referent stored in that same
-future because `Future` requires `Move`; external region-checked borrows remain permitted.
+Future state cannot retain such a borrow because `future` requires `movable`;
+external region-checked borrows remain permitted.
 `if` and `match` branches consisting of one tail await select their child before using this same
 polling contract. Different concrete child types use a private active-variant future when their
-Output agrees. Each branch retains its own linear locals across suspension; a branch without await
-is an immediate Ready future. Loop suspension remains compiler work.
+output agrees. Each branch retains its own linear locals across suspension; a branch without await
+is an immediate ready future. Loop suspension remains compiler work.
 
 ```sc fragment
-pub let do(E: effects, T: type)
-  (move action: (): T with(E)): T with(E)
-pub let do(E: effects)
-  (move action: (): () with(core.control.Break(()), core.control.Continue, E))
-  (move while: (): Bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
+pub let do(comptime e: effects, comptime t: type)
+  (move action: (): t with(e)): t with(e)
+pub let do(comptime e: effects)
+  (move action: (): () with(core.control.break_effect(()), core.control.continue_effect, e))
+  (move while: (): bool with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e) = {
   loop {
-    core.control.Continue.handle
+    core.control.continue_effect.handle
       next { () }
       action { action() }
     if while() { continue() } else { break() }
   }
 }
-pub let try(F: effects, T: type, E: type)
-  (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F)
-pub let throw(Error: type)
-  (move error: Error): Never with(core.error.Throws(Error))
-pub let unsafe(E: effects, T: type)
-  (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)
-pub let loop(E: effects, T: type)
-  (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
-pub let while(E: effects)
-  (move condition: (): Bool with(E))
-  (move do: (): () with(E)): () with(E)
-pub let if(E: effects, T: type)
-  (condition: Bool)
-  (move then: (): T with(E))
-  (move else: (): T with(E)): T with(E) = {
+pub let try(comptime f: effects, comptime t: type, comptime e: type)
+  (move action: (): t with(core.error.throws(e), f)): core.result(e)(t) with(f)
+pub let throw(comptime error: type)
+  (move error: error): never with(core.error.throws(error))
+pub let unsafe(comptime e: effects, comptime t: type)
+  (move action: (): t with(core.unsafe.unsafe_effect, e)): t with(e)
+pub let loop(comptime e: effects, comptime t: type)
+  (move body: (): () with(core.control.break_effect(t), core.control.continue_effect, e)): t with(e)
+pub let while(comptime e: effects)
+  (move condition: (): bool with(e))
+  (move do: (): () with(e)): () with(e)
+pub let if(comptime e: effects, comptime t: type)
+  (condition: bool)
+  (move then: (): t with(e))
+  (move else: (): t with(e)): t with(e) = {
   match condition
     { true -> then() }
     { false -> else() }
 }
-pub let match(Input: type, Output: type, E: effects, ...Cases: parameters)
-  (move input: Input)
-  ...Cases: Output with(E)
-pub let for(E: effects, Iterable: type, Iter: type, Item: type)
-  (move iterable: Iterable)
-  (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
-where Iterable: core.iter.IntoIterator(IntoIter = Iter),
-  Iter: core.iter.Iterator(Item = Item)
+pub let match(comptime input: type, comptime output: type, comptime e: effects, comptime ...cases: parameters)
+  (move input: input)
+  ...cases: output with(e)
+pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
+  (move iterable: iterable)
+  (move body: (item): () with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)
+where iterable: core.iter.into_iterator(into_iter = iter),
+  iter: core.iter.iterator(item = item)
 ```
 
-Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
-the remainder row. `throw` introduces the standard `Throws(Error)` requirement. `loop` and `for`
-handle their declared `Break`/`Continue` effects while forwarding `E`; `if` and `match` evaluate
+Here `try` removes only `throws(e)`, `unsafe` removes only the `unsafe_effect` requirement, and both forward
+the remainder row. `throw` introduces the standard `throws(error)` requirement. `loop` and `for`
+handle their declared `break_effect`/`continue_effect` effects while forwarding `e`; `if` and `match` evaluate
 only the selected lazy branch or case. The source definitions that do not require intrinsic
 lowering remain intentionally simple:
 
 ```sc fragment
-pub let do(E: effects, T: type)
-  (move action: (): T with(E)): T with(E) = {
+pub let do(comptime e: effects, comptime t: type)
+  (move action: (): t with(e)): t with(e) = {
   action()
 }
 
-pub let try(F: effects, T: type, E: type)
-  (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.error.Throws(E).handle raise { (error) -> core.Result.Err(error) } done { (value) -> core.Result.Ok(value) } action {
+pub let try(comptime f: effects, comptime t: type, comptime e: type)
+  (move action: (): t with(core.error.throws(e), f)): core.result(e)(t) with(f) = {
+  core.error.throws(e).handle raise { (error) -> core.result.err(error) } done { (value) -> core.result.ok(value) } action {
     action()
   }
 }
 
-pub let throw(Error: type)
-  (move error: Error): Never with(core.error.Throws(Error)) = {
-  core.error.Throws(Error).raise(error)
+pub let throw(comptime error: type)
+  (move error: error): never with(core.error.throws(error)) = {
+  core.error.throws(error).raise(error)
 }
 ```
 
 `core.iter` owns iteration rather than the prelude:
 
 ```sc fragment
-pub let Iterator = trait {
-  let Item(R: region): type
-  let next(R: region)(self: borrow(mut)(R)(Self))
-    (): core.Option(Item(R))
+pub let iterator = trait {
+  let item(comptime r: region): type
+  let next(comptime r: region)(self: borrow(mut)(r)(self))
+    (): core.option(item(r))
 }
 
-pub let IntoIterator = trait {
-  let IntoIter: type
+pub let into_iterator = trait {
+  let into_iter: type
   let into_iter(move self)
-    (): IntoIter
+    (): into_iter
 }
 
-pub let ArrayIntoIter(T: type)
-  (L: usize) = struct { ... }
+pub let array_into_iter(comptime t: type)
+  (comptime l: usize) = struct { ... }
 
-pub let OwnedItem(T: type)(R: region): type = T
-pub let BorrowedItem(A: access, T: type)(R: region): type =
-  borrow(A)(R)(T)
+pub let owned_item(comptime t: type)(comptime r: region): type = t
+pub let borrowed_item(comptime a: access, comptime t: type)(comptime r: region): type =
+  borrow(a)(r)(t)
 
-pub let SliceIter(A: access)(T: type) = struct { ... }
+pub let slice_iter(comptime a: access)(comptime t: type) = struct { ... }
 ```
 
 Implementing or naming either trait requires aliases such as
-`let Iterator = std.iter.Iterator` and `let IntoIterator = std.iter.IntoIterator`. The `for`
+`let iterator = std.iter.iterator` and `let into_iterator = std.iter.into_iterator`. The `for`
 syntax itself needs no alias and dispatches only through these validated identities. It evaluates
-the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably borrows the resulting
-iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
+the iterable once, moves it into `into_iterator.into_iter`, repeatedly mutably borrows the resulting
+iterator for `iterator.next`, and stops on `none`. An inherent or unrelated trait method named
 `into_iter` or `next` cannot intercept this lowering.
 
-`Array(T)(L)` implements consuming value iteration when `T: Copy`. A borrowed `Slice(T)` exposes
-access-polymorphic `.iter(A)`: `SliceIter(A)(T)` stores the source loan and yields
-`borrow(A)(R)(T)` for the region of each `next(R)` receiver borrow. Shared iteration therefore
-works for non-`Copy` elements without moving them, while mutable iteration yields exclusive
+`array(t)(l)` implements consuming value iteration when `t: copyable`. A borrowed `slice(t)` exposes
+access-polymorphic `.iter(a)`: `slice_iter(a)(t)` stores the source loan and yields
+`borrow(a)(r)(t)` for the region of each `next(r)` receiver borrow. Shared iteration therefore
+works for non-`copyable` elements without moving them, while mutable iteration yields exclusive
 element borrows. A yielded mutable borrow must end before the next call to `next`; the source
-remains borrowed until the iterator is consumed or leaves scope. `Vec(T)` implements consuming
+remains borrowed until the iterator is consumed or leaves scope. `vec(t)` implements consuming
 iteration for all element types. Its iterator transfers the allocation, moves values in source
 order, and on early exit drops exactly the unyielded suffix before releasing storage.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
-effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed
+effect identities such as `throws` remain normal `std.effect` exports when named in source, backed
 by `core.effect` identities. An ordinary same-named declaration cannot acquire lang-item lowering
-behavior. Future control features
-follow the same rule: for example, async lowering must add `Future`, `async`, and handler contracts
+behavior. future control features
+follow the same rule: for example, async lowering must add `future`, `async`, and handler contracts
 to the matching core release when it becomes executable, rather than reserving undocumented compiler
 magic in advance.
 
 `core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
 
 ```sc fragment
-pub let Semigroup = trait {
-  let combine(left: Self, right: Self): Self
+pub let semigroup = trait {
+  let combine(left: self, right: self): self
 }
 
-pub let Monoid = trait
-where Self: Semigroup{let empty(): Self}
+pub let monoid = trait
+where self: semigroup{let empty(): self}
 ```
 
 The compiler does not prove algebraic laws.
@@ -468,60 +469,62 @@ The compiler does not prove algebraic laws.
 part of the prelude:
 
 ```sc fragment
-pub let Functor = trait(Self: (Value: type): type) {
-  let map(E: effects, A: type, B: type)
-    (self: Self(A))
-    (transform: (A): B with(E)): Self(B) with(E)
+pub let functor = trait(self: (comptime value: type): type) {
+  let map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: self(a))
+    (transform: (a): b with(e)): self(b) with(e)
 }
 
-pub let Applicative = trait(Self: (Value: type): type)
-where Self: Functor {
-  let pure(A: type)
-    (value: A): Self(A)
+pub let applicative = trait(self: (comptime value: type): type)
+where self: functor {
+  let pure(comptime a: type)
+    (value: a): self(a)
 
-  let apply(E: effects, A: type, B: type)
-    (self: Self((A): B with(E)))
-    (value: Self(A)): Self(B) with(E)
+  let apply(comptime e: effects, comptime a: type, comptime b: type)
+    (self: self((a): b with(e)))
+    (value: self(a)): self(b) with(e)
 }
 
-pub let Monad = trait(Self: (Value: type): type)
-where Self: Applicative {
-  let flat_map(E: effects, A: type, B: type)
-    (self: Self(A))
-    (next: (A): Self(B) with(E)): Self(B) with(E)
+pub let monad = trait(self: (comptime value: type): type)
+where self: applicative {
+  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
+    (self: self(a))
+    (next: (a): self(b) with(e)): self(b) with(e)
 }
 ```
 
-These declarations use constructor sorts such as `(Value: type): type` on the trait `Self` subject,
+These declarations use constructor sorts such as `(comptime value: type): type` on the trait `self` subject,
 not as ordinary trait parameters. Traits with a matching constructor subject can be implemented for
 generic nominal constructors. Method implementations are registered as generic function templates
-and validated, for example `extend(Carrier, Functor){let map(E, A, B)...}`. Receiver methods
-dispatch from concrete nominal instances, so `Carrier(i32) { value: 41 }.map(add_one)` selects the
-`Carrier: Functor` implementation and instantiates the generic method template. Constructor
+and validated, for example
+`extend(carrier, functor) { let map(comptime e: effects, comptime a: type, comptime b: type) ... }`.
+Receiver methods
+dispatch from concrete nominal instances, so `carrier(i32) { value: 41 }.map(add_one)` selects the
+`carrier: functor` implementation and instantiates the generic method template. Constructor
 associated functions without a receiver can still be called from the bare constructor; for example,
-`Carrier.pure(...)` is available once `Carrier` implements `Applicative`. Trait-level `where`
+`carrier.pure(...)` is available once `carrier` implements `applicative`. Trait-level `where`
 constraints express protocol inheritance, so a
-`Carrier: Applicative` implementation also requires `Carrier: Functor`, and `Carrier: Monad`
-requires `Carrier: Applicative`.
+`carrier: applicative` implementation also requires `carrier: functor`, and `carrier: monad`
+requires `carrier: applicative`.
 
-The standard library implements `Functor`, `Applicative`, and `Monad` for `core.Option` and for
-each partially applied `core.Result(Error)` constructor:
+The standard library implements `functor`, `applicative`, and `monad` for `core.option` and for
+each partially applied `core.result(error)` constructor:
 
 ```sc fragment
-let Result = std.Result
-let Monad = std.functional.Monad
+let result = std.result
+let monad = std.functional.monad
 
-let next(value: i32): Result(Bool)(i32) = {
-  Result(Bool)(i32).Ok(value + 1)
+let next(value: i32): result(bool)(i32) = {
+  result(bool)(i32).ok(value + 1)
 }
 
-let value = Result(Bool)(i32).Ok(41).flat_map(next)
+let value = result(bool)(i32).ok(41).flat_map(next)
 ```
 
 Curried constructors may be used as constructor trait implementation targets, which is how
-`Result(Error): Monad` is expressed without making `Result` special. `Option` and `Result` are
+`result(error): monad` is expressed without making `result` special. `option` and `result` are
 ordinary enum values and require explicit constructors. Language error propagation is defined by
-the standard `Throws(E)` effect, `throw`, and `try { ... }`; `do` has no error-specific semantics.
+the standard `throws(e)` effect, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
 Primitive implementations remain compiler-defined. The unit type has the single spelling `()`. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

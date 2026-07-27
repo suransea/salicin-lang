@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+- Accepted the initial standard-library usability contract: edition-matched
+  `core`, `alloc`, and host `std` layers; uniform `snake_case` public naming;
+  a deliberately small prelude; consistent ownership and borrowing modes;
+  explicit `io` authority separated from `result`-based host errors; portable
+  error families; an initial Linux/macOS target boundary; and the minimum
+  text, collection, conversion, formatting, I/O, and test API matrix.
+- Synchronized the language, ABI, async, status, and standard-library
+  documentation with the implemented all-`snake_case` source model and
+  explicit `comptime` binders, removing the remaining pre-v0.209 spellings.
+
 ## 0.209.0 - 2026-07-27
 
 - Replaced declaration-shaped extension headers with compiler-call syntax:
