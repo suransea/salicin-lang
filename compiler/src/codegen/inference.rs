@@ -1250,6 +1250,13 @@ impl Analyzer {
                     &parameters[position]
                 };
                 let source = match parameter.kind.clone() {
+                    Sort::Universe(_) => {
+                        self.error(format!(
+                            "explicit universe argument `{}` in `{owner}` is not supported yet",
+                            parameter.name
+                        ));
+                        return None;
+                    }
                     Sort::Type => {
                         self.type_argument_from_expr(&argument.value, &context.type_substitutions)?
                     }
@@ -1387,12 +1394,6 @@ impl Analyzer {
                     }
                     Sort::Region => {
                         self.error("region arguments are erased before semantic analysis");
-                        return None;
-                    }
-                    Sort::String => {
-                        self.error(
-                            "`string` arguments are currently restricted to compiler-owned syntax",
-                        );
                         return None;
                     }
                     Sort::Parameters => {

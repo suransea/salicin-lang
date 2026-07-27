@@ -412,13 +412,8 @@ type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
 /// bootstrap bundle. The module resolver is the language boundary: source
 /// code reaches these declarations through `alloc.<module>.<name>`, while the
 /// analyzer continues to consume the flattened canonical name.
-const ALLOC_EXPORTS: &[(&str, &str)] = &[
-    ("boxed", "box"),
-    ("vec", "vec"),
-    ("vec", "vec_into_iter"),
-    ("string", "string"),
-    ("string", "from_utf8_error"),
-];
+const ALLOC_EXPORTS: &[(&str, &str)] =
+    &[("boxed", "box"), ("vec", "vec"), ("vec", "vec_into_iter")];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("never", "core::never::never"),
@@ -429,6 +424,7 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("ptr", "core::memory::ptr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
+    ("string", "core::string::string"),
     ("copy", "core::passing::copy"),
     ("move", "core::passing::move"),
     ("comptime", "core::passing::comptime"),
@@ -445,6 +441,7 @@ const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("option", "core::option::option"),
     ("result", "core::result::result"),
     ("slice", "core::memory::slice"),
+    ("string", "core::string::string"),
 ];
 const CORE_NEVER_EXPORTS: &[&str] = &["never"];
 const CORE_MARKER_EXPORTS: &[&str] = &["movable", "copyable", "droppable"];
@@ -506,13 +503,16 @@ const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const CORE_SORT_EXPORTS: &[&str] = &[
+    "sort",
+    "sort_of",
+    "type_of",
     "type",
     "region",
     "effect",
     "effects",
     "parameters",
-    "string",
 ];
+const CORE_STRING_EXPORTS: &[&str] = &["string"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "mut", "shared", "borrow"];
@@ -1080,13 +1080,10 @@ fn install_standard_namespaces(
             required_imports.insert((*name).to_owned(), format!("core.async.{name}"));
         }
         for name in CORE_SORT_EXPORTS {
-            // `string` is also the alloc runtime type. Compile-parameter
-            // positions recognize its sort directly, so preserve the runtime
-            // type as the unqualified import when alloc is exposed.
-            if *name == "string" && exposure.expose_alloc {
-                continue;
-            }
             required_imports.insert((*name).to_owned(), format!("core.sorts.{name}"));
+        }
+        for name in CORE_STRING_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.string.{name}"));
         }
         for name in CORE_FOREIGN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.foreign.{name}"));
@@ -1260,6 +1257,7 @@ fn install_core_namespace(
             "async",
             "unsafe",
             "sorts",
+            "string",
             "foreign",
             "control",
             "iter",
@@ -1475,6 +1473,17 @@ fn install_core_namespace(
                 "<core>",
             );
         }
+        for name in CORE_STRING_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "string",
+                name,
+                &format!("core::string::{name}"),
+                "<core>",
+            );
+        }
         for name in CORE_FOREIGN_EXPORTS {
             insert_standard_symbol(
                 symbols,
@@ -1606,7 +1615,7 @@ fn install_alloc_namespace(
     }
 
     module_paths.insert(alloc_root.clone());
-    for module in ["boxed", "vec", "string"] {
+    for module in ["boxed", "vec"] {
         let mut module_path = alloc_root.clone();
         module_path.push(module.to_owned());
         module_paths.insert(module_path);
@@ -3491,7 +3500,12 @@ impl Resolver {
                     self.rewrite_match_arm(arm, context, type_scope, value_scope);
                 }
             }
-            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+            Expr::Type(_)
+            | Expr::Unit
+            | Expr::Integer(_)
+            | Expr::Bool(_)
+            | Expr::String(_)
+            | Expr::Continue => {}
         }
     }
 
@@ -3522,7 +3536,7 @@ impl Resolver {
             Expr::Member(_, _) => {
                 self.rewrite_compile_argument_member_chain(expression, context, type_scope);
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::String(_) => {}
             other => self.rewrite_expr(other, context, type_scope, &HashSet::new()),
         }
     }
@@ -4420,7 +4434,7 @@ mod tests {
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub let mode = sort { shared unique }\n\
+                "pub let mode = sort(1) { shared unique }\n\
                  pub let handle(comptime a: mode)(comptime t: type) = struct {}\n",
                 false,
             ),
@@ -5676,6 +5690,7 @@ let main(): i32 = { option {} }
             .chain(CORE_UNSAFE_EXPORTS.iter().map(|name| ("unsafe", *name)))
             .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
             .chain(CORE_SORT_EXPORTS.iter().map(|name| ("sorts", *name)))
+            .chain(CORE_STRING_EXPORTS.iter().map(|name| ("string", *name)))
             .chain(CORE_FOREIGN_EXPORTS.iter().map(|name| ("foreign", *name)))
             .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(
@@ -5870,7 +5885,12 @@ let main(): i32 = { option {} }
                         visit(&arm.body, names);
                     }
                 }
-                Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+                Expr::Type(_)
+                | Expr::Unit
+                | Expr::Integer(_)
+                | Expr::Bool(_)
+                | Expr::String(_)
+                | Expr::Continue => {}
             }
         }
 

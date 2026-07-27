@@ -971,7 +971,12 @@ pub(super) fn do_block_requires_function_boundary(expression: &Expr) -> bool {
                         || do_block_requires_function_boundary(&arm.body)
                 })
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Name(_) => false,
     }
 }
 

@@ -866,6 +866,7 @@ impl<'a> HirCleanupPlanner<'a> {
         let result = match &expression.kind {
             HirExprKind::Integer(_)
             | HirExprKind::Bool(_)
+            | HirExprKind::String(_)
             | HirExprKind::Unit
             | HirExprKind::LayoutQuery { .. }
             | HirExprKind::Global(_)

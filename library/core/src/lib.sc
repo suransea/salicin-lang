@@ -5,9 +5,9 @@ let builtin() = builtin()
 // Public syntax contracts. Their leading groups are erased metadata.
 pub let abi = core.foreign.abi
 pub let foreign = core.foreign.foreign
-// Test names inhabit the compiler-owned `string` sort. The boolean action is
-// the only runtime-shaped test argument.
-pub let test(comptime name: string)(move body: (): bool): () = builtin()
+// Test names are consumed by the `test("...") { ... }` syntax. The boolean
+// action is the only value passed to this compiler-supplied contract.
+pub let test(move body: (): bool): () = builtin()
 
 pub let never = core.never.never
 pub let movable = core.marker.movable
@@ -33,3 +33,4 @@ pub let slice = core.memory.slice
 pub let ptr = core.memory.ptr
 pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of
+pub let string = core.string.string

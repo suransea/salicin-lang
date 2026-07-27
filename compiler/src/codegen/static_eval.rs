@@ -368,6 +368,16 @@ impl Analyzer {
                 CtfeValue::integer_literal(ty, *magnitude, false)?
             }
             Expr::Bool(value) => CtfeValue::bool(*value),
+            Expr::String(value) => {
+                let ty = self
+                    .string_ty()
+                    .ok_or_else(|| "the core `string` type is unavailable".to_owned())?;
+                self.string_literals.insert(value.clone());
+                CtfeValue {
+                    ty,
+                    kind: CtfeValueKind::String(value.clone()),
+                }
+            }
             Expr::Unit => CtfeValue::unit(),
             Expr::Tuple(fields) => {
                 if fields.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
@@ -1683,7 +1693,7 @@ impl Analyzer {
                 .get(name)
                 .map(|value| value.ty.clone())
                 .or_else(|| self.hir_globals.get(name).map(|global| global.ty.clone())),
-            Expr::Bool(_) => Some(Ty::Bool),
+            Expr::Bool(_) | Expr::String(_) => Some(Ty::Bool),
             Expr::Unit => Some(Ty::Unit),
             Expr::Tuple(fields) => Some(Ty::Tuple(
                 fields
@@ -2559,6 +2569,9 @@ impl Analyzer {
                     }
                 }
                 Ty::Struct(name) => {
+                    if analyzer.string_ty().as_ref() == Some(ty) {
+                        return Ok(());
+                    }
                     if depth >= MAX_CTFE_VALUE_NESTING {
                         return Err(format!(
                             "ctfe value exceeds the {MAX_CTFE_VALUE_NESTING}-level nesting limit"

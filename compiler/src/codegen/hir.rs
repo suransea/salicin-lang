@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{BinaryOp, ItemOrigin, PassMode, StructRepresentation, Type, UnaryOp, Visibility};
@@ -354,6 +354,7 @@ pub(super) struct HirProgram {
     pub(super) drop_methods: HashMap<Ty, String>,
     pub(super) array_types: HashSet<Ty>,
     pub(super) tuple_types: HashSet<Ty>,
+    pub(super) string_literals: BTreeSet<String>,
     pub(super) continuation_adapters: Vec<ContinuationAdapter>,
     pub(super) effect_callable_adapters: Vec<EffectCallableAdapter>,
     pub(super) async_states: HashMap<String, AsyncStateLayout>,
@@ -632,6 +633,7 @@ pub(super) struct HirMatchArm {
 pub(super) enum HirExprKind {
     Integer(i128),
     Bool(bool),
+    String(String),
     Unit,
     Tuple(Vec<HirExpr>),
     Array(Vec<HirExpr>),

@@ -12,13 +12,11 @@ use crate::parser;
 const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sc");
 const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
 const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
-const EDITION_2026_STRING: &str = include_str!("../../library/alloc/src/string.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("boxed", EDITION_2026_BOXED),
     ("vec", EDITION_2026_VEC),
-    ("string", EDITION_2026_STRING),
     ("raw", EDITION_2026_RAW),
 ];
 
@@ -149,9 +147,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = crate::standard::naming_diagnostics(program, "alloc");
-    if program.items.len() != 50
-        || program.item_visibilities.len() != 50
-        || program.item_origins.len() != 50
+    if program.items.len() != 45
+        || program.item_visibilities.len() != 45
+        || program.item_origins.len() != 45
     {
         diagnostics
             .push("embedded alloc must contain the fixed box and vec bootstrap schema".to_owned());
@@ -162,7 +160,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 12 | 39 | 45 | 46) {
+                    let expected = if matches!(index, 0 | 12 | 39) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -386,28 +384,6 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[44] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc vec droppable extension has an invalid shape".to_owned()),
-        }
-        match &program.items[45] {
-            Item::Struct(definition) if definition.name == "string" => {}
-            _ => diagnostics.push("alloc string must be a nominal struct".to_owned()),
-        }
-        match &program.items[46] {
-            Item::Struct(definition) if definition.name == "from_utf8_error" => {}
-            _ => diagnostics.push("alloc FromUtf8Error must be a nominal struct".to_owned()),
-        }
-        match &program.items[47] {
-            Item::Function(function) if function.name == "utf8_invalid_at" => {}
-            _ => diagnostics.push("alloc utf8_invalid_at validator is missing".to_owned()),
-        }
-        match &program.items[48] {
-            Item::Extend(extension)
-                if extension.target == Type::Named("string".to_owned(), Vec::new()) => {}
-            _ => diagnostics.push("alloc string extension is missing".to_owned()),
-        }
-        match &program.items[49] {
-            Item::Extend(extension)
-                if extension.target == Type::Named("from_utf8_error".to_owned(), Vec::new()) => {}
-            _ => diagnostics.push("alloc FromUtf8Error extension is missing".to_owned()),
         }
     }
     if diagnostics.is_empty() {
@@ -1355,13 +1331,13 @@ mod tests {
     }
 
     fn alloc_source() -> String {
-        [EDITION_2026_BOXED, EDITION_2026_VEC, EDITION_2026_STRING].join("\n")
+        [EDITION_2026_BOXED, EDITION_2026_VEC].join("\n")
     }
 
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 50);
+        assert_eq!(bundle.program.items.len(), 45);
         assert!(bundle
             .program
             .item_origins
@@ -1373,9 +1349,6 @@ mod tests {
         assert!(bundle.program.item_origins[12..45]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
-        assert!(bundle.program.item_origins[45..]
-            .iter()
-            .all(|origin| origin.module_path == ["@alloc", "string"]));
     }
 
     #[test]

@@ -2,6 +2,19 @@ use super::ctfe_value::{CtfeValue, CtfeValueKind};
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
+fn string_literal_symbol(value: &str) -> String {
+    let encoded = value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if encoded.is_empty() {
+        "salicin.string.empty".to_owned()
+    } else {
+        format!("salicin.string.{encoded}")
+    }
+}
+
 pub(super) struct Emitter<'a> {
     program: &'a HirProgram,
     constants: HashMap<String, CtfeValue>,
@@ -92,6 +105,23 @@ impl<'a> Emitter<'a> {
             || !self.program.enums.is_empty()
             || !callable_types.is_empty()
         {
+            output.push('\n');
+        }
+
+        for value in &self.program.string_literals {
+            let bytes = value
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("\\{byte:02X}"))
+                .collect::<String>();
+            output.push_str(&format!(
+                "@{} = private unnamed_addr constant [{} x i8] c\"{}\"\n",
+                string_literal_symbol(value),
+                value.len(),
+                bytes
+            ));
+        }
+        if !self.program.string_literals.is_empty() {
             output.push('\n');
         }
 
@@ -1194,6 +1224,27 @@ impl<'a> FunctionEmitter<'a> {
                 ty: Ty::Bool,
                 value: Some(if *value { "1" } else { "0" }.to_owned()),
             }),
+            HirExprKind::String(value) => {
+                let aggregate_ty = llvm_value_type(&expression.ty)?;
+                let data = self.fresh_register();
+                self.instruction(format!(
+                    "{data} = insertvalue {aggregate_ty} zeroinitializer, ptr @{}, 0",
+                    string_literal_symbol(value)
+                ));
+                let length = self.fresh_register();
+                self.instruction(format!(
+                    "{length} = insertvalue {aggregate_ty} {data}, i64 {}, 1",
+                    value.len()
+                ));
+                let result = self.fresh_register();
+                self.instruction(format!(
+                    "{result} = insertvalue {aggregate_ty} {length}, i64 0, 2"
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(result),
+                })
+            }
             HirExprKind::Unit => Ok(Operand::unit()),
             HirExprKind::LayoutQuery { queried, kind } => Ok(Operand {
                 ty: Ty::U64,
@@ -4189,6 +4240,11 @@ fn const_ir(value: &CtfeValue, ty: &Ty, program: &HirProgram) -> Result<String, 
             .integer_display()
             .ok_or_else(|| Diagnostic::new("internal error: invalid integer constant")),
         (CtfeValueKind::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
+        (CtfeValueKind::String(value), Ty::Struct(_)) => Ok(format!(
+            "{{ ptr @{}, i64 {}, i64 0 }}",
+            string_literal_symbol(value),
+            value.len()
+        )),
         (CtfeValueKind::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
         (CtfeValueKind::LayoutQuery { queried, kind }, Ty::U64) => {
             llvm_layout_const(queried, *kind)

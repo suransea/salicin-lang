@@ -415,6 +415,7 @@ fn normalize_expr_labeled_type_arguments(
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
         Expr::Unary(_, operand)
@@ -1077,7 +1078,12 @@ fn expand_expr_aliases(
                 }
             }
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -1741,6 +1747,7 @@ pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
         Expr::Unary(_, operand)
@@ -1911,6 +1918,7 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
         Expr::Unary(_, operand)
@@ -2050,7 +2058,12 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
                 }
             }
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -2695,6 +2708,7 @@ pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) 
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }
@@ -2842,7 +2856,12 @@ pub(super) fn rewrite_static_function_values(
                 rewrite_static_function_values(&mut arm.body, &visible);
             }
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -2965,6 +2984,7 @@ pub(super) fn erase_expr_locations(expression: &mut Expr) {
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }
@@ -3100,6 +3120,7 @@ fn visit_expr_mut_ordered(
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }
@@ -3485,7 +3506,12 @@ fn hygienic_rename_expr(
                 scopes.pop();
             }
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -3735,6 +3761,11 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
                         || expression_mentions_any_name(&arm.body, names)
                 })
         }
-        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => false,
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Continue => false,
     }
 }

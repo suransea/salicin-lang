@@ -396,6 +396,7 @@ pub(super) fn rewrite_handler_loop_control(
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }
@@ -518,6 +519,7 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }
@@ -802,6 +804,7 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Closure(_, _)
         | Expr::PatternClosure { .. }
@@ -1091,6 +1094,7 @@ pub(super) fn rewrite_handler_chain_wrappers(
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => {}
     }

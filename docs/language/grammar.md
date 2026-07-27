@@ -106,8 +106,8 @@ foreign_initializer =
 ```
 
 `let name: type` declares an opaque nominal type. Compiler-owned sources may declare an abstract
-sort with `let name: sort`; user sources must declare finite sorts.
-`let name = sort { ... }` declares a sort with a known member set. Bare `= sort`, `= type`,
+sort with `let name: sort(2)`; user sources must declare finite sorts.
+`let name = sort(1) { ... }` declares a sort with a known member set. Bare `sort`, `= type`,
 and `= type { ... }` are not productions.
 
 `builtin()` is a complete initializer available only to the embedded `core`
@@ -131,7 +131,7 @@ compile_parameter_name = IDENT | REGION ;
 compile_parameter_sort =
     contextual("type")
   | contextual("usize")
-  | contextual("string")
+  | contextual("sort"), "(", ( INTEGER | IDENT ), ")"
   | contextual("region")
   | contextual("effect")
   | contextual("effects")

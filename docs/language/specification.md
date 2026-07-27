@@ -153,35 +153,35 @@ A sort classifies compile-time values. An abstract sort has no source-enumerable
 is compiler-owned:
 
 ```sc fragment
-let type: sort
+let type: sort(2)
 ```
 
 A defined sort lists its complete members:
 
 ```sc fragment
-let optimization = sort {
+let optimization = sort(1) {
   debug
   release
 }
 
-let empty = sort {}
+let empty = sort(1) {}
 
 let select(comptime mode: optimization)(value: i32): i32 = { value }
 let answer = select(optimization.release)(42)
 ```
 
 An abstract sort and an empty defined sort are different. `let name = sort` is invalid:
-compiler-owned abstract sorts use `: sort`, while user-defined finite sorts use
-`= sort { ... }`. User packages cannot introduce a new abstract sort.
+compiler-owned abstract sorts use `: sort(2)`, while user-defined finite sorts use
+`= sort(1) { ... }`. User packages cannot introduce a new abstract sort.
 Finite members are named through their Sort, as in `optimization.release`.
 
-`type`, `region`, `effect`, `effects`, `parameters`, and metadata-only `string` are
-compiler-owned abstract compile-time sorts. `access` is the finite sort
-`sort { shared mut }`. `bool` remains an ordinary
+`type`, `region`, `effect`, `effects`, and `parameters` are compiler-owned
+abstract compile-time sorts. `string` is an ordinary runtime type accepted by
+CTFE. `access` is the finite sort `sort(1) { shared mut }`. `bool` remains an ordinary
 closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
 or defined finite sort can be used the same way.
 
-`abi` is the compiler-owned finite sort `sort { c }`. Its `c` member is the calling-convention
+`abi` is the compiler-owned finite sort `sort(1) { c }`. Its `c` member is the calling-convention
 argument accepted by the current foreign initializer.
 
 ### 3.4 Compiler Definitions

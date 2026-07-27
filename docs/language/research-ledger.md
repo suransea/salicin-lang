@@ -37,7 +37,7 @@ User code may define finite sorts. Open-ended abstract sorts are compiler-owned 
 uninterpreted classifier without elimination, equality, normalization, and ABI rules would create
 an unsound extension point rather than useful abstraction.
 
-Syntax metadata uses the same static-language boundary. `abi = sort { c }` is finite, with
+Syntax metadata uses the same static-language boundary. `abi = sort(1) { c }` is finite, with
 decidable member equality; `string` is compiler-owned and currently introduced only by syntax
 positions such as test registration names. Both are erased before runtime lowering. A metadata
 The compile-time `string` value is the decoded UTF-8 literal payload and is never implicitly

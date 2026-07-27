@@ -1,4 +1,4 @@
-let optimization = sort {
+let optimization = sort(1) {
   size
   speed
 }

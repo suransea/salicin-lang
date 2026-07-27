@@ -44,6 +44,7 @@ const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
+const EDITION_2026_STRING: &str = include_str!("../../library/core/src/string.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("prelude", EDITION_2026_PRELUDE),
@@ -70,9 +71,17 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("control", EDITION_2026_CONTROL),
     ("iter", EDITION_2026_ITER),
     ("memory", EDITION_2026_MEMORY),
+    ("string", EDITION_2026_STRING),
 ];
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["primitives", "effect", "control", "iter", "passing"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
+    "primitives",
+    "effect",
+    "control",
+    "iter",
+    "passing",
+    "string",
+];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
 
@@ -206,7 +215,6 @@ pub enum LangItemKind {
     EffectSort,
     EffectsSort,
     ParametersSort,
-    StringSort,
     AbiSort,
     CopyParameters,
     MoveParameters,
@@ -247,7 +255,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 104] = [
+    const ALL: [Self; 103] = [
         Self::Builtin,
         Self::Foreign,
         Self::Test,
@@ -314,7 +322,6 @@ impl LangItemKind {
         Self::EffectSort,
         Self::EffectsSort,
         Self::ParametersSort,
-        Self::StringSort,
         Self::AbiSort,
         Self::CopyParameters,
         Self::MoveParameters,
@@ -422,7 +429,6 @@ impl LangItemKind {
             Self::EffectSort => "effect",
             Self::EffectsSort => "effects",
             Self::ParametersSort => "parameters",
-            Self::StringSort => "string",
             Self::AbiSort => "abi",
             Self::CopyParameters => "copy",
             Self::MoveParameters => "move",
@@ -480,7 +486,6 @@ impl LangItemKind {
             | Self::EffectSort
             | Self::EffectsSort
             | Self::ParametersSort
-            | Self::StringSort
             | Self::AbiSort => "sort",
             Self::Bool => "enum",
             Self::BorrowTypeForm
@@ -636,7 +641,6 @@ impl LangItemKind {
             | Self::EffectSort
             | Self::EffectsSort
             | Self::ParametersSort
-            | Self::StringSort
             | Self::AbiSort
             | Self::CopyParameters
             | Self::MoveParameters
@@ -798,7 +802,6 @@ pub struct LangItems {
     effect_sort: LangItem,
     effects_sort: LangItem,
     parameters_sort: LangItem,
-    string_sort: LangItem,
     abi_sort: LangItem,
     borrow_type_form: LangItem,
     borrow_value_form: LangItem,
@@ -1159,7 +1162,6 @@ impl LangItems {
             LangItemKind::EffectSort => &self.effect_sort,
             LangItemKind::EffectsSort => &self.effects_sort,
             LangItemKind::ParametersSort => &self.parameters_sort,
-            LangItemKind::StringSort => &self.string_sort,
             LangItemKind::AbiSort => &self.abi_sort,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
@@ -1231,7 +1233,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(comptime name: string)(move body: (): bool): () = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: (): bool): () = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1373,7 +1375,6 @@ impl CoreBundle {
             &mut lang_items.effect_sort,
             &mut lang_items.effects_sort,
             &mut lang_items.parameters_sort,
-            &mut lang_items.string_sort,
             &mut lang_items.abi_sort,
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
@@ -1749,7 +1750,6 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         effect_sort: item(LangItemKind::EffectSort),
         effects_sort: item(LangItemKind::EffectsSort),
         parameters_sort: item(LangItemKind::ParametersSort),
-        string_sort: item(LangItemKind::StringSort),
         abi_sort: item(LangItemKind::AbiSort),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
         borrow_value_form: item(LangItemKind::BorrowValueForm),
@@ -1875,6 +1875,13 @@ fn validate_builtin_boundaries(
             continue;
         }
         match item {
+            Item::Function(function)
+                if function.builtin
+                    && matches!(function.name.as_str(), "sort" | "sort_of" | "type_of") =>
+            {
+                validate_introspection_builtin(function, diagnostics);
+                continue;
+            }
             Item::Function(function) if function.builtin => diagnostics.push(format!(
                 "unknown compiler-owned core function `{}` uses `builtin()`",
                 function.name
@@ -1917,6 +1924,71 @@ fn validate_builtin_boundaries(
             }
             _ => {}
         }
+    }
+}
+
+fn validate_introspection_builtin(function: &Function, diagnostics: &mut Vec<String>) {
+    let valid = match function.name.as_str() {
+        "sort" => {
+            matches!(
+                function.compile_groups.as_slice(),
+                [group] if matches!(group.as_slice(), [level]
+                    if level.name == "level" && level.kind == Sort::USize)
+            ) && function.groups.is_empty()
+                && function.return_type
+                    == Some(Type::Named(
+                        "sort".to_owned(),
+                        vec![Type::Named("level+1".to_owned(), Vec::new())],
+                    ))
+        }
+        "sort_of" => {
+            matches!(
+                function.compile_groups.as_slice(),
+                [group] if matches!(group.as_slice(), [level, classifier, value]
+                    if level.name == "level"
+                        && level.kind == Sort::USize
+                        && classifier.name == "classifier"
+                        && classifier.kind
+                            == Sort::Universe(crate::ast::SortLevel::Parameter(
+                                "level".to_owned(),
+                            ))
+                        && value.name == "value"
+                        && value.kind == Sort::Named("classifier".to_owned()))
+            ) && function.groups.is_empty()
+                && function.return_type
+                    == Some(Type::Named(
+                        "sort".to_owned(),
+                        vec![Type::Named("level".to_owned(), Vec::new())],
+                    ))
+        }
+        "type_of" => {
+            matches!(
+                function.compile_groups.as_slice(),
+                [group] if matches!(group.as_slice(), [parameter]
+                    if parameter.name == "t" && parameter.kind == Sort::Type)
+            ) && matches!(
+                function.groups.as_slice(),
+                [group] if matches!(group.as_slice(), [parameter]
+                    if parameter.name == "expression"
+                        && parameter.mode == PassMode::Move
+                        && matches!(&parameter.ty, Type::Function { groups, result, .. }
+                            if groups == &[Vec::new()]
+                                && result.as_ref()
+                                    == &Type::Named("t".to_owned(), Vec::new())))
+            ) && function.return_type == Some(Type::Named("type".to_owned(), Vec::new()))
+        }
+        _ => false,
+    };
+    if !valid
+        || function.effects != FunctionEffects::default()
+        || !function.where_predicates.is_empty()
+        || function.foreign.is_some()
+        || function.body.is_some()
+    {
+        diagnostics.push(format!(
+            "core introspection builtin `{}` has an invalid source contract",
+            function.name
+        ));
     }
 }
 
@@ -1963,7 +2035,13 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
 fn is_core_support_item(name: &str) -> bool {
     matches!(
         name,
-        "array_into_iter" | "slice_iter" | "owned_item" | "borrowed_item"
+        "array_into_iter"
+            | "slice_iter"
+            | "owned_item"
+            | "borrowed_item"
+            | "sort"
+            | "sort_of"
+            | "type_of"
     )
 }
 
@@ -2080,7 +2158,6 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::EffectSort
             | LangItemKind::EffectsSort
             | LangItemKind::ParametersSort
-            | LangItemKind::StringSort
             | LangItemKind::AbiSort,
             Item::Sort(definition),
         ) => validate_sort(kind, definition, diagnostics),
@@ -2228,28 +2305,30 @@ fn validate_sort(
         | LangItemKind::RegionSort
         | LangItemKind::EffectSort
         | LangItemKind::EffectsSort
-        | LangItemKind::ParametersSort
-        | LangItemKind::StringSort => definition.members.is_none(),
-        LangItemKind::AbiSort => matches!(
-            definition.members.as_deref(),
-            Some([c]) if c == "c"
-        ),
-        LangItemKind::AccessSort => matches!(
-            definition.members.as_deref(),
-            Some([shared, mutable]) if shared == "shared" && mutable == "mut"
-        ),
+        | LangItemKind::ParametersSort => definition.level == 2 && definition.members.is_none(),
+        LangItemKind::AbiSort => {
+            matches!(
+                definition.members.as_deref(),
+                Some([c]) if c == "c"
+            ) && definition.level == 1
+        }
+        LangItemKind::AccessSort => {
+            matches!(
+                definition.members.as_deref(),
+                Some([shared, mutable]) if shared == "shared" && mutable == "mut"
+            ) && definition.level == 1
+        }
         _ => unreachable!("validate_sort called for non-sort lang item"),
     };
     if !valid {
         let shape = match kind {
-            LangItemKind::TypeSort => "pub let type: sort",
-            LangItemKind::RegionSort => "pub let region: sort",
-            LangItemKind::EffectSort => "pub let effect: sort",
-            LangItemKind::EffectsSort => "pub let effects: sort",
-            LangItemKind::ParametersSort => "pub let parameters: sort",
-            LangItemKind::StringSort => "pub let string: sort",
-            LangItemKind::AbiSort => "pub let abi = sort { c }",
-            LangItemKind::AccessSort => "pub let access = sort { shared, mut }",
+            LangItemKind::TypeSort => "pub let type: sort(2)",
+            LangItemKind::RegionSort => "pub let region: sort(2)",
+            LangItemKind::EffectSort => "pub let effect: sort(2)",
+            LangItemKind::EffectsSort => "pub let effects: sort(2)",
+            LangItemKind::ParametersSort => "pub let parameters: sort(2)",
+            LangItemKind::AbiSort => "pub let abi = sort(1) { c }",
+            LangItemKind::AccessSort => "pub let access = sort(1) { shared, mut }",
             _ => unreachable!("validate_sort called for non-sort lang item"),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
@@ -2294,12 +2373,7 @@ fn validate_syntax_contract(
                 && function.return_type == Some(named_type("never"))
         }
         LangItemKind::Test => {
-            function.compile_groups
-                == vec![vec![CompileParam {
-                    name: "name".to_owned(),
-                    kind: Sort::String,
-                    default: None,
-                }]]
+            function.compile_groups.is_empty()
                 && single_moved_callable(function, "body", Type::Bool, FunctionEffects::default())
                 && function.return_type == Some(Type::Unit)
         }
@@ -2312,9 +2386,7 @@ fn validate_syntax_contract(
     if !valid {
         let shape = match kind {
             LangItemKind::Foreign => "pub let foreign(comptime abi: abi): never = builtin()",
-            LangItemKind::Test => {
-                "pub let test(comptime name: string)(move body: (): bool): () = builtin()"
-            }
+            LangItemKind::Test => "pub let test(move body: (): bool): () = builtin()",
             _ => unreachable!(),
         };
         diagnostics.push(format!(
@@ -4211,6 +4283,7 @@ pub let index(comptime key: type) = trait {
             ("control", EDITION_2026_CONTROL),
             ("iter", EDITION_2026_ITER),
             ("memory", EDITION_2026_MEMORY),
+            ("string", EDITION_2026_STRING),
         ];
         for (module, source) in overrides {
             let Some((_, target)) = modules
@@ -4229,7 +4302,7 @@ pub let index(comptime key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 308);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 313);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -4307,8 +4380,7 @@ pub let index(comptime key: type) = trait {
                 | LangItemKind::RegionSort
                 | LangItemKind::EffectSort
                 | LangItemKind::EffectsSort
-                | LangItemKind::ParametersSort
-                | LangItemKind::StringSort => {
+                | LangItemKind::ParametersSort => {
                     format!("core::sorts::{}", kind.source_name())
                 }
                 LangItemKind::AbiSort => "core::foreign::abi".to_owned(),
@@ -4428,8 +4500,7 @@ pub let index(comptime key: type) = trait {
                 | LangItemKind::RegionSort
                 | LangItemKind::EffectSort
                 | LangItemKind::EffectsSort
-                | LangItemKind::ParametersSort
-                | LangItemKind::StringSort => vec!["sorts"],
+                | LangItemKind::ParametersSort => vec!["sorts"],
                 LangItemKind::CopyParameters
                 | LangItemKind::MoveParameters
                 | LangItemKind::ComptimeParameters => vec!["passing"],
@@ -4534,16 +4605,16 @@ pub let index(comptime key: type) = trait {
                 "lib",
                 "test",
                 EDITION_2026_LIB.replace(
-                    "pub let test(comptime name: string)(move body: (): bool): () = builtin()",
                     "pub let test(move body: (): bool): () = builtin()",
+                    "pub let test(): () = builtin()",
                 ),
             ),
             (
                 "lib",
                 "test",
                 EDITION_2026_LIB.replace(
-                    "pub let test(comptime name: string)(move body: (): bool): () = builtin()",
-                    "pub let test(comptime name: string)(move body: (): i32): () = builtin()",
+                    "pub let test(move body: (): bool): () = builtin()",
+                    "pub let test(move body: (): i32): () = builtin()",
                 ),
             ),
         ] {

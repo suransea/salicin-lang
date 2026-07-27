@@ -985,6 +985,7 @@ impl Analyzer {
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
         match parameter.kind.clone() {
+            Sort::Universe(_) => None,
             Sort::Type => self.probe_type_argument_source(expression, substitutions),
             Sort::USize => match expression {
                 Expr::Integer(value) => Some(Type::CompileUSize(u64::try_from(*value).ok()?)),
@@ -1084,8 +1085,7 @@ impl Analyzer {
             Sort::ParameterModifier => {
                 self.probe_parameter_modifier_source(expression, substitutions)
             }
-            Sort::String
-            | Sort::Region
+            Sort::Region
             | Sort::Parameters
             | Sort::ParameterPack
             | Sort::EffectConstructor { .. } => None,
@@ -1177,6 +1177,7 @@ impl Analyzer {
         source: &Type,
     ) -> Option<Ty> {
         match parameter.kind.clone() {
+            Sort::Universe(_) => None,
             Sort::TypeConstructor { parameter_groups } => {
                 let Type::Named(name, arguments) = source else {
                     return None;
@@ -1197,8 +1198,7 @@ impl Analyzer {
                 Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
                 _ => None,
             },
-            Sort::String
-            | Sort::Region
+            Sort::Region
             | Sort::Parameters
             | Sort::ParameterPack
             | Sort::ParameterModifier
@@ -1370,6 +1370,7 @@ impl Analyzer {
         unit_is_type: bool,
     ) -> bool {
         match parameter.kind.clone() {
+            Sort::Universe(_) => false,
             Sort::Type => {
                 (unit_is_type && matches!(expression, Expr::Unit))
                     || self.expression_is_explicit_type_argument(expression, context)
@@ -1386,7 +1387,6 @@ impl Analyzer {
                 self.expression_is_explicit_type_constructor_argument(expression, &parameter_groups)
             }
             Sort::Region => false,
-            Sort::String => false,
             Sort::Parameters => false,
             Sort::ParameterPack => false,
             Sort::ParameterModifier => self

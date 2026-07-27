@@ -30,6 +30,7 @@ pub(super) enum CtfeValueKind {
     /// determines signed interpretation and the significant width.
     Integer(u128),
     Bool(bool),
+    String(String),
     Unit,
     Tuple(Vec<CtfeValue>),
     Array(Vec<CtfeValue>),
@@ -362,6 +363,7 @@ impl CtfeValue {
             CtfeValueKind::Enum { fields, .. } => fields.get(index),
             CtfeValueKind::Integer(_)
             | CtfeValueKind::Bool(_)
+            | CtfeValueKind::String(_)
             | CtfeValueKind::Unit
             | CtfeValueKind::LayoutQuery { .. } => None,
         }

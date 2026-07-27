@@ -18,8 +18,6 @@ pub enum StaticValue {
     Type(Type),
     USize(u64),
     Region(String),
-    /// A decoded UTF-8 metadata literal. It has no runtime text representation.
-    String(String),
     /// One effect identity, represented by a singleton normalized row while
     /// legacy monomorphization still uses marker-shaped source types.
     Effect(FunctionEffects),
@@ -50,7 +48,6 @@ impl StaticValue {
             Self::Type(_) => Sort::Type,
             Self::USize(_) => Sort::USize,
             Self::Region(_) => Sort::Region,
-            Self::String(_) => Sort::String,
             Self::Effect(_) => Sort::Effect,
             Self::Effects(_) => Sort::Effects,
             Self::ParameterSchema(_) => Sort::Parameters,
@@ -149,10 +146,7 @@ mod tests {
     #[test]
     fn static_values_report_their_sort_without_runtime_lowering() {
         assert_eq!(StaticValue::USize(4).sort(), Sort::USize);
-        assert_eq!(
-            StaticValue::String("arithmetic".into()).sort(),
-            Sort::String
-        );
+        assert_eq!(StaticValue::USize(10).sort(), Sort::USize);
         assert_eq!(
             StaticValue::Finite {
                 sort: "optimization".into(),

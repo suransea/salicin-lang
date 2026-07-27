@@ -17,10 +17,10 @@ not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
 `pub let foreign(comptime abi: abi): never = builtin()` and
-`pub let test(comptime name: string)(move body: (): bool): () = builtin()`. These are canonical syntax
+`pub let test(move body: (): bool): () = builtin()`. These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
-`abi` sort selected by `foreign(c)`; registration names inhabit the compiler-owned
-`string` sort. ABI/link and registration-name metadata is erased before runtime lowering.
+`abi` sort selected by `foreign(c)`; `test("name")` consumes its ordinary string
+literal in syntax before lowering the boolean action.
 
 ## Modules
 
@@ -221,13 +221,12 @@ pretending `await` already works.
 `core.sorts` owns standard compile-time sorts, also outside the prelude:
 
 ```sc fragment
-pub let type: sort
-pub let region: sort
-pub let effect: sort
-pub let effects: sort
-pub let parameters: sort
-pub let string: sort
-pub let abi = sort {
+pub let type: sort(2)
+pub let region: sort(2)
+pub let effect: sort(2)
+pub let effects: sort(2)
+pub let parameters: sort(2)
+pub let abi = sort(1) {
   c
 }
 ```
@@ -239,7 +238,7 @@ calling-convention sort whose first supported value is `c`.
 `core.borrow` owns the finite access sort and its unqualified aliases:
 
 ```sc fragment
-pub let access = sort {
+pub let access = sort(1) {
   shared
   mut
 }

@@ -2519,7 +2519,7 @@ fn reserves_compiler_provided_control_contracts_for_core() {
 #[test]
 fn finite_sorts_classify_compile_time_values() {
     compile_text(
-        "let optimization = sort { size speed }\n\
+        "let optimization = sort(1) { size speed }\n\
          let select(comptime o: optimization)(value: i32): i32 = { value }\n\
          let main(): i32 = { select(optimization.speed)(42) }\n",
     )
@@ -2539,7 +2539,7 @@ fn core_access_is_a_finite_sort_with_shared_and_mut_aliases() {
 #[test]
 fn rejects_user_abstract_sorts_and_removed_domain_syntax() {
     let errors = compile_unresolved_text(
-        "let opaque: sort\n\
+        "let opaque: sort(2)\n\
          let main(): i32 = { 0 }\n",
     )
     .unwrap_err();
@@ -3809,6 +3809,20 @@ let main(): i32 = { total }
     .expect("global constants should call eligible ordinary source functions");
     assert!(llvm.contains("{ i32 40, i32 2 }"));
     assert!(llvm.contains("constant i32 42"));
+}
+
+#[test]
+fn string_literals_share_the_core_runtime_type_in_ctfe_and_codegen() {
+    let ir = compile_text(
+        "pub let greeting: string = \"hello\"\n\
+         pub let main(): i32 = { 0 }\n",
+    )
+    .expect("ordinary string literals should compile as core string values");
+
+    assert!(ir.contains(
+        "@salicin.string.68656c6c6f = private unnamed_addr constant [5 x i8] c\"\\68\\65\\6C\\6C\\6F\""
+    ));
+    assert!(ir.contains("ptr @salicin.string.68656c6c6f, i64 5, i64 0"));
 }
 
 #[test]

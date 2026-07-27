@@ -449,22 +449,23 @@ impl Parser {
                 Some(TokenKind::Ident(name)) if name == "domain"
             ) {
                 return Err(self.error_here(
-                    "`domain` was removed; user code must declare a finite sort with `let name = sort { ... }` because abstract sorts are compiler-owned",
+                    "`domain` was removed; user code must declare a finite sort with `let name = sort(1) { ... }` because abstract sorts are compiler-owned",
                 ));
             }
             if matches!(
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
                 Some(TokenKind::Ident(name)) if name == "sort"
-            ) {
-                if mutable || !compile_groups.is_empty() {
-                    return Err(
-                        self.error_here("abstract sort declarations cannot be mutable or generic")
-                    );
+            ) && compile_groups.is_empty()
+            {
+                if mutable {
+                    return Err(self.error_here("abstract sort declarations cannot be mutable"));
                 }
                 self.advance();
                 self.advance();
+                let level = self.sort_level_literal()?;
                 return Ok(Item::Sort(SortDef {
                     name,
+                    level,
                     members: None,
                 }));
             }
@@ -653,7 +654,7 @@ impl Parser {
 
         if self.at_context_ident("domain") {
             return Err(self.error_here(
-                "`domain` was removed; declare a finite sort with `let name = sort { ... }`",
+                "`domain` was removed; declare a finite sort with `let name = sort(1) { ... }`",
             ));
         }
 
@@ -670,12 +671,13 @@ impl Parser {
                 ));
             }
             self.advance();
+            let level = self.sort_level_literal()?;
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here(
-                    "abstract sorts use `let name: sort`; an empty defined sort uses `let name = sort {}`",
+                    "abstract sorts use `let name: sort(n)`; an empty defined sort uses `let name = sort(n) {}`",
                 ));
             }
-            return self.sort_definition(name).map(Item::Sort);
+            return self.sort_definition(name, level).map(Item::Sort);
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -1028,7 +1030,53 @@ impl Parser {
         Ok(name)
     }
 
-    fn sort_definition(&mut self, name: String) -> Result<SortDef, ParseError> {
+    fn sort_level_literal(&mut self) -> Result<u64, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` after `sort`")?;
+        let token = self.current().clone();
+        let TokenKind::Integer(level) = token.kind else {
+            return Err(self.error_at(
+                &token,
+                "top-level sort levels must be positive integer literals",
+            ));
+        };
+        let level = u64::try_from(level)
+            .map_err(|_| self.error_at(&token, "sort level does not fit in `usize`"))?;
+        if level == 0 {
+            return Err(self.error_at(&token, "`sort(0)` is invalid; sort levels start at 1"));
+        }
+        self.advance();
+        self.expect(&TokenKind::RParen, "`)` after sort level")?;
+        Ok(level)
+    }
+
+    fn compile_sort_level(&mut self) -> Result<crate::ast::SortLevel, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` after `sort`")?;
+        let token = self.current().clone();
+        let level = match token.kind {
+            TokenKind::Integer(level) => {
+                let level = u64::try_from(level)
+                    .map_err(|_| self.error_at(&token, "sort level does not fit in `usize`"))?;
+                if level == 0 {
+                    return Err(
+                        self.error_at(&token, "`sort(0)` is invalid; sort levels start at 1")
+                    );
+                }
+                crate::ast::SortLevel::Literal(level)
+            }
+            TokenKind::Ident(name) => crate::ast::SortLevel::Parameter(name),
+            _ => {
+                return Err(self.error_at(
+                    &token,
+                    "sort level must be a positive integer literal or a compile-time parameter",
+                ))
+            }
+        };
+        self.advance();
+        self.expect(&TokenKind::RParen, "`)` after sort level")?;
+        Ok(level)
+    }
+
+    fn sort_definition(&mut self, name: String, level: u64) -> Result<SortDef, ParseError> {
         let members = if self.take(&TokenKind::LBrace) {
             self.skip_separators();
             let mut members = Vec::new();
@@ -1047,7 +1095,11 @@ impl Parser {
         } else {
             None
         };
-        Ok(SortDef { name, members })
+        Ok(SortDef {
+            name,
+            level,
+            members,
+        })
     }
 
     fn sort_member_name(&mut self) -> Result<String, ParseError> {
@@ -1643,6 +1695,10 @@ impl Parser {
         }
 
         if let TokenKind::Ident(kind) = self.current().kind.clone() {
+            if kind == "sort" {
+                self.advance();
+                return self.compile_sort_level().map(Sort::Universe);
+            }
             if kind == "region" {
                 if name == "static" {
                     return Err(self.error_at(
@@ -1655,7 +1711,6 @@ impl Parser {
             }
             let parameter_kind = match kind.as_str() {
                 "usize" => Some(Sort::USize),
-                "string" => Some(Sort::String),
                 "access" => Some(Sort::Named("access".to_owned())),
                 "effect" => Some(Sort::Effect),
                 "effects" => Some(Sort::Effects),
@@ -1873,6 +1928,9 @@ impl Parser {
         }
 
         let default = match kind {
+            Sort::Universe(_) => {
+                return Err(self.error_here("defaults for universe parameters are not supported"));
+            }
             Sort::Effect | Sort::Effects => {
                 CompileParamDefault::Name(self.compile_parameter_default_name("an effect default")?)
             }
@@ -1898,11 +1956,6 @@ impl Parser {
                 };
                 self.advance();
                 CompileParamDefault::Region(name)
-            }
-            Sort::String => {
-                return Err(self.error_here(
-                    "defaults for compile-time string parameters are not supported yet",
-                ));
             }
             Sort::Type
             | Sort::USize
@@ -2607,6 +2660,32 @@ impl Parser {
     }
 
     fn function_result_type(&mut self) -> Result<Type, ParseError> {
+        if self.at_context_ident("sort")
+            && self.at_offset(1, &TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && self.at_offset(3, &TokenKind::Plus)
+        {
+            self.advance();
+            self.advance();
+            let level = self.expect_ident("a universe level parameter")?;
+            self.expect(&TokenKind::Plus, "`+` in successor universe")?;
+            let token = self.current().clone();
+            if token.kind != TokenKind::Integer(1) {
+                return Err(self.error_at(
+                    &token,
+                    "a universe constructor result must be `sort(level + 1)`",
+                ));
+            }
+            self.advance();
+            self.expect(&TokenKind::RParen, "`)` after successor universe")?;
+            return Ok(Type::Named(
+                "sort".to_owned(),
+                vec![Type::Named(format!("{level}+1"), Vec::new())],
+            ));
+        }
         self.type_expr()
     }
 
@@ -3992,6 +4071,10 @@ impl Parser {
             TokenKind::False => {
                 self.advance();
                 Ok(Expr::Bool(false))
+            }
+            TokenKind::String(value) => {
+                self.advance();
+                Ok(Expr::String(value))
             }
             TokenKind::Copy => {
                 self.advance();
@@ -5747,7 +5830,12 @@ fn normalize_expr_region_qualifiers(
             }
             Ok(())
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => Ok(()),
+        Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::String(_)
+        | Expr::Name(_)
+        | Expr::Continue => Ok(()),
     }
 }
 
@@ -6048,6 +6136,7 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => Ok(()),
     }
@@ -6156,6 +6245,7 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
+        | Expr::String(_)
         | Expr::Name(_)
         | Expr::Continue => Ok(()),
         Expr::Unary(_, value)
@@ -8537,7 +8627,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_metadata_string_compile_parameters() {
+    fn parses_string_as_an_ordinary_named_type() {
         let program =
             parse("let register(comptime name: string)(move body: (): bool): () = builtin()\n")
                 .unwrap();
@@ -8548,7 +8638,7 @@ mod tests {
             function.compile_groups,
             vec![vec![CompileParam {
                 name: "name".to_owned(),
-                kind: Sort::String,
+                kind: Sort::Named("string".to_owned()),
                 default: None,
             }]]
         );
@@ -8695,11 +8785,11 @@ mod tests {
         let program = parse(
             "pub let unsafety = effect {}\n\
              pub let throwing(comptime error: type) = effect { let raise(move error: error): never }\n\
-             pub let type: sort\n\
-             pub let effect: sort\n\
-             pub let effects: sort\n\
-             pub let empty = sort {}\n\
-             pub let access = sort {\n\
+             pub let type: sort(2)\n\
+             pub let effect: sort(2)\n\
+             pub let effects: sort(2)\n\
+             pub let empty = sort(1) {}\n\
+             pub let access = sort(1) {\n\
                /// shared read-only access.\n\
                shared\n\
                /// exclusive mutable access.\n\
@@ -8718,19 +8808,20 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[2],
-            Item::Sort(sort) if sort.name == "type" && sort.members.is_none()
+            Item::Sort(sort) if sort.name == "type" && sort.level == 2 && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[3],
-            Item::Sort(sort) if sort.name == "effect" && sort.members.is_none()
+            Item::Sort(sort) if sort.name == "effect" && sort.level == 2 && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[4],
-            Item::Sort(sort) if sort.name == "effects" && sort.members.is_none()
+            Item::Sort(sort) if sort.name == "effects" && sort.level == 2 && sort.members.is_none()
         ));
         assert!(matches!(
             &program.items[5],
-            Item::Sort(sort) if sort.name == "empty" && sort.members == Some(Vec::new())
+            Item::Sort(sort)
+                if sort.name == "empty" && sort.level == 1 && sort.members == Some(Vec::new())
         ));
         assert!(matches!(
             &program.items[6],
@@ -8895,8 +8986,13 @@ mod tests {
         assert!(error.message.contains("abstract sort"));
 
         let error = parse("let kind = sort\n").unwrap_err();
-        assert!(error.message.contains("let name: sort"));
-        assert!(error.message.contains("sort {}"));
+        assert!(error.message.contains("`(` after `sort`"));
+
+        let error = parse("let kind = sort(0) { value }\n").unwrap_err();
+        assert!(error.message.contains("`sort(0)` is invalid"));
+
+        let error = parse("let kind: sort\n").unwrap_err();
+        assert!(error.message.contains("`(` after `sort`"));
 
         let error = parse("let bool = enum { false, false }\n").unwrap_err();
         assert!(error.message.contains("duplicate enum variant `false`"));

@@ -526,6 +526,7 @@ impl Analyzer {
             }
             HirExprKind::Integer(_)
             | HirExprKind::Bool(_)
+            | HirExprKind::String(_)
             | HirExprKind::Unit
             | HirExprKind::Read { .. }
             | HirExprKind::Global(_)

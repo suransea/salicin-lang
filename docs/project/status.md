@@ -58,8 +58,8 @@ Implemented lexical and declaration features include:
 - uniform `let` declarations and mutable local value bindings;
 - private, package, and public visibility;
 - contextual control, passing, sort, and borrow words;
-- compiler-owned abstract sorts written `let name: sort`;
-- defined sorts written `let name = sort { ... }`, including empty sorts;
+- compiler-owned abstract sorts written `let name: sort(2)`;
+- defined sorts written `let name = sort(1) { ... }`, including empty sorts;
 - ordinary closed enums usable as compile-time value types;
 - explicit core-private `builtin()` initializers for compiler-owned
   functions, types, type constructors, and extension methods.

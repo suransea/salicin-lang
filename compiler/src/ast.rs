@@ -145,6 +145,9 @@ pub struct EffectDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SortDef {
     pub name: String,
+    /// The universe inhabited by the declared classifier. `sort(n)` defines
+    /// a classifier at level `n`; the declaration itself has sort `sort(n+1)`.
+    pub level: u64,
     pub members: Option<Vec<String>>,
 }
 
@@ -328,11 +331,11 @@ pub enum CompileParamDefault {
 /// `(T: type)(L: usize): type` and `(T: type, L: usize): type` are distinct
 /// compile-time calling conventions.
 pub enum Sort {
+    /// A universe classifier written `sort(level)`.
+    Universe(SortLevel),
     Type,
     USize,
     Region,
-    /// An immutable UTF-8 metadata string erased before runtime lowering.
-    String,
     /// A single nominal effect identity such as `Unsafe` or `throwing(Error)`.
     Effect,
     /// A normalized, order-insensitive row of zero or more effect identities.
@@ -352,6 +355,12 @@ pub enum Sort {
     },
     /// A value whose compile-time type is a source-declared closed type.
     Named(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SortLevel {
+    Literal(u64),
+    Parameter(String),
 }
 
 impl Sort {
@@ -569,6 +578,9 @@ pub enum Expr {
     Type(Type),
     Integer(u128),
     Bool(bool),
+    /// An ordinary immutable UTF-8 value. The same node is accepted by CTFE
+    /// and runtime lowering; string literals are not static-sort metadata.
+    String(String),
     Name(String),
     Unary(UnaryOp, Box<Expr>),
     Borrow {

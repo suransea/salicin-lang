@@ -587,7 +587,12 @@ impl Analyzer {
                             .expression_uses_standard_failure_identity(&arm.body, identity, context)
                     })
             }
-            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+            Expr::Type(_)
+            | Expr::Unit
+            | Expr::Integer(_)
+            | Expr::Bool(_)
+            | Expr::String(_)
+            | Expr::Name(_) => false,
         }
     }
 
@@ -734,7 +739,12 @@ impl Analyzer {
                         }) || self.try_body_uses_dedicated_failure_call(&arm.body, context)
                     })
             }
-            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+            Expr::Type(_)
+            | Expr::Unit
+            | Expr::Integer(_)
+            | Expr::Bool(_)
+            | Expr::String(_)
+            | Expr::Name(_) => false,
         }
     }
 
@@ -1238,6 +1248,7 @@ impl Analyzer {
             | Expr::Unit
             | Expr::Integer(_)
             | Expr::Bool(_)
+            | Expr::String(_)
             | Expr::Name(_)
             | Expr::Closure(_, _)
             | Expr::PatternClosure { .. }

@@ -4,7 +4,7 @@
 //! it to a small typed representation.  No malformed program reaches the LLVM
 //! emitter, which keeps the generated IR simple enough to inspect in tests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::alloc::AllocBundle;
@@ -266,6 +266,7 @@ struct Analyzer {
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
     tuple_types: HashSet<Ty>,
+    string_literals: BTreeSet<String>,
     continuation_adapters: Vec<ContinuationAdapter>,
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
@@ -367,6 +368,7 @@ impl Analyzer {
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
             tuple_types: HashSet::new(),
+            string_literals: BTreeSet::new(),
             continuation_adapters: Vec::new(),
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
@@ -905,7 +907,7 @@ impl Analyzer {
                 Item::Sort(definition) => {
                     if definition.members.is_none() && origin.package != PackageId::CORE.0 {
                         self.error(format!(
-                            "abstract sort `{}` is compiler-owned; user sorts must declare a finite member set with `= sort {{ ... }}`",
+                            "abstract sort `{}` is compiler-owned; user sorts must declare a finite member set with `= sort(1) {{ ... }}`",
                             definition.name
                         ));
                     }
@@ -2005,6 +2007,12 @@ impl Analyzer {
                     .cloned()
                     .expect("checked compile parameter exists");
                 match kind {
+                    Sort::Universe(_) => {
+                        self.error(format!(
+                            "universe parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
                     Sort::Type => {
                         if arguments.is_empty() {
                             true
@@ -2092,12 +2100,6 @@ impl Analyzer {
                     Sort::Region => {
                         self.error(format!(
                             "region parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
-                        ));
-                        false
-                    }
-                    Sort::String => {
-                        self.error(format!(
-                            "`string` parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
@@ -3502,8 +3504,8 @@ impl Analyzer {
                     ));
                     valid = false;
                 }
-                Sort::Region
-                | Sort::String
+                Sort::Universe(_)
+                | Sort::Region
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
@@ -5006,8 +5008,8 @@ impl Analyzer {
                     valid = false;
                     continue;
                 }
-                Sort::Region
-                | Sort::String
+                Sort::Universe(_)
+                | Sort::Region
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
@@ -5181,8 +5183,8 @@ impl Analyzer {
                     ));
                     valid = false;
                 }
-                Sort::Region
-                | Sort::String
+                Sort::Universe(_)
+                | Sort::Region
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
@@ -6591,6 +6593,7 @@ impl Analyzer {
                 .collect(),
             array_types: self.array_types.clone(),
             tuple_types: self.tuple_types.clone(),
+            string_literals: self.string_literals.clone(),
             continuation_adapters: self.continuation_adapters.clone(),
             effect_callable_adapters: self.effect_callable_adapters.clone(),
             async_states: self
@@ -6787,6 +6790,7 @@ impl Analyzer {
                     continue;
                 }
                 let marker = match parameter.kind.clone() {
+                    Sort::Universe(_) => continue,
                     Sort::Type => {
                         let marker =
                             generic_parameter_marker(&template_name, index, &parameter.name);
@@ -6801,7 +6805,6 @@ impl Analyzer {
                     Sort::ParameterPack => continue,
                     Sort::ParameterModifier => PARAMETER_MODIFIER_MOVE_MARKER.to_owned(),
                     Sort::Region => continue,
-                    Sort::String => continue,
                     Sort::USize => unreachable!("handled before marker selection"),
                     Sort::TypeConstructor { .. } | Sort::EffectConstructor { .. } => unreachable!(
                         "constructor parameters are validated through concrete instances"
@@ -7035,6 +7038,7 @@ impl Analyzer {
                 let mut method_substitutions = HashMap::new();
                 for (index, parameter) in method.compile_groups.iter().flatten().enumerate() {
                     let value = match parameter.kind.clone() {
+                        Sort::Universe(_) => continue,
                         Sort::Type => {
                             let marker = generic_parameter_marker(
                                 &format!("{function}${method_id}"),
@@ -7063,7 +7067,6 @@ impl Analyzer {
                             Type::Named(closed_value_marker(&compile_type, member), Vec::new())
                         }
                         Sort::Region
-                        | Sort::String
                         | Sort::Parameters
                         | Sort::ParameterPack
                         | Sort::TypeConstructor { .. }
@@ -7610,6 +7613,18 @@ impl Analyzer {
         diagnostics.is_empty() && actual == expected
     }
 
+    fn string_ty(&self) -> Option<Ty> {
+        self.struct_layouts
+            .iter()
+            .find(|(_, layout)| layout.source_name == "string")
+            .map(|(name, _)| Ty::Struct(name.clone()))
+            .or_else(|| {
+                self.struct_defs
+                    .contains_key("core::string::string")
+                    .then(|| Ty::Struct("core::string::string".to_owned()))
+            })
+    }
+
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
             Expr::Located { value, .. } => self.probe_expr_ty(value, hint, context),
@@ -7619,6 +7634,9 @@ impl Analyzer {
                 .cloned()
                 .map_or(TypeProbe::Defaultable(Ty::I32), TypeProbe::Known),
             Expr::Bool(_) => TypeProbe::Known(Ty::Bool),
+            Expr::String(_) => self
+                .string_ty()
+                .map_or(TypeProbe::Unsupported, TypeProbe::Known),
             Expr::Unit => TypeProbe::Known(Ty::Unit),
             Expr::Tuple(fields) => {
                 let expected_fields = match hint {
@@ -8647,6 +8665,25 @@ impl Analyzer {
                 ty: Ty::Bool,
                 kind: HirExprKind::Bool(*value),
             },
+            Expr::String(value) => {
+                let Some(ty) = self.string_ty() else {
+                    self.error("the core `string` type is unavailable");
+                    return error_expr();
+                };
+                if let Some(expected) =
+                    expected.filter(|expected| **expected != ty && **expected != Ty::Error)
+                {
+                    self.error(format!(
+                        "string literal cannot be used where `{}` is expected",
+                        self.diagnostic_type_name(expected)
+                    ));
+                }
+                self.string_literals.insert(value.clone());
+                HirExpr {
+                    ty,
+                    kind: HirExprKind::String(value.clone()),
+                }
+            }
             Expr::Unit => HirExpr {
                 ty: Ty::Unit,
                 kind: HirExprKind::Unit,
@@ -10382,7 +10419,7 @@ impl Analyzer {
         captures: &mut Vec<ClosureCaptureUse>,
     ) -> bool {
         match expression {
-            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::String(_) => true,
             Expr::Tuple(fields) => {
                 let mut valid = true;
                 for field in fields {
@@ -11033,7 +11070,7 @@ impl Analyzer {
                             }
                         }
                     }
-                    Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+                    Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::String(_) => {}
                     _ => {
                         self.error(
                             "closure call arguments only support literals, closure parameters, or a nominal root move capture",
@@ -13690,6 +13727,11 @@ fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangIt
         LangItemKind::Test,
     ]
     .map(|kind| lang_items.get(kind).canonical_name());
+    let introspection = [
+        "core::sorts::sort",
+        "core::sorts::sort_of",
+        "core::sorts::type_of",
+    ];
     let mut items = Vec::with_capacity(program.items.len().saturating_sub(names.len()));
     let mut visibilities =
         Vec::with_capacity(program.item_visibilities.len().saturating_sub(names.len()));
@@ -13704,7 +13746,7 @@ fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangIt
             Item::Function(function) => Some(function.name.as_str()),
             _ => None,
         };
-        if name.is_some_and(|name| names.contains(&name)) {
+        if name.is_some_and(|name| names.contains(&name) || introspection.contains(&name)) {
             continue;
         }
         items.push(item);
@@ -13718,9 +13760,12 @@ fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangIt
 
 fn compile_parameter_sort_label(kind: &Sort) -> String {
     match kind {
+        Sort::Universe(level) => match level {
+            crate::ast::SortLevel::Literal(level) => format!("sort({level})"),
+            crate::ast::SortLevel::Parameter(level) => format!("sort({level})"),
+        },
         Sort::Type => "type".to_owned(),
         Sort::Region => "region".to_owned(),
-        Sort::String => "string".to_owned(),
         Sort::USize => "usize".to_owned(),
         Sort::Effect => "effect".to_owned(),
         Sort::Effects => "effects".to_owned(),

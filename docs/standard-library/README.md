@@ -32,6 +32,7 @@ library/
     async.sc
     unsafe.sc
     sorts.sc
+    string.sc
     borrow.sc
     memory.sc
     control.sc
@@ -40,7 +41,6 @@ library/
     lib.sc
     boxed.sc
     vec.sc
-    string.sc
     raw.sc
   std/src/
     lib.sc
@@ -73,7 +73,7 @@ transparent aliases with ordinary `let`; for example:
 ```sc fragment
 let box = alloc.boxed.box
 let vec = alloc.vec.vec
-let string = alloc.string.string
+let string = core.string.string
 ```
 
 The compiler validates and embeds the matching `library/std` source bundle

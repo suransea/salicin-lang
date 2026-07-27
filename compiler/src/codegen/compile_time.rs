@@ -187,7 +187,6 @@ pub(super) fn static_value_from_source(source: &Type, sort: &Sort) -> Option<Sta
             }
             _ => None,
         },
-        Sort::String => None,
         Sort::Effect => {
             let (unsafety, failure, custom) = effect_row_from_source(source)?;
             let effects = FunctionEffects {
@@ -235,7 +234,9 @@ pub(super) fn static_value_from_source(source: &Type, sort: &Sort) -> Option<Sta
             }
             _ => None,
         },
-        Sort::Parameters | Sort::ParameterPack | Sort::ParameterModifier => None,
+        Sort::Universe(_) | Sort::Parameters | Sort::ParameterPack | Sort::ParameterModifier => {
+            None
+        }
     }
 }
 
@@ -247,7 +248,6 @@ pub(super) fn source_from_static_value(value: &StaticValue) -> Option<Type> {
         StaticValue::Region(name) | StaticValue::Symbolic { name, .. } => {
             Some(Type::Named(name.clone(), Vec::new()))
         }
-        StaticValue::String(_) => None,
         StaticValue::Effect(effects) | StaticValue::Effects(effects)
             if effects.parameters.is_empty() =>
         {
@@ -569,10 +569,13 @@ pub(super) fn effect_identity_sources(effects: &[String]) -> Vec<Type> {
 
 fn render_sort(sort: &Sort) -> String {
     match sort {
+        Sort::Universe(level) => match level {
+            crate::ast::SortLevel::Literal(level) => format!("sort({level})"),
+            crate::ast::SortLevel::Parameter(level) => format!("sort({level})"),
+        },
         Sort::Type => "type".to_owned(),
         Sort::USize => "usize".to_owned(),
         Sort::Region => "region".to_owned(),
-        Sort::String => "string".to_owned(),
         Sort::Effect => "effect".to_owned(),
         Sort::Effects => "effects".to_owned(),
         Sort::Parameters => "parameters".to_owned(),
