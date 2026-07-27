@@ -391,8 +391,14 @@ pub enum StaticExpr {
     Binary(Box<StaticExpr>, BinaryOp, Box<StaticExpr>),
     Call {
         function: String,
-        arguments: Vec<StaticExpr>,
+        groups: Vec<Vec<StaticCallArg>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StaticCallArg {
+    pub label: Option<String>,
+    pub value: StaticExpr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

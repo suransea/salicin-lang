@@ -4,9 +4,10 @@ use crate::ast::{
     default_trait_self_parameter, AssociatedKind, AssociatedTypeBinding, BinaryOp, Binding,
     CallArg, CompileParam, CompileParamDefault, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember,
     Field, ForeignAbi, ForeignFunction, Function, FunctionEffects, Item, MatchArm, Param, PassMode,
-    Pattern, PatternField, PatternFields, Program, Sort, SortDef, StaticExpr, Stmt, StructDef,
-    StructRepresentation, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef,
-    USizeConst, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
+    Pattern, PatternField, PatternFields, Program, Sort, SortDef, StaticCallArg, StaticExpr, Stmt,
+    StructDef, StructRepresentation, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
+    TypeFormDef, USizeConst, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
+    WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -2901,19 +2902,38 @@ impl Parser {
                 *operator,
                 Box::new(Self::static_expression(right)?),
             )),
-            Expr::Call(callee, arguments) => {
-                let Expr::Name(function) = callee.unlocated() else {
+            Expr::Call(_, _) => {
+                fn flatten<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
+                    match expression.unlocated() {
+                        Expr::Call(callee, arguments) => {
+                            let root = flatten(callee, groups);
+                            groups.push(arguments);
+                            root
+                        }
+                        expression => expression,
+                    }
+                }
+                let mut groups = Vec::new();
+                let root = flatten(expression, &mut groups);
+                let Expr::Name(function) = root.unlocated() else {
                     return Err("static calls must name a top-level pure function");
                 };
-                if arguments.iter().any(|argument| argument.label.is_some()) {
-                    return Err("static calls do not support labeled arguments yet");
-                }
                 Ok(StaticExpr::Call {
                     function: function.clone(),
-                    arguments: arguments
+                    groups: groups
                         .iter()
-                        .map(|argument| Self::static_expression(&argument.value))
-                        .collect::<Result<_, _>>()?,
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|argument| {
+                                    Ok(StaticCallArg {
+                                        label: argument.label.clone(),
+                                        value: Self::static_expression(&argument.value)?,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
                 })
             }
             _ => Err(
@@ -8099,7 +8119,10 @@ mod tests {
                 length: USizeConst::Expression(Box::new(StaticExpr::Binary(
                     Box::new(StaticExpr::Call {
                         function: "next".into(),
-                        arguments: vec![StaticExpr::USize(2)],
+                        groups: vec![vec![StaticCallArg {
+                            label: None,
+                            value: StaticExpr::USize(2),
+                        }]],
                     }),
                     BinaryOp::Mul,
                     Box::new(StaticExpr::USize(2)),

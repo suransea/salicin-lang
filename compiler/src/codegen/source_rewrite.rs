@@ -2312,19 +2312,22 @@ fn source_static_expression(expression: &crate::ast::StaticExpr) -> Expr {
             *operator,
             Box::new(source_static_expression(right)),
         ),
-        crate::ast::StaticExpr::Call {
-            function,
-            arguments,
-        } => Expr::Call(
-            Box::new(Expr::Name(function.clone())),
-            arguments
+        crate::ast::StaticExpr::Call { function, groups } => {
+            groups
                 .iter()
-                .map(|argument| crate::ast::CallArg {
-                    label: None,
-                    value: source_static_expression(argument),
+                .fold(Expr::Name(function.clone()), |callee, group| {
+                    Expr::Call(
+                        Box::new(callee),
+                        group
+                            .iter()
+                            .map(|argument| crate::ast::CallArg {
+                                label: argument.label.clone(),
+                                value: source_static_expression(&argument.value),
+                            })
+                            .collect(),
+                    )
                 })
-                .collect(),
-        ),
+        }
     }
 }
 
@@ -2484,9 +2487,9 @@ fn substitute_static_expression(
             substitute_static_expression(left, substitutions);
             substitute_static_expression(right, substitutions);
         }
-        crate::ast::StaticExpr::Call { arguments, .. } => {
-            for argument in arguments {
-                substitute_static_expression(argument, substitutions);
+        crate::ast::StaticExpr::Call { groups, .. } => {
+            for argument in groups.iter_mut().flatten() {
+                substitute_static_expression(&mut argument.value, substitutions);
             }
         }
         crate::ast::StaticExpr::USize(_) | crate::ast::StaticExpr::Bool(_) => {}

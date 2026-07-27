@@ -297,7 +297,13 @@ empty, and its inputs and result belong to the supported static subset. The curr
 unit, `bool`, every integer width, tuples, fixed arrays, fully instantiated structs, and closed
 enums. It admits immutable local bindings, checked operators, `if`, exhaustive supported `match`
 forms and guards, field or tuple projection, bounds-checked `usize` array indexing, and calls to
-other eligible top-level functions.
+other eligible source functions. Calls may retain multiple runtime groups and
+labels, explicitly select or infer generic arguments, cross module boundaries,
+and target a statically resolved inherent or unique trait method or associated
+function. `return` exits the interpreted function through nested immutable
+blocks, `if`, and `match`. Value-changing recursion is admitted within the
+fixed 16,384-step and 128-active-call limits; an equal repeated call is an
+immediate cycle error.
 
 ```sc fragment
 let next(value: usize): usize = { value + 1 }
@@ -307,10 +313,12 @@ let Buffer(Element: type)(Length: usize) = struct {
 }
 ```
 
-Static expressions are evaluated after generic static arguments are substituted and before runtime
-type lowering. The result therefore participates in type identity: `Buffer(i32)(2)` contains an
-`Array(i32)(3)`. Mutation, borrowing, handlers, closures, runtime effects, foreign calls, and
-bodyless functions are rejected in static evaluation. Checked overflow, division by zero, invalid
+Static expressions preserve call-group boundaries and labels and are
+evaluated after generic static arguments are substituted and before runtime
+type lowering. The result therefore participates in type identity:
+`Buffer(i32)(2)` contains an `Array(i32)(3)`. Mutation, borrowing, handlers,
+closures, runtime effects, foreign or builtin calls, and bodyless functions
+are rejected in static evaluation. Checked overflow, division by zero, invalid
 shifts, or exhaustion of the implementation's evaluation budget are compile errors. Struct values
 retain canonical nominal identity and declaration-order fields. Unsized, address-dependent,
 allocating, recursively laid out, or `droppable` fields are rejected before construction. Enum

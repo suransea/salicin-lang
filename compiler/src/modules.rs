@@ -3460,18 +3460,15 @@ impl Resolver {
                 self.rewrite_static_expression(left, context, static_scope);
                 self.rewrite_static_expression(right, context, static_scope);
             }
-            StaticExpr::Call {
-                function,
-                arguments,
-            } => {
+            StaticExpr::Call { function, groups } => {
                 let logical: Vec<String> = function.split('.').map(str::to_owned).collect();
                 if let Some(canonical) = self.resolve_logical_path(&logical, context) {
                     *function = canonical;
                 } else if !self.reject_unimported_standard(&logical, context) {
                     self.reject_bare_module(&logical, context, "a ctfe function");
                 }
-                for argument in arguments {
-                    self.rewrite_static_expression(argument, context, static_scope);
+                for argument in groups.iter_mut().flatten() {
+                    self.rewrite_static_expression(&mut argument.value, context, static_scope);
                 }
             }
             StaticExpr::USize(_) | StaticExpr::Bool(_) => {}

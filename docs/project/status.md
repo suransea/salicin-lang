@@ -150,9 +150,21 @@ guards, unit short patterns, and structural equality. Standard `option` and
 exclusion recursively checks every possible variant before constructing even
 a resource-free unit variant.
 
-Global constant evaluation still cannot call ordinary source functions.
-Generalizing eligible calls and control flow before unifying the two
-consumer entry points is the active roadmap boundary.
+Dependent expressions admit fully applied ordinary pure source functions with
+multiple runtime groups and labeled arguments. Explicit or inferred generic
+arguments select concrete source instances before interpretation. Direct
+dependent syntax and calls nested in interpreted bodies share this path.
+Statically resolved inherent or unique trait methods and associated functions,
+overload selection by runtime labels, and canonical cross-module declarations
+are supported. Immutable blocks, `if`, exhaustive `match`, guards, and
+function `return` preserve selected-path evaluation. Repeated equal calls fail
+as cycles; value-changing recursion may proceed within the fixed 16,384-step
+and 128-active-call limits.
+
+Effectful calls, borrow parameters or expressions, closures, mutation,
+foreign or builtin bodies, and unavailable source remain outside CTFE. Global
+constant evaluation still cannot call ordinary source functions. Unifying
+dependent and global consumer entry points is the active roadmap boundary.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,

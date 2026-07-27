@@ -98,7 +98,9 @@ The implementation lives under `compiler/src`:
   - `static_eval.rs` evaluates scalar, tuple, fixed-array, concrete struct, and closed enum values
     through ordinary pure source functions before dependent types are lowered to runtime layouts,
     including on-demand nominal materialization, recursive resource exclusion, aggregate limits,
-    projection, indexing, guards, and nested tuple, struct, or variant patterns.
+    projection, indexing, guards, nested tuple, struct, or variant patterns, grouped and generic
+    calls, statically resolved members, returns, cross-module identity, and deterministic
+    recursion budgets.
   - `target.rs` defines the explicit native target width used by CTFE, literal validation,
     runtime guards, and LLVM scalar lowering instead of inheriting Rust host integer widths.
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,

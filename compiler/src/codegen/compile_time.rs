@@ -356,17 +356,22 @@ pub(super) fn render_static_expression(expression: &StaticExpr) -> String {
             operator,
             render_static_expression(right)
         ),
-        StaticExpr::Call {
-            function,
-            arguments,
-        } => format!(
-            "{function}({})",
-            arguments
-                .iter()
-                .map(render_static_expression)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        StaticExpr::Call { function, groups } => {
+            groups.iter().fold(function.clone(), |rendered, group| {
+                let arguments = group
+                    .iter()
+                    .map(|argument| {
+                        let value = render_static_expression(&argument.value);
+                        argument
+                            .label
+                            .as_ref()
+                            .map_or(value.clone(), |label| format!("{label}: {value}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{rendered}({arguments})")
+            })
+        }
     }
 }
 
@@ -463,9 +468,10 @@ fn static_expression_mentions_any_name(expression: &StaticExpr, names: &HashSet<
             static_expression_mentions_any_name(left, names)
                 || static_expression_mentions_any_name(right, names)
         }
-        StaticExpr::Call { arguments, .. } => arguments
+        StaticExpr::Call { groups, .. } => groups
             .iter()
-            .any(|argument| static_expression_mentions_any_name(argument, names)),
+            .flatten()
+            .any(|argument| static_expression_mentions_any_name(&argument.value, names)),
         StaticExpr::USize(_) | StaticExpr::Bool(_) => false,
     }
 }

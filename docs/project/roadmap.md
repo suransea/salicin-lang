@@ -58,9 +58,12 @@ Dependent expressions and global constants now share one typed CTFE value and
 one exact scalar operation layer. Pure dependent calls support unit, `bool`,
 every target-width integer, tuples, fixed arrays, concrete structs, and closed
 enums including standard `option` and `result`; global normalization represents
-the same value families. The remaining milestone work generalizes pure source
-calls and then replaces the two consumer-specific control paths with one
-evaluation boundary.
+the same value families. Dependent evaluation now interprets fully applied
+eligible source calls with their runtime groups, labels, generic instances,
+statically resolved members, cross-module identities, control flow, returns,
+and bounded recursion. The remaining milestone work replaces the two
+consumer-specific entry paths with one evaluation boundary and completes the
+acceptance proof.
 
 Runtime `struct` and `enum` declarations remain runtime types; this milestone
 does not turn them into `sort`s. A value of such a type may be constructed,

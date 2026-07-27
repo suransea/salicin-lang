@@ -7,12 +7,18 @@ use crate::ast::{
 
 use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
 use super::hir::Ty;
-use super::lower::flatten_call;
+use super::lower::{flatten_call, InferredTypeArgument};
 use super::Analyzer;
 
-const STATIC_EVALUATION_FUEL: usize = 1_024;
+const STATIC_EVALUATION_FUEL: usize = 16_384;
+const MAX_CTFE_ACTIVE_CALLS: usize = 128;
 const MAX_CTFE_AGGREGATE_ELEMENTS: usize = 65_536;
 const MAX_CTFE_VALUE_NESTING: usize = 64;
+
+enum StaticFunctionFlow {
+    Value(CtfeValue),
+    Return(CtfeValue),
+}
 
 impl Analyzer {
     pub(super) fn evaluate_static_usize(&mut self, expression: &StaticExpr) -> Option<u64> {
@@ -20,6 +26,7 @@ impl Analyzer {
         let mut active_calls = Vec::new();
         match self.evaluate_static_expression(
             expression,
+            Some(&Ty::USize),
             &HashMap::new(),
             &mut fuel,
             &mut active_calls,
@@ -42,6 +49,7 @@ impl Analyzer {
     fn evaluate_static_expression(
         &mut self,
         expression: &StaticExpr,
+        expected: Option<&Ty>,
         locals: &HashMap<String, CtfeValue>,
         fuel: &mut usize,
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
@@ -56,31 +64,100 @@ impl Analyzer {
                 .ok_or_else(|| format!("unknown static value `{name}`")),
             StaticExpr::Unary(operator, operand) => {
                 let operand =
-                    self.evaluate_static_expression(operand, locals, fuel, active_calls)?;
+                    self.evaluate_static_expression(operand, expected, locals, fuel, active_calls)?;
                 Self::evaluate_static_unary(*operator, operand)
             }
             StaticExpr::Binary(left, operator, right) => {
-                let left = self.evaluate_static_expression(left, locals, fuel, active_calls)?;
+                let operand_expected = (!matches!(
+                    operator,
+                    BinaryOp::Eq
+                        | BinaryOp::Ne
+                        | BinaryOp::Lt
+                        | BinaryOp::Le
+                        | BinaryOp::Gt
+                        | BinaryOp::Ge
+                        | BinaryOp::And
+                        | BinaryOp::Or
+                ))
+                .then_some(expected)
+                .flatten();
+                let left = self.evaluate_static_expression(
+                    left,
+                    operand_expected,
+                    locals,
+                    fuel,
+                    active_calls,
+                )?;
                 if left.bool_value() == Some(false) && *operator == BinaryOp::And {
                     return Ok(CtfeValue::bool(false));
                 }
                 if left.bool_value() == Some(true) && *operator == BinaryOp::Or {
                     return Ok(CtfeValue::bool(true));
                 }
-                let right = self.evaluate_static_expression(right, locals, fuel, active_calls)?;
+                let right = self.evaluate_static_expression(
+                    right,
+                    operand_expected.or(Some(&left.ty)),
+                    locals,
+                    fuel,
+                    active_calls,
+                )?;
                 Self::evaluate_static_binary(left, *operator, right)
             }
-            StaticExpr::Call {
-                function,
-                arguments,
-            } => {
-                let arguments = arguments
+            StaticExpr::Call { function, groups } => {
+                let expression =
+                    groups
+                        .iter()
+                        .fold(Expr::Name(function.clone()), |callee, group| {
+                            Expr::Call(
+                                Box::new(callee),
+                                group
+                                    .iter()
+                                    .map(|argument| CallArg {
+                                        label: argument.label.clone(),
+                                        value: Self::source_static_expression(&argument.value),
+                                    })
+                                    .collect(),
+                            )
+                        });
+                self.evaluate_static_body(
+                    &expression,
+                    expected,
+                    &mut locals.clone(),
+                    fuel,
+                    active_calls,
+                )
+            }
+        }
+    }
+
+    fn source_static_expression(expression: &StaticExpr) -> Expr {
+        match expression {
+            StaticExpr::USize(value) => Expr::Integer(u128::from(*value)),
+            StaticExpr::Bool(value) => Expr::Bool(*value),
+            StaticExpr::Name(name) => Expr::Name(name.clone()),
+            StaticExpr::Unary(operator, operand) => {
+                Expr::Unary(*operator, Box::new(Self::source_static_expression(operand)))
+            }
+            StaticExpr::Binary(left, operator, right) => Expr::Binary(
+                Box::new(Self::source_static_expression(left)),
+                *operator,
+                Box::new(Self::source_static_expression(right)),
+            ),
+            StaticExpr::Call { function, groups } => {
+                groups
                     .iter()
-                    .map(|argument| {
-                        self.evaluate_static_expression(argument, locals, fuel, active_calls)
+                    .fold(Expr::Name(function.clone()), |callee, group| {
+                        Expr::Call(
+                            Box::new(callee),
+                            group
+                                .iter()
+                                .map(|argument| CallArg {
+                                    label: argument.label.clone(),
+                                    value: Self::source_static_expression(&argument.value),
+                                })
+                                .collect(),
+                        )
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.evaluate_static_call(function, &arguments, fuel, active_calls)
             }
         }
     }
@@ -93,6 +170,11 @@ impl Analyzer {
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
     ) -> Result<CtfeValue, String> {
         Self::consume_static_fuel(fuel)?;
+        if active_calls.len() >= MAX_CTFE_ACTIVE_CALLS {
+            return Err(format!(
+                "evaluation exceeded the {MAX_CTFE_ACTIVE_CALLS}-active-call limit"
+            ));
+        }
         let call = (name.to_owned(), arguments.to_vec());
         if active_calls.contains(&call) {
             return Err(format!(
@@ -107,25 +189,27 @@ impl Analyzer {
             .ok_or_else(|| format!("unknown function `{name}` in static expression"))?;
         let result_ty = self.validate_static_function(&function, arguments)?;
 
-        let parameters = &function.groups[0];
+        let parameters = function.groups.iter().flatten();
         let mut locals = parameters
-            .iter()
             .zip(arguments)
             .map(|(parameter, value)| (parameter.name.clone(), value.clone()))
             .collect::<HashMap<_, _>>();
         active_calls.push(call);
-        let result = self.evaluate_static_body(
+        let result = self.evaluate_static_function_expression(
             function
                 .body
                 .as_ref()
                 .expect("validated static function body"),
+            Some(&result_ty),
             Some(&result_ty),
             &mut locals,
             fuel,
             active_calls,
         );
         active_calls.pop();
-        let result = result?;
+        let result = match result? {
+            StaticFunctionFlow::Value(value) | StaticFunctionFlow::Return(value) => value,
+        };
         Self::expect_static_type(result, &result_ty, "ctfe function result")
     }
 
@@ -146,9 +230,9 @@ impl Analyzer {
                 function.name
             ));
         }
-        if function.groups.len() != 1 || function.groups[0].len() != arguments.len() {
+        if function.groups.iter().map(Vec::len).sum::<usize>() != arguments.len() {
             return Err(format!(
-                "ctfe function `{}` must have one fully-applied parameter group",
+                "ctfe function `{}` must be fully applied",
                 function.name
             ));
         }
@@ -158,13 +242,7 @@ impl Analyzer {
                 function.name
             ));
         }
-        if !function.where_predicates.is_empty() {
-            return Err(format!(
-                "constrained function `{}` cannot run during ctfe yet",
-                function.name
-            ));
-        }
-        for (parameter, argument) in function.groups[0].iter().zip(arguments) {
+        for (parameter, argument) in function.groups.iter().flatten().zip(arguments) {
             if !matches!(
                 parameter.mode,
                 PassMode::Inferred | PassMode::Copy | PassMode::Move
@@ -190,19 +268,25 @@ impl Analyzer {
                 ));
             }
         }
-        let return_type = function.return_type.as_ref().ok_or_else(|| {
-            format!(
-                "ctfe function `{}` must have an explicit return type",
-                function.name
-            )
-        })?;
-        let result = self.static_value_type(return_type).ok_or_else(|| {
-            format!(
-                "ctfe function `{}` has unsupported result type `{}`",
-                function.name,
-                self.source_type_name(return_type)
-            )
-        })?;
+        let result = if let Some(return_type) = function.return_type.as_ref() {
+            self.static_value_type(return_type).ok_or_else(|| {
+                format!(
+                    "ctfe function `{}` has unsupported result type `{}`",
+                    function.name,
+                    self.source_type_name(return_type)
+                )
+            })?
+        } else {
+            self.signatures
+                .get(&function.name)
+                .and_then(|signature| signature.result.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "ctfe function `{}` has no concrete inferred result type",
+                        function.name
+                    )
+                })?
+        };
         self.validate_static_value_type(&result)?;
         Ok(result)
     }
@@ -497,47 +581,13 @@ impl Analyzer {
                         active_calls,
                     )?
                 } else {
-                    let Expr::Name(function_name) = callee.unlocated() else {
-                        return Err("ctfe calls must name a top-level function".to_owned());
-                    };
-                    if arguments.iter().any(|argument| argument.label.is_some()) {
-                        return Err("labeled ctfe calls are not supported yet".to_owned());
-                    }
-                    let function = self
-                        .functions
-                        .get(function_name)
-                        .or_else(|| self.function_templates.get(function_name))
-                        .cloned()
-                        .ok_or_else(|| {
-                            format!("unknown function `{function_name}` in static expression")
-                        })?;
-                    if function.groups.len() != 1 || function.groups[0].len() != arguments.len() {
-                        return Err(format!(
-                        "ctfe function `{function_name}` must have one fully-applied parameter group"
-                    ));
-                    }
-                    let arguments = arguments
-                        .iter()
-                        .zip(&function.groups[0])
-                        .map(|(argument, parameter)| {
-                            let parameter_ty =
-                                self.static_value_type(&parameter.ty).ok_or_else(|| {
-                                    format!(
-                                    "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
-                                    parameter.name,
-                                    self.source_type_name(&parameter.ty)
-                                )
-                                })?;
-                            self.evaluate_static_body(
-                                &argument.value,
-                                Some(&parameter_ty),
-                                locals,
-                                fuel,
-                                active_calls,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    self.evaluate_static_call(function_name, &arguments, fuel, active_calls)?
+                    self.evaluate_static_source_call(
+                        expression,
+                        expected,
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?
                 }
             }
             Expr::Member(base, member) => {
@@ -747,6 +797,733 @@ impl Analyzer {
         } else {
             Ok(value)
         }
+    }
+
+    fn evaluate_static_function_expression(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        return_expected: Option<&Ty>,
+        locals: &mut HashMap<String, CtfeValue>,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<StaticFunctionFlow, String> {
+        Self::consume_static_fuel(fuel)?;
+        match expression.unlocated() {
+            Expr::Return(value) => {
+                let value = match value.as_deref() {
+                    Some(value) => self.evaluate_static_body(
+                        value,
+                        return_expected,
+                        locals,
+                        fuel,
+                        active_calls,
+                    )?,
+                    None => CtfeValue::unit(),
+                };
+                Ok(StaticFunctionFlow::Return(value))
+            }
+            Expr::Block(statements, tail) => {
+                let mut block_locals = locals.clone();
+                for statement in statements {
+                    match statement {
+                        Stmt::Let(binding) if !binding.mutable => {
+                            let annotation = binding
+                                .annotation
+                                .as_ref()
+                                .map(|annotation| {
+                                    self.static_value_type(annotation).ok_or_else(|| {
+                                        format!(
+                                            "ctfe local `{}` has unsupported type `{}`",
+                                            binding.name,
+                                            self.source_type_name(annotation)
+                                        )
+                                    })
+                                })
+                                .transpose()?;
+                            let flow = self.evaluate_static_function_expression(
+                                &binding.value,
+                                annotation.as_ref(),
+                                return_expected,
+                                &mut block_locals,
+                                fuel,
+                                active_calls,
+                            )?;
+                            let StaticFunctionFlow::Value(value) = flow else {
+                                return Ok(flow);
+                            };
+                            block_locals.insert(binding.name.clone(), value);
+                        }
+                        Stmt::Let(_) => {
+                            return Err("mutable bindings are not permitted during ctfe".to_owned());
+                        }
+                        Stmt::Expr(statement) => {
+                            let flow = self.evaluate_static_function_expression(
+                                statement,
+                                None,
+                                return_expected,
+                                &mut block_locals,
+                                fuel,
+                                active_calls,
+                            )?;
+                            if matches!(flow, StaticFunctionFlow::Return(_)) {
+                                return Ok(flow);
+                            }
+                        }
+                    }
+                }
+                match tail.as_deref() {
+                    Some(tail) => self.evaluate_static_function_expression(
+                        tail,
+                        expected,
+                        return_expected,
+                        &mut block_locals,
+                        fuel,
+                        active_calls,
+                    ),
+                    None => Ok(StaticFunctionFlow::Value(CtfeValue::unit())),
+                }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self
+                    .evaluate_static_body(condition, Some(&Ty::Bool), locals, fuel, active_calls)?
+                    .bool_value()
+                    .ok_or_else(|| "ctfe `if` condition must be `bool`".to_owned())?;
+                if condition {
+                    self.evaluate_static_function_expression(
+                        then_branch,
+                        expected,
+                        return_expected,
+                        locals,
+                        fuel,
+                        active_calls,
+                    )
+                } else if let Some(branch) = else_branch.as_deref() {
+                    self.evaluate_static_function_expression(
+                        branch,
+                        expected,
+                        return_expected,
+                        locals,
+                        fuel,
+                        active_calls,
+                    )
+                } else {
+                    Ok(StaticFunctionFlow::Value(CtfeValue::unit()))
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                let value =
+                    self.evaluate_static_body(scrutinee, None, locals, fuel, active_calls)?;
+                for arm in arms {
+                    let mut arm_locals = locals.clone();
+                    if !self.static_pattern_matches(&arm.pattern, &value, &mut arm_locals)? {
+                        continue;
+                    }
+                    if let Some(guard) = &arm.guard {
+                        let guard = self
+                            .evaluate_static_body(
+                                guard,
+                                Some(&Ty::Bool),
+                                &mut arm_locals,
+                                fuel,
+                                active_calls,
+                            )?
+                            .bool_value()
+                            .ok_or_else(|| "ctfe match guard must be `bool`".to_owned())?;
+                        if !guard {
+                            continue;
+                        }
+                    }
+                    return self.evaluate_static_function_expression(
+                        &arm.body,
+                        expected,
+                        return_expected,
+                        &mut arm_locals,
+                        fuel,
+                        active_calls,
+                    );
+                }
+                Err("non-exhaustive match during ctfe".to_owned())
+            }
+            _ => self
+                .evaluate_static_body(expression, expected, locals, fuel, active_calls)
+                .map(StaticFunctionFlow::Value),
+        }
+    }
+
+    fn evaluate_static_source_call(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        locals: &mut HashMap<String, CtfeValue>,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        if let Expr::Name(name) = root.unlocated() {
+            if self.function_templates.contains_key(name)
+                && self
+                    .functions
+                    .get(name)
+                    .is_none_or(|function| groups.len() != function.groups.len())
+                && self
+                    .function_templates
+                    .get(name)
+                    .is_some_and(|function| groups.len() == function.groups.len())
+            {
+                return self.evaluate_inferred_static_function_call(
+                    name,
+                    &groups,
+                    expected,
+                    locals,
+                    fuel,
+                    active_calls,
+                );
+            }
+        }
+        let (function_name, runtime_start, receiver) = match root.unlocated() {
+            Expr::Name(name) => {
+                let (function, runtime_start) =
+                    self.resolve_static_named_function(name, &groups, 0)?;
+                (function, runtime_start, None)
+            }
+            Expr::Member(base, member) => {
+                if let Some(target) = self.static_nominal_type_head(base)? {
+                    let overload_key = (target.clone(), member.clone(), false);
+                    let function = if let Some(candidates) =
+                        self.inherent_overloads.get(&overload_key).cloned()
+                    {
+                        let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                        match matches.as_slice() {
+                            [function] => function.clone(),
+                            [] => {
+                                return Err(format!(
+                                    "no ctfe associated-function overload `{member}` matches the supplied labels"
+                                ));
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "ctfe associated-function overload `{member}` is ambiguous"
+                                ));
+                            }
+                        }
+                    } else {
+                        let inherent = self
+                            .inherent_members
+                            .get(&target)
+                            .and_then(|members| members.functions.get(member))
+                            .cloned();
+                        if let Some(inherent) = inherent {
+                            inherent
+                        } else {
+                            let target_ty = if self.struct_layouts.contains_key(&target) {
+                                Ty::Struct(target.clone())
+                            } else {
+                                Ty::Enum(target.clone())
+                            };
+                            let origin = active_calls
+                                .last()
+                                .and_then(|(function, _)| self.function_origins.get(function))
+                                .cloned()
+                                .or_else(|| self.current_origin.as_deref().cloned());
+                            let candidates = origin
+                                .as_ref()
+                                .map(|origin| {
+                                    self.trait_associated_function_candidates(
+                                        &target_ty, member, origin,
+                                    )
+                                })
+                                .unwrap_or_default();
+                            let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                            match matches.as_slice() {
+                                [function] => function.clone(),
+                                [] => {
+                                    return Err(format!(
+                                        "no statically resolved ctfe associated function `{member}` exists for `{}`",
+                                        self.diagnostic_type_name(&target_ty)
+                                    ));
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "ctfe trait associated function `{member}` is ambiguous"
+                                    ));
+                                }
+                            }
+                        }
+                    };
+                    let (function, runtime_start) =
+                        self.resolve_static_named_function(&function, &groups, 0)?;
+                    (function, runtime_start, None)
+                } else {
+                    let receiver =
+                        self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
+                    let target = match &receiver.ty {
+                        Ty::Struct(name) | Ty::Enum(name) => name,
+                        _ => {
+                            return Err(format!(
+                            "ctfe method `{member}` requires a concrete struct or enum receiver, found `{}`",
+                            receiver.ty
+                        ));
+                        }
+                    };
+                    let overload_key = (target.clone(), member.clone(), true);
+                    let function = if let Some(candidates) =
+                        self.inherent_overloads.get(&overload_key).cloned()
+                    {
+                        let matches = self.matching_function_overloads(&candidates, &groups, 1);
+                        match matches.as_slice() {
+                            [function] => function.clone(),
+                            [] => {
+                                return Err(format!(
+                                "no ctfe method overload `{member}` matches the supplied labels"
+                            ));
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "ctfe method overload `{member}` is ambiguous"
+                                ));
+                            }
+                        }
+                    } else {
+                        let inherent = self
+                            .inherent_members
+                            .get(target)
+                            .and_then(|members| members.methods.get(member))
+                            .cloned();
+                        if let Some(inherent) = inherent {
+                            inherent
+                        } else {
+                            let origin = active_calls
+                                .last()
+                                .and_then(|(function, _)| self.function_origins.get(function))
+                                .cloned()
+                                .or_else(|| self.current_origin.as_deref().cloned());
+                            let candidates = origin
+                                .as_ref()
+                                .map(|origin| {
+                                    self.trait_method_function_candidates(
+                                        &receiver.ty,
+                                        member,
+                                        origin,
+                                    )
+                                    .into_iter()
+                                    .map(|(_, function)| function)
+                                    .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            let matches = self.matching_function_overloads(&candidates, &groups, 1);
+                            match matches.as_slice() {
+                                [function] => function.clone(),
+                                [] => {
+                                    return Err(format!(
+                                    "no statically resolved ctfe method `{member}` exists for `{}`",
+                                    receiver.ty
+                                ));
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "ctfe trait method `{member}` is ambiguous"
+                                    ));
+                                }
+                            }
+                        }
+                    };
+                    let (function, runtime_start) =
+                        self.resolve_static_named_function(&function, &groups, 1)?;
+                    (function, runtime_start, Some(receiver))
+                }
+            }
+            _ => {
+                return Err(
+                    "ctfe calls require a named function or statically resolved method".to_owned(),
+                );
+            }
+        };
+        let function =
+            self.functions.get(&function_name).cloned().ok_or_else(|| {
+                format!("unknown function `{function_name}` in static expression")
+            })?;
+        let runtime_groups = &groups[runtime_start..];
+        let arguments = self.evaluate_static_call_arguments(
+            &function_name,
+            &function,
+            runtime_groups,
+            receiver,
+            locals,
+            fuel,
+            active_calls,
+        )?;
+        let result = self.evaluate_static_call(&function_name, &arguments, fuel, active_calls)?;
+        if let Some(expected) = expected {
+            Self::expect_static_type(
+                result,
+                expected,
+                &format!("ctfe call `{function_name}` result"),
+            )
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn evaluate_inferred_static_function_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        locals: &mut HashMap<String, CtfeValue>,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<CtfeValue, String> {
+        let template = self
+            .function_templates
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unknown generic function `{name}` during ctfe"))?;
+        let compile_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        let mut inferred = HashMap::<String, InferredTypeArgument>::new();
+        if let (Some(expected), Some(result)) = (expected, template.return_type.as_ref()) {
+            self.unify_template_ty(
+                result,
+                expected,
+                self.source_type_for_ty(expected).as_ref(),
+                &compile_parameters,
+                &mut inferred,
+                "ctfe expected result type",
+            )?;
+        }
+        let mut values = Vec::new();
+        for (group_index, (arguments, parameters)) in
+            groups.iter().zip(&template.groups).enumerate()
+        {
+            if arguments.len() != parameters.len() {
+                return Err(format!(
+                    "ctfe call to `{name}` group {} has {} arguments, expected {}",
+                    group_index + 1,
+                    arguments.len(),
+                    parameters.len()
+                ));
+            }
+            let labeled = arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some());
+            let mut ordered = vec![None; parameters.len()];
+            for (position, argument) in arguments.iter().enumerate() {
+                let parameter_index = if let Some(label) = &argument.label {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter.name == *label)
+                        .ok_or_else(|| {
+                            format!("unknown ctfe argument label `{label}` in call to `{name}`")
+                        })?
+                } else {
+                    if labeled {
+                        return Err(format!(
+                            "ctfe call to `{name}` cannot mix labeled and positional arguments"
+                        ));
+                    }
+                    position
+                };
+                let argument_expected = self.resolved_template_ty(
+                    &parameters[parameter_index].ty,
+                    &compile_parameters,
+                    &inferred,
+                );
+                let value = self.evaluate_static_body(
+                    &argument.value,
+                    argument_expected.as_ref(),
+                    locals,
+                    fuel,
+                    active_calls,
+                )?;
+                self.unify_template_ty(
+                    &parameters[parameter_index].ty,
+                    &value.ty,
+                    self.source_type_for_ty(&value.ty).as_ref(),
+                    &compile_parameters,
+                    &mut inferred,
+                    &format!(
+                        "ctfe argument for parameter `{}`",
+                        parameters[parameter_index].name
+                    ),
+                )?;
+                if ordered[parameter_index].replace(value).is_some() {
+                    return Err(format!(
+                        "duplicate ctfe argument for `{}.{}`",
+                        name, parameters[parameter_index].name
+                    ));
+                }
+            }
+            values.extend(
+                ordered
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        value.ok_or_else(|| {
+                            format!(
+                                "missing ctfe argument for `{}.{}`",
+                                name, parameters[index].name
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let diagnostics = self.diagnostics.len();
+        let (source_arguments, arguments) = self
+            .finish_type_argument_inference(name, &ordered_parameters, &inferred, false)
+            .filter(|_| self.diagnostics.len() == diagnostics)
+            .ok_or_else(|| format!("could not infer generic ctfe call to `{name}`"))?;
+        let canonical = self
+            .ensure_function_instance(name, source_arguments, arguments)
+            .filter(|_| self.diagnostics.len() == diagnostics)
+            .ok_or_else(|| format!("could not instantiate generic ctfe function `{name}`"))?;
+        let result = self.evaluate_static_call(&canonical, &values, fuel, active_calls)?;
+        if let Some(expected) = expected {
+            Self::expect_static_type(result, expected, &format!("ctfe call `{canonical}` result"))
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn static_nominal_type_head(&mut self, expression: &Expr) -> Result<Option<String>, String> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(name) = root.unlocated() else {
+            return Ok(None);
+        };
+        if groups.is_empty()
+            && (self.struct_layouts.contains_key(name) || self.enum_layouts.contains_key(name))
+        {
+            return Ok(Some(name.clone()));
+        }
+        let compile_groups = self
+            .struct_templates
+            .get(name)
+            .map(|template| template.compile_groups.clone())
+            .or_else(|| {
+                self.enum_templates
+                    .get(name)
+                    .map(|template| template.compile_groups.clone())
+            });
+        let Some(compile_groups) = compile_groups else {
+            return Ok(None);
+        };
+        if groups.len() != compile_groups.len() {
+            return Ok(None);
+        }
+        let mut source_arguments = Vec::new();
+        for (arguments, parameters) in groups.iter().zip(&compile_groups) {
+            let sources = self
+                .probe_compile_group_sources(parameters, arguments, &HashMap::new())
+                .ok_or_else(|| {
+                    format!("ctfe nominal type `{name}` has invalid compile-time arguments")
+                })?;
+            source_arguments.extend(sources);
+        }
+        match self.lower_source_type(&Type::Named(name.clone(), source_arguments)) {
+            Ty::Struct(name) | Ty::Enum(name) => Ok(Some(name)),
+            _ => Err(format!(
+                "concrete nominal type `{name}` was not materialized before ctfe"
+            )),
+        }
+    }
+
+    fn resolve_static_named_function(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        parameter_offset: usize,
+    ) -> Result<(String, usize), String> {
+        let name = if let Some(candidates) = self.function_overloads.get(name).cloned() {
+            let matches = self.matching_function_overloads(&candidates, groups, parameter_offset);
+            match matches.as_slice() {
+                [function] => function.clone(),
+                [] => {
+                    return Err(format!(
+                        "no ctfe function overload `{name}` matches the supplied labels"
+                    ));
+                }
+                _ => return Err(format!("ctfe function overload `{name}` is ambiguous")),
+            }
+        } else {
+            name.to_owned()
+        };
+        if let Some(function) = self.functions.get(&name) {
+            if groups.len() + parameter_offset == function.groups.len() {
+                return Ok((name, 0));
+            }
+        }
+        let template = self
+            .function_templates
+            .get(&name)
+            .cloned()
+            .ok_or_else(|| format!("unknown function `{name}` in static expression"))?;
+        let compile_count = template.compile_groups.len();
+        if groups.len() + parameter_offset != compile_count + template.groups.len() {
+            return Err(format!(
+                "generic ctfe function `{name}` must have all compile-time and runtime parameter groups explicitly applied"
+            ));
+        }
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for (group, parameters) in groups[..compile_count].iter().zip(&template.compile_groups) {
+            if group.len() != parameters.len() {
+                return Err(format!(
+                    "compile-time parameter group in ctfe call to `{name}` has {} arguments, expected {}",
+                    group.len(),
+                    parameters.len()
+                ));
+            }
+            let sources = self
+                .probe_compile_group_sources(parameters, group, &HashMap::new())
+                .ok_or_else(|| {
+                    format!("ctfe call to `{name}` has an invalid compile-time argument")
+                })?;
+            for (parameter, source) in parameters.iter().zip(sources) {
+                let argument = self.probe_compile_argument_ty(parameter, &source).ok_or_else(|| {
+                    format!(
+                        "ctfe call to `{name}` has an invalid argument for compile-time parameter `{}`",
+                        parameter.name
+                    )
+                })?;
+                source_arguments.push(source);
+                arguments.push(argument);
+            }
+        }
+        let diagnostics = self.diagnostics.len();
+        let canonical = self
+            .ensure_function_instance(&name, source_arguments, arguments)
+            .filter(|_| self.diagnostics.len() == diagnostics)
+            .ok_or_else(|| format!("could not instantiate generic ctfe function `{name}`"))?;
+        Ok((canonical, compile_count))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_static_call_arguments(
+        &mut self,
+        function_name: &str,
+        function: &Function,
+        groups: &[&[CallArg]],
+        receiver: Option<CtfeValue>,
+        locals: &mut HashMap<String, CtfeValue>,
+        fuel: &mut usize,
+        active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
+    ) -> Result<Vec<CtfeValue>, String> {
+        let parameter_offset = usize::from(receiver.is_some());
+        if groups.len() + parameter_offset != function.groups.len() {
+            return Err(format!(
+                "ctfe function `{function_name}` must be fully applied: expected {} runtime groups, found {}",
+                function.groups.len() - parameter_offset,
+                groups.len()
+            ));
+        }
+        let mut values = Vec::new();
+        if let Some(receiver) = receiver {
+            let [parameter] = function.groups[0].as_slice() else {
+                return Err(format!(
+                    "ctfe method `{function_name}` must have one receiver parameter"
+                ));
+            };
+            let expected = self.static_value_type(&parameter.ty).ok_or_else(|| {
+                format!(
+                    "ctfe receiver `{function_name}.{}` has unsupported type `{}`",
+                    parameter.name,
+                    self.source_type_name(&parameter.ty)
+                )
+            })?;
+            values.push(Self::expect_static_type(
+                receiver,
+                &expected,
+                "ctfe method receiver",
+            )?);
+        }
+        for (group_index, (arguments, parameters)) in groups
+            .iter()
+            .zip(&function.groups[parameter_offset..])
+            .enumerate()
+        {
+            if arguments.len() != parameters.len() {
+                return Err(format!(
+                    "ctfe call to `{function_name}` group {} has {} arguments, expected {}",
+                    group_index + 1,
+                    arguments.len(),
+                    parameters.len()
+                ));
+            }
+            let labeled = arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some());
+            if arguments
+                .iter()
+                .any(|argument| argument.label.is_some() != labeled)
+            {
+                return Err(format!(
+                    "ctfe call to `{function_name}` cannot mix labeled and positional arguments"
+                ));
+            }
+            let mut ordered = vec![None; parameters.len()];
+            for (position, argument) in arguments.iter().enumerate() {
+                let parameter_index = if let Some(label) = &argument.label {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter.name == *label)
+                        .ok_or_else(|| {
+                            format!(
+                                "unknown ctfe argument label `{label}` in call to `{function_name}`"
+                            )
+                        })?
+                } else {
+                    position
+                };
+                if ordered[parameter_index].is_some() {
+                    return Err(format!(
+                        "duplicate ctfe argument for `{}.{}`",
+                        function_name, parameters[parameter_index].name
+                    ));
+                }
+                let parameter = &parameters[parameter_index];
+                let expected = self.static_value_type(&parameter.ty).ok_or_else(|| {
+                    format!(
+                        "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
+                        parameter.name,
+                        self.source_type_name(&parameter.ty)
+                    )
+                })?;
+                let value = self.evaluate_static_body(
+                    &argument.value,
+                    Some(&expected),
+                    locals,
+                    fuel,
+                    active_calls,
+                )?;
+                ordered[parameter_index] = Some(value);
+            }
+            for (index, value) in ordered.into_iter().enumerate() {
+                values.push(value.ok_or_else(|| {
+                    format!(
+                        "missing ctfe argument for `{}.{}`",
+                        function_name, parameters[index].name
+                    )
+                })?);
+            }
+        }
+        Ok(values)
     }
 
     fn static_binary_operand_type(
@@ -1751,9 +2528,9 @@ impl Analyzer {
     }
 
     fn consume_static_fuel(fuel: &mut usize) -> Result<(), String> {
-        *fuel = fuel
-            .checked_sub(1)
-            .ok_or_else(|| "evaluation exceeded the 1024-step limit".to_owned())?;
+        *fuel = fuel.checked_sub(1).ok_or_else(|| {
+            format!("evaluation exceeded the {STATIC_EVALUATION_FUEL}-step limit")
+        })?;
         Ok(())
     }
 }

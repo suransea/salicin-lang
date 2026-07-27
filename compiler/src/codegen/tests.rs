@@ -2615,6 +2615,147 @@ let main(): i32 = { 0 }
 }
 
 #[test]
+fn ctfe_calls_preserve_runtime_groups_labels_and_explicit_generic_arguments() {
+    let llvm = compile_text(
+        r#"
+let combine(comptime bias: usize)
+  (left: usize, right: usize)
+  (scale: usize): usize = {
+  (left + right + bias) * scale
+}
+let length(): usize = {
+  combine(1)(left: 3, right: 2)(scale: 2)
+}
+let identity(comptime value: type)(move value: value): value = { value }
+let inferred(): usize = {
+  let value: usize = 7
+  identity(value)
+}
+let read(values: array(i32)(length())): i32 = { values[0] }
+let read_direct(
+  values: array(i32)(combine(1)(left: 3, right: 2)(scale: 2))
+): i32 = { values[0] }
+let read_inferred(values: array(i32)(inferred())): i32 = { values[0] }
+let read_direct_inferred(values: array(i32)(identity(7))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("ctfe calls should preserve groups, labels, and generic substitution");
+    assert!(llvm.contains("[12 x i32]"), "{llvm}");
+    assert!(llvm.contains("[7 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_calls_statically_resolved_members_and_propagates_return() {
+    let llvm = compile_text(
+        r#"
+let counter = struct { value: usize }
+let measurable = trait {
+  let measure(move self)(): usize
+}
+extend counter {
+  let new(value: usize): counter = { counter { value: value } }
+  let add(move self)(amount: usize): usize = { self.value + amount }
+}
+extend counter: measurable {
+  let measure(move self)(): usize = { self.value }
+}
+let select(left: usize): usize = { left }
+let select(right: usize): usize = { right + 1 }
+let choose(value: usize): usize = {
+  if value == 0 {
+    return counter.new(3).add(2) + select(right: 1) + counter.new(3).measure()
+  }
+  value
+}
+let read(values: array(i32)(choose(0))): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("statically resolved members and return should execute during ctfe");
+    assert!(llvm.contains("[10 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_calls_resolved_cross_module_declarations() {
+    let program = crate::modules::resolve_sources(&[
+        crate::modules::SourceUnit {
+            path: "root.sc".to_owned(),
+            module_path: Vec::new(),
+            source: "use root.math.dimension\n\
+                     let read(values: array(i32)(dimension(4))): i32 = { values[0] }\n\
+                     let main(): i32 = { 0 }\n"
+                .to_owned(),
+            is_root: true,
+        },
+        crate::modules::SourceUnit {
+            path: "math.sc".to_owned(),
+            module_path: vec!["math".to_owned()],
+            source: "pub let dimension(value: usize): usize = { value + 2 }\n".to_owned(),
+            is_root: false,
+        },
+    ])
+    .expect("cross-module ctfe source should resolve");
+    let llvm = compile(&program).expect("resolved cross-module calls should execute during ctfe");
+    assert!(llvm.contains("[6 x i32]"), "{llvm}");
+}
+
+#[test]
+fn ctfe_calls_reject_effects_borrows_and_foreign_bodies() {
+    let effectful = compile_text(
+        r#"
+let unsafe = std.unsafe.unsafe
+let unsafe_length(): usize with(unsafe) = { unsafe { 1 } }
+let read(values: array(i32)(unsafe_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        effectful.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("effectful function `unsafe_length` cannot run during ctfe")),
+        "{effectful:?}"
+    );
+
+    let borrowed = compile_text(
+        r#"
+let read_borrow(value: borrow(usize)): usize = { *value }
+let borrowed_length(): usize = {
+  let value: usize = 1
+  read_borrow(borrow(value))
+}
+let read(values: array(i32)(borrowed_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        borrowed.iter().any(|diagnostic| {
+            diagnostic.message.contains("not in the pure ctfe subset")
+                || diagnostic.message.contains("cannot borrow runtime storage")
+        }),
+        "{borrowed:?}"
+    );
+
+    let foreign = compile_text(
+        r#"
+let abs(value: i32): i32 = foreign(c)
+let foreign_length(): usize = { abs(1); 1 }
+let read(values: array(i32)(foreign_length())): i32 = { values[0] }
+let main(): i32 = { 0 }
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        foreign.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("has no source body available to ctfe")),
+        "{foreign:?}"
+    );
+}
+
+#[test]
 fn ctfe_normalizes_dependent_lengths_after_generic_substitution() {
     let llvm = compile_text(
         r#"

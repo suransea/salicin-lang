@@ -24,13 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Pure calls and consumers
 
-- [ ] **CTFE-7 — General pure function calls.** Extend CTFE calls to accepted
-  runtime parameter groups, labels, generic substitution, methods or
-  associated functions where statically resolved, cross-module declarations,
-  immutable blocks, `if`, `match`, and bounded value-changing recursion.
-  Continue to reject effects, borrowing, closures, foreign/builtin bodies,
-  mutation, and unavailable source definitions.
-
 - [ ] **CTFE-8 — Shared constant consumers.** Route dependent array lengths
   and global constant initialization through the unified evaluator. Preserve
   exact nominal types and target layout while keeping path, declaration order,

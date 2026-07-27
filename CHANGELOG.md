@@ -44,6 +44,15 @@ subset.
   computations use the same evaluator. Normalized values retain source
   variant identity instead of backend discriminants, and resource exclusion
   checks every possible variant before construction.
+- Generalized dependent CTFE calls to preserve direct and nested runtime
+  parameter groups and labels, explicit or inferred generic substitution,
+  runtime-label overload selection, statically resolved inherent and unique
+  trait methods or associated functions, and canonical cross-module
+  declarations. Immutable blocks, `if`, `match`, guards, and `return` execute
+  only the selected path. Value-changing recursion now uses the contracted
+  16,384-step and 128-active-call limits while repeated equal calls remain
+  immediate cycles. Effectful, borrowing, closure, mutation, foreign,
+  builtin, and unavailable-body calls remain rejected.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.
