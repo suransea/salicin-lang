@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.211.0 - 2026-07-27
+
 - Added the edition-matched `library/std` source bundle above `core` and
   `alloc`. The compiler now derives the mounted `std` namespace from explicit
   public source aliases, preserves each lower-layer canonical identity, and
@@ -15,6 +17,12 @@ subset.
   fingerprints, reserved its namespace for every package, and made the
   initial host boundary explicit: Linux/x86-64 and macOS/arm64 are supported,
   while other host pairs receive a target-specific diagnostic.
+- Replaced category-encoded standard effect names with semantic behavior
+  names: `throwing`, `suspension`, `unsafety`, `loop_exit`, `iteration_skip`,
+  and `function_exit`. Embedded public library names now require strict ASCII
+  `snake_case` and reject declaration-category suffixes such as `_effect`,
+  `_trait`, and `_type`; ordinary user declarations remain unrestricted by
+  this library policy.
 
 ## 0.210.0 - 2026-07-27
 
