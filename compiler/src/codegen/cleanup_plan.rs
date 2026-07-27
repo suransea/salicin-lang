@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::*;
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,

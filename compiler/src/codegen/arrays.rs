@@ -57,7 +57,7 @@ impl Analyzer {
                 .map(|element| self.lower_expr(element, Some(&element_ty), context))
                 .collect();
             let array_ty = Ty::Array(Box::new(element_ty), length);
-            self.array_types.insert(array_ty.clone());
+            self.lowering.array_types.insert(array_ty.clone());
             let backing = HirExpr {
                 ty: array_ty,
                 kind: HirExprKind::Array(elements),
@@ -98,7 +98,7 @@ impl Analyzer {
             self.error("array element type `()` is not supported in the first version");
         }
         let array_ty = Ty::Array(Box::new(element_ty), elements.len() as u64);
-        self.array_types.insert(array_ty.clone());
+        self.lowering.array_types.insert(array_ty.clone());
         let backing = HirExpr {
             ty: array_ty,
             kind: HirExprKind::Array(lowered),
@@ -118,12 +118,15 @@ impl Analyzer {
     }
 
     pub(super) fn literal_protocol_element(&self, trait_name: &str, output: &Ty) -> Option<Ty> {
-        self.trait_impls.values().find_map(|implementation| {
-            (implementation.key.trait_ref.name == trait_name
-                && implementation.associated_types.get("output") == Some(output))
-            .then(|| implementation.key.trait_ref.arguments.first().cloned())
-            .flatten()
-        })
+        self.collection
+            .trait_impls
+            .values()
+            .find_map(|implementation| {
+                (implementation.key.trait_ref.name == trait_name
+                    && implementation.associated_types.get("output") == Some(output))
+                .then(|| implementation.key.trait_ref.arguments.first().cloned())
+                .flatten()
+            })
     }
 
     pub(super) fn lower_literal_protocol_call(
@@ -145,6 +148,7 @@ impl Analyzer {
             }
         }
         let candidates = self
+            .collection
             .trait_impls
             .values()
             .filter(|implementation| {
@@ -180,7 +184,7 @@ impl Analyzer {
             Ty::Array(_, length) => *length,
             _ => unreachable!("literal backing is always a fixed-size array"),
         };
-        let canonical = if self.function_templates.contains_key(&method) {
+        let canonical = if self.collection.function_templates.contains_key(&method) {
             let marker = Ty::Struct(usize_value_marker(length));
             let Some(canonical) = self.ensure_function_instance(
                 &method,
@@ -194,7 +198,7 @@ impl Analyzer {
             method
         };
         self.require_function_effects(&canonical, context);
-        let signature = self.signatures[&canonical].clone();
+        let signature = self.lowering.signatures[&canonical].clone();
         if !matches!(signature.groups.as_slice(), [group] if matches!(group.as_slice(), [parameter] if parameter.ty == backing.ty))
             || signature.result.as_ref() != Some(expected)
         {
@@ -221,7 +225,7 @@ impl Analyzer {
         backing: &Ty,
         output: &Ty,
     ) {
-        let exists = self.trait_impls.values().any(|implementation| {
+        let exists = self.collection.trait_impls.values().any(|implementation| {
             implementation.key.trait_ref.name == trait_name
                 && implementation.associated_types.get("output") == Some(output)
                 && implementation.methods.contains_key(member)
@@ -314,7 +318,7 @@ impl Analyzer {
         }
         let base = self.lower_expr(base, None, context);
         self.ensure_array_trait_extensions(&base.ty);
-        let implements_index = self.trait_impls.keys().any(|implementation| {
+        let implements_index = self.collection.trait_impls.keys().any(|implementation| {
             implementation.self_ty == base.ty
                 && implementation.trait_ref.name == self.lang_item_name(LangItemKind::Index)
                 && implementation.trait_ref.arguments == [Ty::USize]

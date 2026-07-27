@@ -19,7 +19,9 @@ not a stable compiler API.
 
 The implementation lives under `compiler/src`:
 
-- `lexer.rs`, `parser.rs`, and `ast.rs` define the source frontend.
+- `lexer.rs`, `parser.rs`, and `ast.rs` define the source frontend. `parser/post_parse.rs`
+  performs extend-parameter inference plus compile-parameter scope normalization and validation
+  after syntax parsing; `parser/tests.rs` keeps parser regressions out of the implementation file.
 - `editor.rs` exposes token ranges and phased frontend diagnostics in UTF-8
   bytes and zero-based UTF-16 coordinates. It analyzes either one document or
   a complete source graph without coupling the compiler to an LSP transport.
@@ -34,6 +36,8 @@ The implementation lives under `compiler/src`:
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.
+  - `analyzer_state.rs` separates collected source/registry state from mutable lowering artifacts;
+    the `Analyzer` itself retains only session identity, those two phase states, and diagnostics.
   - `access.rs` owns visibility boundary checks, effective member access, and public API leak
     validation over lowered types.
   - `arrays.rs` lowers fixed-size literal backing storage, dispatches array and
@@ -41,8 +45,13 @@ The implementation lives under `compiler/src`:
     array-to-slice unsizing, and lowers static/dynamic array indexing.
   - `assignment.rs` lowers compound assignments through user-defined operator traits or builtin
     integer assignment paths.
-  - `calls.rs` lowers call dispatch, internal callable adapters, named overloads, and labeled or
-    positional call argument ordering.
+  - `async_source.rs` recognizes and rewrites source-level async control flow, recurring loops,
+    retained bindings, and heterogeneous branch factories before future-state materialization.
+  - `calls.rs` lowers call dispatch, owns callable-bridge specialization data and rewrites,
+    internal callable adapters, named overloads, and labeled or positional call argument ordering.
+  - `call_lowering.rs` owns resolved call lowering after dispatch, including bound methods,
+    indirect calls, callable and handler specialization, partial application, closure arguments,
+    and argument-temporary staging.
   - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and
     handler-aware lowering.
   - `coalesce.rs` owns `??` and custom `Coalesce` protocol type probing and lowering.
@@ -55,8 +64,14 @@ The implementation lives under `compiler/src`:
   - `ctfe_value.rs` defines the recursive runtime-typed value shared by dependent-expression and
     global-constant evaluation, plus exact checked integer operations, while keeping erased
     metadata in `StaticValue`.
+  - `diagnostic.rs` defines the public codegen diagnostic value while keeping construction
+    internal to the codegen pipeline.
   - `emitter.rs` totally encodes already normalized typed CTFE globals as textual LLVM IR; it does
     not evaluate source expressions.
+  - `expression_lowering.rs` lowers general expressions and local closures after type probing,
+    including capture discovery, flow joins, and recursive-frame bookkeeping.
+  - `extension_collection.rs` collects concrete and generic trait or inherent extensions,
+    validates overlaps, and materializes pointer, slice, and array extension instances.
   - `effects.rs` owns source-level support state, effect identity helpers, call-site effect
     requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
     and handler entry lowering.
@@ -86,21 +101,22 @@ The implementation lives under `compiler/src`:
     lowering for validated lang-item protocols.
   - `ownership.rs` centralizes Copy/drop type predicates, custom Drop crossing checks, and inferred
     pass-mode selection used by ownership-sensitive lowering.
-  - `source_rewrite.rs` normalizes validated control-call groups, including static expansion of
-    `if` and heterogeneous partial-function `match` cases, before semantic control-flow passes.
   - `places.rs` lowers local place expressions and owns move initialization plus lexical loan
     bookkeeping over HIR places.
   - `pipeline.rs` sequences semantic analysis, cleanup preparation, constant evaluation, and LLVM
     emission behind explicit phase-marker types.
+  - `probe.rs` performs non-mutating expression, place, call, and nominal-constructor type probes
+    used to seed inference before full HIR lowering.
   - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
     borrow/take/offset/trap operations, and `forget`.
   - `references.rs` lowers contextual reference values and reference call arguments, promotes
     returned-reference loans, and validates explicit reference-return escape sources and regions.
   - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas,
     candidate lookup, and generic implementation pattern matching helpers.
-  - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
-    type-argument normalization, type-alias expansion, region-parameter erasure, and generic
-    type substitution, plus AST hygiene helpers used by handler and static-function specialization.
+  - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including validated
+    control-call normalization, static `if` and heterogeneous partial-function `match` expansion,
+    labeled type-argument normalization, type-alias expansion, region-parameter erasure, generic
+    type substitution, and AST hygiene helpers used by handler and static-function specialization.
   - `static_eval.rs` evaluates scalar, tuple, fixed-array, concrete struct, and closed enum values
     through ordinary pure source functions before dependent types are lowered to runtime layouts,
     including on-demand nominal materialization, recursive resource exclusion, aggregate limits,
@@ -109,6 +125,8 @@ The implementation lives under `compiler/src`:
     recursion budgets.
   - `target.rs` defines the explicit native target width used by CTFE, literal validation,
     runtime guards, and LLVM scalar lowering instead of inheriting Rust host integer widths.
+  - `trait_collection.rs` collects top-level items and trait schemas, validates source trait
+    contracts and Copy implementations, and normalizes trait implementation targets.
   - `failure.rs` probes custom-effect call rows to identify dedicated and standard failure sources,
     infers context-free `try { ... }` `result(e)(t)` types, and lowers `try { ... }`, `throw`, and
     automatic failure propagation return-boundary wrappers.
@@ -123,8 +141,9 @@ and `Goal` IR. The current monomorphizer still has a compatibility encoding for 
 inside source `Type` nodes; all new static evaluation and trait-goal work crosses that encoding
 through explicit adapters rather than adding new marker conventions.
 
-The current `Analyzer` is still intentionally oversized. Its next split should preserve the same
-pipeline boundaries rather than carve by syntax shape:
+`Analyzer` is a phase coordinator rather than a monolithic implementation. Its methods are split
+along the following pipeline boundaries, and its data is divided between `CollectionState` and
+`LoweringState`:
 
 ```text
 resolved AST
@@ -138,10 +157,12 @@ resolved AST
   -> LLVM emission
 ```
 
-The remaining splits should move method bodies out of `Analyzer` along the same boundaries,
-especially expression and statement lowering that now depends on `lower.rs` helpers. The practical
-rule is: first move code behind a small `pub(super)` boundary with no behavior changes, then make
-data ownership cleaner. Large semantic rewrites should come after the module shape is visible.
+New work should extend the module that owns its phase instead of adding methods back to `mod.rs`.
+Cross-phase state must be added deliberately to one of the two state structs; transient expression,
+flow, and cleanup state belongs in their existing local contexts. Runtime future construction stays
+in `async_lowering.rs` while source control-flow planning lives in `async_source.rs`.
+`handlers.rs` remains a larger cohesive transformation because splitting its mutually recursive
+continuation and handler state machine would create more coupling than it removes.
 
 The compiler embeds edition-matched sources from `library/core`, `library/alloc`, and the C allocator
 from `runtime`. Embedded Salicin declarations still pass through the normal parser and semantic

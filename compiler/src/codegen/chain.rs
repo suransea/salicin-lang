@@ -27,6 +27,7 @@ impl Analyzer {
         };
         if groups.is_none() {
             return self
+                .collection
                 .struct_layouts
                 .get(target)?
                 .fields
@@ -37,25 +38,27 @@ impl Analyzer {
         }
         let groups = groups.expect("method chain has call groups");
         let overload_key = (target.clone(), member.to_owned(), true);
-        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
-            if !groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .any(|argument| argument.label.is_some())
-            {
-                return None;
-            }
-            let matches = self.matching_function_overloads(candidates, groups, 1);
-            let [selected] = matches.as_slice() else {
-                return None;
+        let inherent =
+            if let Some(candidates) = self.collection.inherent_overloads.get(&overload_key) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, groups, 1);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                Some(selected.clone())
+            } else {
+                self.collection
+                    .inherent_members
+                    .get(target)
+                    .and_then(|members| members.methods.get(member))
+                    .cloned()
             };
-            Some(selected.clone())
-        } else {
-            self.inherent_members
-                .get(target)
-                .and_then(|members| members.methods.get(member))
-                .cloned()
-        };
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
@@ -83,7 +86,7 @@ impl Analyzer {
                 [] => return None,
             }
         };
-        let signature = self.signatures.get(&canonical)?;
+        let signature = self.lowering.signatures.get(&canonical)?;
         if signature.groups.len() != groups.len() + 1
             || signature.groups.first()?.len() != 1
             || signature.groups[0][0].mode == PassMode::MutBorrow
@@ -113,7 +116,7 @@ impl Analyzer {
         let [key] = candidates.as_slice() else {
             return None;
         };
-        let implementation = self.trait_impls.get(key)?;
+        let implementation = self.collection.trait_impls.get(key)?;
         let item_ty = implementation.associated_types.get("item")?;
         let item_source = implementation
             .associated_type_sources
@@ -136,7 +139,7 @@ impl Analyzer {
         let mut alias_diagnostics = Vec::new();
         expand_alias_type(
             &mut result_source,
-            &self.type_aliases,
+            &self.collection.type_aliases,
             &mut Vec::new(),
             &mut alias_diagnostics,
         );
@@ -223,6 +226,7 @@ impl Analyzer {
             arguments,
         };
         let canonical = self
+            .collection
             .nominal_instance_names
             .get(&key)
             .cloned()
@@ -250,7 +254,7 @@ impl Analyzer {
             }
         };
         let Some(groups) = groups else {
-            let Some(layout) = self.struct_layouts.get(&target) else {
+            let Some(layout) = self.collection.struct_layouts.get(&target) else {
                 self.error(format!(
                     "optional field access requires a struct payload, found `{payload}`"
                 ));
@@ -263,6 +267,7 @@ impl Analyzer {
                 .cloned()
             else {
                 if self
+                    .collection
                     .inherent_members
                     .get(&target)
                     .is_some_and(|members| members.methods.contains_key(member))
@@ -284,15 +289,25 @@ impl Analyzer {
         };
 
         let overload_key = (target.clone(), member.to_owned(), true);
-        let inherent = if self.inherent_overloads.contains_key(&overload_key) {
+        let inherent = if self
+            .collection
+            .inherent_overloads
+            .contains_key(&overload_key)
+        {
             self.resolve_inherent_overload(&target, member, true, groups)
         } else {
-            self.inherent_members
+            self.collection
+                .inherent_members
                 .get(&target)
                 .and_then(|members| members.methods.get(member))
                 .cloned()
         };
-        if self.inherent_overloads.contains_key(&overload_key) && inherent.is_none() {
+        if self
+            .collection
+            .inherent_overloads
+            .contains_key(&overload_key)
+            && inherent.is_none()
+        {
             return None;
         }
         let canonical = if let Some(canonical) = inherent {
@@ -308,9 +323,14 @@ impl Analyzer {
                 }
                 [(_, canonical)] => canonical.clone(),
                 [] => {
-                    if self.struct_layouts.get(&target).is_some_and(|layout| {
-                        layout.fields.iter().any(|field| field.name == member)
-                    }) {
+                    if self
+                        .collection
+                        .struct_layouts
+                        .get(&target)
+                        .is_some_and(|layout| {
+                            layout.fields.iter().any(|field| field.name == member)
+                        })
+                    {
                         self.error(format!(
                             "optional chaining cannot call field `{target}.{member}`"
                         ));
@@ -352,7 +372,7 @@ impl Analyzer {
             }
         };
         let function_ty = self.function_type(&canonical);
-        let signature = self.signatures[&canonical].clone();
+        let signature = self.lowering.signatures[&canonical].clone();
         let Some(receiver) = signature.groups.first().and_then(|group| group.first()) else {
             self.error(format!(
                 "internal error: optional method `{target}.{member}` has no receiver"

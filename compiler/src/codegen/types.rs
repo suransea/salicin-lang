@@ -64,7 +64,7 @@ impl Analyzer {
 
     pub(super) fn is_uninhabited_type(&self, ty: &Ty) -> bool {
         *ty == Ty::Never
-            || matches!(ty, Ty::Enum(name) if self.enum_layouts.get(name).is_some_and(|layout| layout.variants.is_empty()))
+            || matches!(ty, Ty::Enum(name) if self.collection.enum_layouts.get(name).is_some_and(|layout| layout.variants.is_empty()))
     }
 
     pub(super) fn lower_source_type(&mut self, source: &Type) -> Ty {
@@ -90,7 +90,7 @@ impl Analyzer {
                         .map(|field| self.lower_source_type(field))
                         .collect(),
                 );
-                self.tuple_types.insert(tuple.clone());
+                self.lowering.tuple_types.insert(tuple.clone());
                 tuple
             }
             Type::Function {
@@ -147,7 +147,7 @@ impl Analyzer {
                     Ty::Error
                 } else {
                     let array = Ty::Array(Box::new(element), *length);
-                    self.array_types.insert(array.clone());
+                    self.lowering.array_types.insert(array.clone());
                     array
                 }
             }
@@ -318,20 +318,23 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
-                if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
+                if arguments.is_empty()
+                    && self.collection.abstract_type_parameters.contains_key(name) =>
             {
                 Ty::Struct(name.clone())
             }
             Type::Named(name, arguments) if arguments.is_empty() => {
-                if self.struct_defs.contains_key(name) || self.async_futures.contains_key(name) {
+                if self.collection.struct_defs.contains_key(name)
+                    || self.lowering.async_futures.contains_key(name)
+                {
                     Ty::Struct(name.clone())
-                } else if self.enum_defs.contains_key(name)
+                } else if self.collection.enum_defs.contains_key(name)
                     || (name.starts_with("$async$loop$step$")
-                        && self.enum_layouts.contains_key(name))
+                        && self.collection.enum_layouts.contains_key(name))
                 {
                     Ty::Enum(name.clone())
-                } else if self.struct_templates.contains_key(name)
-                    || self.enum_templates.contains_key(name)
+                } else if self.collection.struct_templates.contains_key(name)
+                    || self.collection.enum_templates.contains_key(name)
                 {
                     self.error(format!(
                         "generic type `{name}` requires explicit type arguments"
@@ -343,11 +346,13 @@ impl Analyzer {
                 }
             }
             Type::Named(name, source_arguments) => {
-                let kind = if self.struct_templates.contains_key(name) {
+                let kind = if self.collection.struct_templates.contains_key(name) {
                     NominalKind::Struct
-                } else if self.enum_templates.contains_key(name) {
+                } else if self.collection.enum_templates.contains_key(name) {
                     NominalKind::Enum
-                } else if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                } else if self.collection.struct_defs.contains_key(name)
+                    || self.collection.enum_defs.contains_key(name)
+                {
                     self.error(format!(
                         "non-generic type `{name}` does not accept type arguments"
                     ));
@@ -357,13 +362,13 @@ impl Analyzer {
                     return Ty::Error;
                 };
                 let parameters = match kind {
-                    NominalKind::Struct => self.struct_templates[name]
+                    NominalKind::Struct => self.collection.struct_templates[name]
                         .compile_groups
                         .iter()
                         .flatten()
                         .cloned()
                         .collect::<Vec<_>>(),
-                    NominalKind::Enum => self.enum_templates[name]
+                    NominalKind::Enum => self.collection.enum_templates[name]
                         .compile_groups
                         .iter()
                         .flatten()
@@ -481,7 +486,7 @@ impl Analyzer {
                     }
                     return Some(Type::Named(name.clone(), Vec::new()));
                 }
-                if let Some(instance) = self.nominal_instances.get(name) {
+                if let Some(instance) = self.collection.nominal_instances.get(name) {
                     let arguments = instance
                         .key
                         .arguments
@@ -489,12 +494,12 @@ impl Analyzer {
                         .map(|argument| self.source_type_for_ty(argument))
                         .collect::<Option<Vec<_>>>()?;
                     Some(Type::Named(instance.key.template.clone(), arguments))
-                } else if self.async_futures.contains_key(name)
-                    || self.abstract_type_parameters.contains_key(name)
-                    || self.struct_defs.contains_key(name)
-                    || self.enum_defs.contains_key(name)
+                } else if self.lowering.async_futures.contains_key(name)
+                    || self.collection.abstract_type_parameters.contains_key(name)
+                    || self.collection.struct_defs.contains_key(name)
+                    || self.collection.enum_defs.contains_key(name)
                     || (name.starts_with("$async$loop$step$")
-                        && self.enum_layouts.contains_key(name))
+                        && self.collection.enum_layouts.contains_key(name))
                 {
                     Some(Type::Named(name.clone(), Vec::new()))
                 } else {
@@ -617,10 +622,10 @@ impl Analyzer {
                 if let Some(value) = usize_value_from_marker(name) {
                     return value.to_string();
                 }
-                if let Some(parameter) = self.abstract_type_parameters.get(name) {
+                if let Some(parameter) = self.collection.abstract_type_parameters.get(name) {
                     return parameter.clone();
                 }
-                let Some(instance) = self.nominal_instances.get(name) else {
+                let Some(instance) = self.collection.nominal_instances.get(name) else {
                     return name.clone();
                 };
                 if instance.key.arguments.is_empty() {
@@ -767,11 +772,13 @@ impl Analyzer {
                 } else {
                     let mut arguments = Vec::new();
                     let compile_groups = self
+                        .collection
                         .struct_templates
                         .get(name)
                         .map(|template| template.compile_groups.clone())
                         .or_else(|| {
-                            self.enum_templates
+                            self.collection
+                                .enum_templates
                                 .get(name)
                                 .map(|template| template.compile_groups.clone())
                         });
@@ -929,11 +936,13 @@ impl Analyzer {
                     })
                 } else {
                     let compile_groups = self
+                        .collection
                         .struct_templates
                         .get(name)
                         .map(|template| &template.compile_groups)
                         .or_else(|| {
-                            self.enum_templates
+                            self.collection
+                                .enum_templates
                                 .get(name)
                                 .map(|template| &template.compile_groups)
                         });
@@ -1000,7 +1009,7 @@ impl Analyzer {
                     Expr::Name(name) if name == self.lang_item_name(LangItemKind::UnsafeEffect) => {
                         Some(effect_row_source(true, None, &[]))
                     }
-                    Expr::Name(name) if self.effects.contains(name) => {
+                    Expr::Name(name) if self.collection.effects.contains(name) => {
                         Some(effect_row_source(false, None, std::slice::from_ref(name)))
                     }
                     Expr::Name(name) if effect_row_from_marker(name).is_some() => {
@@ -1019,7 +1028,7 @@ impl Analyzer {
                     Expr::Call(callee, arguments)
                         if matches!(
                             callee.as_ref(),
-                            Expr::Name(name) if self.effects.contains(name)
+                            Expr::Name(name) if self.collection.effects.contains(name)
                         ) =>
                     {
                         let Expr::Name(name) = callee.as_ref() else {
@@ -1092,6 +1101,7 @@ impl Analyzer {
             Sort::Named(compile_type) => match expression {
                 Expr::Bool(value)
                     if self
+                        .collection
                         .closed_type_values
                         .get(&compile_type)
                         .is_some_and(|members| {
@@ -1110,6 +1120,7 @@ impl Analyzer {
                 Expr::Name(name)
                     if (compile_type == "access" && access_mutability(name).is_some())
                         || self
+                            .collection
                             .closed_type_values
                             .get(&compile_type)
                             .is_some_and(|members| {
@@ -1126,7 +1137,7 @@ impl Analyzer {
                         closed_value_member(
                             &compile_type,
                             name,
-                            &self.closed_type_values[&compile_type],
+                            &self.collection.closed_type_values[&compile_type],
                         )
                         .expect("closed member guard matched")
                     };
@@ -1157,6 +1168,7 @@ impl Analyzer {
                             if owner == &compile_type
                                 || (compile_type == "access" && is_access_sort_name(owner))
                     ) && self
+                        .collection
                         .closed_type_values
                         .get(&compile_type)
                         .is_some_and(|members| members.contains(member)) =>
@@ -1394,20 +1406,21 @@ impl Analyzer {
                 .is_some(),
             Sort::EffectConstructor { .. } => false,
             Sort::Named(compile_type) => match expression {
-                Expr::Bool(value) => {
-                    self.closed_type_values
-                        .get(&compile_type)
-                        .is_some_and(|members| {
-                            members.contains(&if *value {
-                                "true".to_owned()
-                            } else {
-                                "false".to_owned()
-                            })
+                Expr::Bool(value) => self
+                    .collection
+                    .closed_type_values
+                    .get(&compile_type)
+                    .is_some_and(|members| {
+                        members.contains(&if *value {
+                            "true".to_owned()
+                        } else {
+                            "false".to_owned()
                         })
-                }
+                    }),
                 Expr::Name(name) => {
                     (compile_type == "access" && access_mutability(name).is_some())
                         || self
+                            .collection
                             .closed_type_values
                             .get(&compile_type)
                             .is_some_and(|members| {
@@ -1432,6 +1445,7 @@ impl Analyzer {
                             if owner == &compile_type
                                 || (compile_type == "access" && is_access_sort_name(owner))
                     ) && self
+                        .collection
                         .closed_type_values
                         .get(&compile_type)
                         .is_some_and(|members| members.contains(member))
@@ -1486,7 +1500,7 @@ impl Analyzer {
                     && matches!(
                         callee.as_ref(),
                         Expr::Name(name)
-                            if self.transparent_parameter_modifiers.contains(name)
+                            if self.collection.transparent_parameter_modifiers.contains(name)
                     ) =>
             {
                 self.probe_parameter_modifier_source(&arguments[0].value, substitutions)
@@ -1500,14 +1514,14 @@ impl Analyzer {
             Expr::Name(name) => {
                 name == "pure"
                     || name == self.lang_item_name(LangItemKind::UnsafeEffect)
-                    || self.effects.contains(name)
+                    || self.collection.effects.contains(name)
                     || effect_row_from_marker(name).is_some()
             }
             Expr::Call(callee, arguments) => {
                 let Expr::Name(name) = callee.as_ref() else {
                     return false;
                 };
-                if self.effects.contains(name) {
+                if self.collection.effects.contains(name) {
                     return arguments.iter().all(|argument| argument.label.is_none());
                 }
                 effect_row_from_marker(name).is_some()
@@ -1526,7 +1540,7 @@ impl Analyzer {
                 }
                 context.type_substitutions.contains_key(name)
                     || context.has_type_parameter(name)
-                    || self.abstract_type_parameters.contains_key(name)
+                    || self.collection.abstract_type_parameters.contains_key(name)
                     || matches!(
                         name.as_str(),
                         "i8" | "i16"
@@ -1543,10 +1557,10 @@ impl Analyzer {
                             | "bool"
                             | "never"
                     )
-                    || self.struct_defs.contains_key(name)
-                    || self.enum_defs.contains_key(name)
-                    || self.struct_templates.contains_key(name)
-                    || self.enum_templates.contains_key(name)
+                    || self.collection.struct_defs.contains_key(name)
+                    || self.collection.enum_defs.contains_key(name)
+                    || self.collection.struct_templates.contains_key(name)
+                    || self.collection.enum_templates.contains_key(name)
             }
             Expr::Call(_, _) => {
                 let mut groups = Vec::new();
@@ -1571,7 +1585,8 @@ impl Analyzer {
                         && self.expression_is_explicit_type_argument(&groups[0][0].value, context)
                         && matches!(groups[1][0].value, Expr::Integer(_));
                 }
-                self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name)
+                self.collection.struct_templates.contains_key(name)
+                    || self.collection.enum_templates.contains_key(name)
             }
             _ => false,
         }
@@ -1692,33 +1707,34 @@ impl Analyzer {
             }
             Type::Named(name, arguments)
                 if arguments.is_empty()
-                    && (self.abstract_type_parameters.contains_key(name)
+                    && (self.collection.abstract_type_parameters.contains_key(name)
                         || name.starts_with("$generic$param$")) =>
             {
                 Some(Ty::Struct(name.clone()))
             }
             Type::Named(name, arguments) if arguments.is_empty() => {
-                if self.struct_defs.contains_key(name) {
+                if self.collection.struct_defs.contains_key(name) {
                     Some(Ty::Struct(name.clone()))
-                } else if self.enum_defs.contains_key(name) {
+                } else if self.collection.enum_defs.contains_key(name) {
                     Some(Ty::Enum(name.clone()))
                 } else {
                     None
                 }
             }
             Type::Named(name, source_arguments) => {
-                let (kind, expected) = if let Some(template) = self.struct_templates.get(name) {
-                    (
-                        NominalKind::Struct,
-                        template.compile_groups.iter().flatten().count(),
-                    )
-                } else {
-                    let template = self.enum_templates.get(name)?;
-                    (
-                        NominalKind::Enum,
-                        template.compile_groups.iter().flatten().count(),
-                    )
-                };
+                let (kind, expected) =
+                    if let Some(template) = self.collection.struct_templates.get(name) {
+                        (
+                            NominalKind::Struct,
+                            template.compile_groups.iter().flatten().count(),
+                        )
+                    } else {
+                        let template = self.collection.enum_templates.get(name)?;
+                        (
+                            NominalKind::Enum,
+                            template.compile_groups.iter().flatten().count(),
+                        )
+                    };
                 if source_arguments.len() != expected {
                     return None;
                 }
@@ -1732,6 +1748,7 @@ impl Analyzer {
                     arguments,
                 };
                 let canonical = self
+                    .collection
                     .nominal_instance_names
                     .get(&key)
                     .cloned()
@@ -1751,12 +1768,13 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &LowerCtx,
     ) -> Option<(NominalKind, Ty, Type)> {
-        let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
-            (NominalKind::Struct, &template.compile_groups)
-        } else {
-            let template = self.enum_templates.get(name)?;
-            (NominalKind::Enum, &template.compile_groups)
-        };
+        let (kind, compile_groups) =
+            if let Some(template) = self.collection.struct_templates.get(name) {
+                (NominalKind::Struct, &template.compile_groups)
+            } else {
+                let template = self.collection.enum_templates.get(name)?;
+                (NominalKind::Enum, &template.compile_groups)
+            };
         if groups.len() != compile_groups.len() {
             return None;
         }
@@ -1782,6 +1800,7 @@ impl Analyzer {
             arguments,
         };
         let canonical = self
+            .collection
             .nominal_instance_names
             .get(&key)
             .cloned()
@@ -1807,14 +1826,14 @@ impl Analyzer {
             return None;
         }
         if groups.is_empty() {
-            if self.struct_defs.contains_key(name) {
+            if self.collection.struct_defs.contains_key(name) {
                 return Some((
                     NominalKind::Struct,
                     Ty::Struct(name.clone()),
                     Type::Named(name.clone(), Vec::new()),
                 ));
             }
-            if self.enum_defs.contains_key(name) {
+            if self.collection.enum_defs.contains_key(name) {
                 return Some((
                     NominalKind::Enum,
                     Ty::Enum(name.clone()),
@@ -1833,9 +1852,10 @@ impl Analyzer {
         let Type::Named(template, _) = source else {
             return None;
         };
-        self.enum_templates
+        self.collection
+            .enum_templates
             .get(template)
-            .or_else(|| self.enum_defs.get(template))?
+            .or_else(|| self.collection.enum_defs.get(template))?
             .variants
             .iter()
             .find(|candidate| candidate.name == variant)

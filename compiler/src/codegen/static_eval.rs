@@ -23,8 +23,8 @@ enum StaticFunctionFlow {
 
 impl Analyzer {
     pub(super) fn evaluate_static_globals(&mut self) {
-        for name in self.global_order.clone() {
-            if self.ctfe_global_values.contains_key(&name) {
+        for name in self.collection.global_order.clone() {
+            if self.lowering.ctfe_global_values.contains_key(&name) {
                 continue;
             }
             let mut fuel = STATIC_EVALUATION_FUEL;
@@ -43,19 +43,21 @@ impl Analyzer {
         fuel: &mut usize,
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
     ) -> Result<CtfeValue, String> {
-        if let Some(value) = self.ctfe_global_values.get(name) {
+        if let Some(value) = self.lowering.ctfe_global_values.get(name) {
             return Ok(value.clone());
         }
-        if !self.ctfe_active_globals.insert(name.to_owned()) {
+        if !self.lowering.ctfe_active_globals.insert(name.to_owned()) {
             return Err(format!("cyclic global constant involving `{name}`"));
         }
         let result = (|| {
             let binding = self
+                .collection
                 .globals
                 .get(name)
                 .cloned()
                 .ok_or_else(|| format!("unknown global constant `{name}`"))?;
             let expected = self
+                .lowering
                 .hir_globals
                 .get(name)
                 .map(|global| global.ty.clone())
@@ -70,9 +72,10 @@ impl Analyzer {
             )?;
             Self::expect_static_type(value, &expected, &format!("global constant `{name}`"))
         })();
-        self.ctfe_active_globals.remove(name);
+        self.lowering.ctfe_active_globals.remove(name);
         if let Ok(value) = &result {
-            self.ctfe_global_values
+            self.lowering
+                .ctfe_global_values
                 .insert(name.to_owned(), value.clone());
         }
         result
@@ -240,9 +243,10 @@ impl Analyzer {
             ));
         }
         let function = self
+            .collection
             .functions
             .get(name)
-            .or_else(|| self.function_templates.get(name))
+            .or_else(|| self.collection.function_templates.get(name))
             .cloned()
             .ok_or_else(|| format!("unknown function `{display_name}` in static expression"))?;
         let result_ty = self.validate_static_function(&function, arguments)?;
@@ -336,7 +340,8 @@ impl Analyzer {
                 )
             })?
         } else {
-            self.signatures
+            self.lowering
+                .signatures
                 .get(&function.name)
                 .and_then(|signature| signature.result.clone())
                 .ok_or_else(|| {
@@ -372,7 +377,7 @@ impl Analyzer {
                 let ty = self
                     .string_ty()
                     .ok_or_else(|| "the core `string` type is unavailable".to_owned())?;
-                self.string_literals.insert(value.clone());
+                self.lowering.string_literals.insert(value.clone());
                 CtfeValue {
                     ty,
                     kind: CtfeValueKind::String(value.clone()),
@@ -499,6 +504,7 @@ impl Analyzer {
                 let ty = Ty::Struct(name.clone());
                 self.validate_static_value_type(&ty)?;
                 let layout = self
+                    .collection
                     .struct_layouts
                     .get(&name)
                     .cloned()
@@ -583,7 +589,7 @@ impl Analyzer {
                 } else {
                     if let Some(value) = locals.get(name).cloned() {
                         value
-                    } else if self.globals.contains_key(name) {
+                    } else if self.collection.globals.contains_key(name) {
                         self.evaluate_static_global(name, fuel, active_calls)?
                     } else {
                         return Err(format!("unknown local or global `{name}` during ctfe"));
@@ -692,10 +698,10 @@ impl Analyzer {
                             (index, field_ty)
                         }
                         Ty::Struct(name) => {
-                            let layout = self
-                                .struct_layouts
-                                .get(name)
-                                .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
+                            let layout =
+                                self.collection.struct_layouts.get(name).ok_or_else(|| {
+                                    format!("unknown struct `{name}` during ctfe")
+                                })?;
                             let index = layout
                                 .fields
                                 .iter()
@@ -1063,7 +1069,9 @@ impl Analyzer {
                 }
                 let substitutions = active_calls
                     .last()
-                    .and_then(|(function, _)| self.function_type_substitutions.get(function))
+                    .and_then(|(function, _)| {
+                        self.collection.function_type_substitutions.get(function)
+                    })
                     .cloned()
                     .unwrap_or_default();
                 let source = self
@@ -1084,12 +1092,14 @@ impl Analyzer {
             }
         }
         if let Expr::Name(name) = root.unlocated() {
-            if self.function_templates.contains_key(name)
+            if self.collection.function_templates.contains_key(name)
                 && self
+                    .collection
                     .functions
                     .get(name)
                     .is_none_or(|function| groups.len() != function.groups.len())
                 && self
+                    .collection
                     .function_templates
                     .get(name)
                     .is_some_and(|function| groups.len() == function.groups.len())
@@ -1113,8 +1123,11 @@ impl Analyzer {
             Expr::Member(base, member) => {
                 if let Some(target) = self.static_nominal_type_head(base)? {
                     let overload_key = (target.clone(), member.clone(), false);
-                    let function = if let Some(candidates) =
-                        self.inherent_overloads.get(&overload_key).cloned()
+                    let function = if let Some(candidates) = self
+                        .collection
+                        .inherent_overloads
+                        .get(&overload_key)
+                        .cloned()
                     {
                         let matches = self.matching_function_overloads(&candidates, &groups, 0);
                         match matches.as_slice() {
@@ -1132,6 +1145,7 @@ impl Analyzer {
                         }
                     } else {
                         let inherent = self
+                            .collection
                             .inherent_members
                             .get(&target)
                             .and_then(|members| members.functions.get(member))
@@ -1139,14 +1153,17 @@ impl Analyzer {
                         if let Some(inherent) = inherent {
                             inherent
                         } else {
-                            let target_ty = if self.struct_layouts.contains_key(&target) {
+                            let target_ty = if self.collection.struct_layouts.contains_key(&target)
+                            {
                                 Ty::Struct(target.clone())
                             } else {
                                 Ty::Enum(target.clone())
                             };
                             let origin = active_calls
                                 .last()
-                                .and_then(|(function, _)| self.function_origins.get(function))
+                                .and_then(|(function, _)| {
+                                    self.collection.function_origins.get(function)
+                                })
                                 .cloned()
                                 .or_else(|| self.current_origin.as_deref().cloned());
                             let candidates = origin
@@ -1190,8 +1207,11 @@ impl Analyzer {
                         }
                     };
                     let overload_key = (target.clone(), member.clone(), true);
-                    let function = if let Some(candidates) =
-                        self.inherent_overloads.get(&overload_key).cloned()
+                    let function = if let Some(candidates) = self
+                        .collection
+                        .inherent_overloads
+                        .get(&overload_key)
+                        .cloned()
                     {
                         let matches = self.matching_function_overloads(&candidates, &groups, 1);
                         match matches.as_slice() {
@@ -1209,6 +1229,7 @@ impl Analyzer {
                         }
                     } else {
                         let inherent = self
+                            .collection
                             .inherent_members
                             .get(target)
                             .and_then(|members| members.methods.get(member))
@@ -1218,7 +1239,9 @@ impl Analyzer {
                         } else {
                             let origin = active_calls
                                 .last()
-                                .and_then(|(function, _)| self.function_origins.get(function))
+                                .and_then(|(function, _)| {
+                                    self.collection.function_origins.get(function)
+                                })
                                 .cloned()
                                 .or_else(|| self.current_origin.as_deref().cloned());
                             let candidates = origin
@@ -1264,6 +1287,7 @@ impl Analyzer {
         };
         let display_name = self.diagnostic_function_name(&function_name);
         let function = self
+            .collection
             .functions
             .get(&function_name)
             .cloned()
@@ -1300,6 +1324,7 @@ impl Analyzer {
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
     ) -> Result<CtfeValue, String> {
         let template = self
+            .collection
             .function_templates
             .get(name)
             .cloned()
@@ -1435,16 +1460,19 @@ impl Analyzer {
             return Ok(None);
         };
         if groups.is_empty()
-            && (self.struct_layouts.contains_key(name) || self.enum_layouts.contains_key(name))
+            && (self.collection.struct_layouts.contains_key(name)
+                || self.collection.enum_layouts.contains_key(name))
         {
             return Ok(Some(name.clone()));
         }
         let compile_groups = self
+            .collection
             .struct_templates
             .get(name)
             .map(|template| template.compile_groups.clone())
             .or_else(|| {
-                self.enum_templates
+                self.collection
+                    .enum_templates
                     .get(name)
                     .map(|template| template.compile_groups.clone())
             });
@@ -1477,7 +1505,7 @@ impl Analyzer {
         groups: &[&[CallArg]],
         parameter_offset: usize,
     ) -> Result<(String, usize), String> {
-        let name = if let Some(candidates) = self.function_overloads.get(name).cloned() {
+        let name = if let Some(candidates) = self.collection.function_overloads.get(name).cloned() {
             let matches = self.matching_function_overloads(&candidates, groups, parameter_offset);
             match matches.as_slice() {
                 [function] => function.clone(),
@@ -1491,12 +1519,13 @@ impl Analyzer {
         } else {
             name.to_owned()
         };
-        if let Some(function) = self.functions.get(&name) {
+        if let Some(function) = self.collection.functions.get(&name) {
             if groups.len() + parameter_offset == function.groups.len() {
                 return Ok((name, 0));
             }
         }
         let template = self
+            .collection
             .function_templates
             .get(&name)
             .cloned()
@@ -1689,10 +1718,12 @@ impl Analyzer {
         locals: &HashMap<String, CtfeValue>,
     ) -> Option<Ty> {
         match expression.unlocated() {
-            Expr::Name(name) => locals
-                .get(name)
-                .map(|value| value.ty.clone())
-                .or_else(|| self.hir_globals.get(name).map(|global| global.ty.clone())),
+            Expr::Name(name) => locals.get(name).map(|value| value.ty.clone()).or_else(|| {
+                self.lowering
+                    .hir_globals
+                    .get(name)
+                    .map(|global| global.ty.clone())
+            }),
             Expr::Bool(_) | Expr::String(_) => Some(Ty::Bool),
             Expr::Unit => Some(Ty::Unit),
             Expr::Tuple(fields) => Some(Ty::Tuple(
@@ -1716,6 +1747,7 @@ impl Analyzer {
                 match self.static_expression_type_hint(base, locals)? {
                     Ty::Tuple(fields) => fields.get(member.parse::<usize>().ok()?).cloned(),
                     Ty::Struct(name) => self
+                        .collection
                         .struct_layouts
                         .get(&name)?
                         .fields
@@ -1754,9 +1786,10 @@ impl Analyzer {
                     return None;
                 };
                 let function = self
+                    .collection
                     .functions
                     .get(name)
-                    .or_else(|| self.function_templates.get(name))?;
+                    .or_else(|| self.collection.function_templates.get(name))?;
                 let source = function.return_type.clone()?;
                 self.static_value_type(&source)
             }
@@ -1833,6 +1866,7 @@ impl Analyzer {
                     unreachable!("enum binding-pattern guard")
                 };
                 let layout = self
+                    .collection
                     .enum_layouts
                     .get(name)
                     .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
@@ -1875,10 +1909,12 @@ impl Analyzer {
                     return Err("malformed ctfe struct value has inconsistent identity".to_owned());
                 }
                 let layout = self
+                    .collection
                     .struct_layouts
                     .get(name)
                     .ok_or_else(|| format!("unknown struct `{name}` during ctfe"))?;
                 let template_name = self
+                    .collection
                     .nominal_instances
                     .get(name)
                     .map(|instance| instance.key.template.as_str())
@@ -1990,6 +2026,7 @@ impl Analyzer {
             return Err("malformed ctfe enum value has inconsistent identity".to_owned());
         }
         let layout = self
+            .collection
             .enum_layouts
             .get(name)
             .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
@@ -1997,6 +2034,7 @@ impl Analyzer {
             .last()
             .ok_or_else(|| "empty enum constructor path during ctfe".to_owned())?;
         let template_name = self
+            .collection
             .nominal_instances
             .get(name)
             .map(|instance| instance.key.template.as_str())
@@ -2228,6 +2266,7 @@ impl Analyzer {
                 return Ok(None);
             };
             let layout = self
+                .collection
                 .enum_layouts
                 .get(name)
                 .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
@@ -2253,6 +2292,7 @@ impl Analyzer {
         let expected_name = match expected {
             Some(Ty::Enum(name)) => {
                 let template_name = self
+                    .collection
                     .nominal_instances
                     .get(name)
                     .map(|instance| instance.key.template.as_str())
@@ -2263,10 +2303,10 @@ impl Analyzer {
         };
         let name = if let Some(name) = expected_name {
             name
-        } else if groups.is_empty() && self.enum_layouts.contains_key(source_name) {
+        } else if groups.is_empty() && self.collection.enum_layouts.contains_key(source_name) {
             source_name.clone()
         } else {
-            let Some(template) = self.enum_templates.get(source_name) else {
+            let Some(template) = self.collection.enum_templates.get(source_name) else {
                 return Ok(None);
             };
             if groups.len() != template.compile_groups.len()
@@ -2293,7 +2333,7 @@ impl Analyzer {
                 }
             }
             match self.lower_source_type(&Type::Named(source_name.clone(), source_arguments)) {
-                Ty::Enum(name) if self.enum_layouts.contains_key(&name) => name,
+                Ty::Enum(name) if self.collection.enum_layouts.contains_key(&name) => name,
                 _ => {
                     return Err(format!(
                         "concrete enum `{source_name}` was not materialized before ctfe"
@@ -2302,6 +2342,7 @@ impl Analyzer {
             }
         };
         let layout = self
+            .collection
             .enum_layouts
             .get(&name)
             .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
@@ -2330,6 +2371,7 @@ impl Analyzer {
         let ty = Ty::Enum(name.to_owned());
         self.validate_static_value_type(&ty)?;
         let layout = self
+            .collection
             .enum_layouts
             .get(name)
             .ok_or_else(|| format!("unknown enum `{name}` during ctfe"))?;
@@ -2441,10 +2483,12 @@ impl Analyzer {
         };
         if let Some(Ty::Struct(expected_name)) = expected {
             let layout = self
+                .collection
                 .struct_layouts
                 .get(expected_name)
                 .ok_or_else(|| format!("unknown struct `{expected_name}` during ctfe"))?;
             let template_name = self
+                .collection
                 .nominal_instances
                 .get(expected_name)
                 .map(|instance| instance.key.template.as_str())
@@ -2466,10 +2510,11 @@ impl Analyzer {
                 expected
             ));
         }
-        if groups.is_empty() && self.struct_layouts.contains_key(source_name) {
+        if groups.is_empty() && self.collection.struct_layouts.contains_key(source_name) {
             return Ok(source_name.clone());
         }
         let template = self
+            .collection
             .struct_templates
             .get(source_name)
             .ok_or_else(|| format!("unknown struct `{source_name}` during ctfe"))?;
@@ -2497,7 +2542,7 @@ impl Analyzer {
             }
         }
         match self.lower_source_type(&Type::Named(source_name.clone(), source_arguments)) {
-            Ty::Struct(name) if self.struct_layouts.contains_key(&name) => Ok(name),
+            Ty::Struct(name) if self.collection.struct_layouts.contains_key(&name) => Ok(name),
             _ => Err(format!(
                 "concrete struct `{source_name}` was not materialized before ctfe"
             )),
@@ -2588,6 +2633,7 @@ impl Analyzer {
                         ));
                     }
                     let layout = analyzer
+                        .collection
                         .struct_layouts
                         .get(name)
                         .ok_or_else(|| format!("ctfe value references unknown struct `{name}`"))?;
@@ -2631,10 +2677,10 @@ impl Analyzer {
                             "ctfe value type `{ty}` has a recursive nominal layout"
                         ));
                     }
-                    let layout = analyzer
-                        .enum_layouts
-                        .get(name)
-                        .ok_or_else(|| format!("ctfe value references unknown enum `{name}`"))?;
+                    let layout =
+                        analyzer.collection.enum_layouts.get(name).ok_or_else(|| {
+                            format!("ctfe value references unknown enum `{name}`")
+                        })?;
                     if layout.variants.len() > MAX_CTFE_AGGREGATE_ELEMENTS {
                         return Err(format!(
                             "ctfe enum exceeds the {MAX_CTFE_AGGREGATE_ELEMENTS}-variant limit"

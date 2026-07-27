@@ -28,10 +28,10 @@ impl Analyzer {
             self.error("expression `self` is only available inside an extend member");
             return error_expr();
         }
-        if groups.is_empty() && self.struct_layouts.contains_key(name) {
+        if groups.is_empty() && self.collection.struct_layouts.contains_key(name) {
             return self.lower_struct_constructor(name, &[fields], context);
         }
-        if self.struct_templates.contains_key(name) {
+        if self.collection.struct_templates.contains_key(name) {
             let mut construction_groups = groups;
             construction_groups.push(fields);
             let Some((canonical, runtime_start)) = self.resolve_inferred_generic_struct_instance(
@@ -48,13 +48,15 @@ impl Analyzer {
                 context,
             );
         }
-        if self.enum_layouts.contains_key(name) || self.enum_templates.contains_key(name) {
+        if self.collection.enum_layouts.contains_key(name)
+            || self.collection.enum_templates.contains_key(name)
+        {
             self.error(format!(
                 "struct literal `{name} {{ ... }}` requires a struct type, found enum `{name}`"
             ));
             return error_expr();
         }
-        if self.struct_layouts.contains_key(name) {
+        if self.collection.struct_layouts.contains_key(name) {
             self.error(format!(
                 "struct `{name}` does not accept type argument groups in a struct literal"
             ));
@@ -236,6 +238,7 @@ impl Analyzer {
         if let Some(Ty::Enum(enum_name)) = expected {
             let layout = self.enum_layout_or_diagnostic(enum_name)?;
             let enum_is_accessible = self
+                .collection
                 .nominal_accesses
                 .get(enum_name)
                 .is_some_and(|access| Self::access_boundary_allows(origin, access));
@@ -250,10 +253,12 @@ impl Analyzer {
             }
         }
         let candidates: Vec<_> = self
+            .collection
             .enum_layouts
             .iter()
             .filter_map(|(enum_name, layout)| {
                 let is_non_generic = self
+                    .collection
                     .nominal_instances
                     .get(enum_name)
                     .is_some_and(|instance| instance.key.arguments.is_empty());
@@ -261,6 +266,7 @@ impl Analyzer {
                     return None;
                 }
                 if !self
+                    .collection
                     .nominal_accesses
                     .get(enum_name)
                     .is_some_and(|access| Self::access_boundary_allows(origin, access))

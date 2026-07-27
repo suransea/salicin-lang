@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::ctfe_value::{CtfeValue, CtfeValueKind};
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};

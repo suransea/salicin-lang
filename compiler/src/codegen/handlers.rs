@@ -1232,9 +1232,10 @@ impl Analyzer {
                 continue;
             }
             let Some(body) = self
+                .collection
                 .functions
                 .get(&callee)
-                .or_else(|| self.function_templates.get(&callee))
+                .or_else(|| self.collection.function_templates.get(&callee))
                 .and_then(|function| function.body.as_ref())
             else {
                 continue;
@@ -1249,11 +1250,12 @@ impl Analyzer {
         name: &str,
         groups: &[&[CallArg]],
     ) -> Option<Expr> {
-        let function = self.functions.get(name)?.clone();
+        let function = self.collection.functions.get(name)?.clone();
         if groups.len() != function.groups.len() {
             return None;
         }
         let mut action_positions = self
+            .lowering
             .runtime_handler_actions
             .keys()
             .cloned()
@@ -1266,7 +1268,8 @@ impl Analyzer {
                 let forwards_algebraic_effect = effects.custom.iter().any(|effect| {
                     let identity = source_effect_identity(effect);
                     let root = identity.split('(').next().unwrap_or(&identity);
-                    self.effect_defs
+                    self.collection
+                        .effect_defs
                         .get(root)
                         .is_some_and(|definition| !definition.operations.is_empty())
                         && function
@@ -1322,8 +1325,8 @@ impl Analyzer {
                     let earlier_parameter =
                         function.groups.get(earlier_group)?.get(earlier_argument)?;
                     let parameter_ty = self.lower_source_type(&earlier_parameter.ty);
-                    let id = self.next_closure;
-                    self.next_closure += 1;
+                    let id = self.lowering.next_closure;
+                    self.lowering.next_closure += 1;
                     let local = format!("$handler$direct$argument${id}");
                     let borrow_mode =
                         self.borrow_channel_mode(earlier_parameter.mode, &parameter_ty);
@@ -1368,8 +1371,8 @@ impl Analyzer {
                     rewritten_argument.value = Expr::Name(local);
                 }
             }
-            let id = self.next_closure;
-            self.next_closure += 1;
+            let id = self.lowering.next_closure;
+            self.lowering.next_closure += 1;
             let local = format!("$handler$direct$action${id}");
             bindings.push(Stmt::Let(Binding {
                 value_source: None,
@@ -1405,7 +1408,7 @@ impl Analyzer {
         let Expr::Name(target) = flatten_call(call, &mut group_refs) else {
             return false;
         };
-        let Some(function) = self.functions.get(target).cloned() else {
+        let Some(function) = self.collection.functions.get(target).cloned() else {
             return false;
         };
         if group_refs.len() != function.groups.len() {
@@ -1414,6 +1417,7 @@ impl Analyzer {
 
         let mut action_position = None;
         let mut action_positions = self
+            .lowering
             .runtime_handler_actions
             .iter()
             .map(|(position, action)| (position.clone(), action.clone()))
@@ -1492,8 +1496,8 @@ impl Analyzer {
             return false;
         }
 
-        let specialization = self.next_closure;
-        self.next_closure += 1;
+        let specialization = self.lowering.next_closure;
+        self.lowering.next_closure += 1;
         let canonical = format!("$capturing$handler${}${specialization}", hex_name(target));
         let mut specialized = function;
         specialized.name = canonical.clone();
@@ -1564,16 +1568,24 @@ impl Analyzer {
                 .as_ref()
                 .map(|result| self.lower_source_type(result)),
         };
-        self.functions.insert(canonical.clone(), specialized);
-        self.signatures.insert(canonical.clone(), signature);
-        self.function_origins
-            .insert(canonical.clone(), self.function_origins[target].clone());
+        self.collection
+            .functions
+            .insert(canonical.clone(), specialized);
+        self.lowering
+            .signatures
+            .insert(canonical.clone(), signature);
+        self.collection.function_origins.insert(
+            canonical.clone(),
+            self.collection.function_origins[target].clone(),
+        );
         let origin = self
+            .collection
             .function_origins
             .get(target)
             .cloned()
             .unwrap_or_default();
         let access = self
+            .collection
             .function_accesses
             .get(target)
             .cloned()
@@ -1581,8 +1593,10 @@ impl Analyzer {
                 visibility: Visibility::Private,
                 origin,
             });
-        self.function_accesses.insert(canonical.clone(), access);
-        self.function_order.push(canonical.clone());
+        self.collection
+            .function_accesses
+            .insert(canonical.clone(), access);
+        self.collection.function_order.push(canonical.clone());
 
         let mut groups = group_refs
             .iter()
@@ -1615,7 +1629,7 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &LowerCtx,
     ) -> Option<Expr> {
-        let function = self.functions.get(name)?.clone();
+        let function = self.collection.functions.get(name)?.clone();
         if groups.len() != function.groups.len() || function.groups.first()?.is_empty() {
             return None;
         }
@@ -1625,7 +1639,8 @@ impl Analyzer {
         if !effects.custom.iter().any(|effect| {
             let identity = source_effect_identity(effect);
             let root = identity.split('(').next().unwrap_or(&identity);
-            self.effect_defs
+            self.collection
+                .effect_defs
                 .get(root)
                 .is_some_and(|definition| !definition.operations.is_empty())
         }) {
@@ -1660,7 +1675,7 @@ impl Analyzer {
         let selection = static_callable_selection(&ordered_groups[0][0].value, &mut targets)?;
         if targets.len() < 2
             || targets.iter().any(|target| {
-                !self.functions.contains_key(target)
+                !self.collection.functions.contains_key(target)
                     && context.lookup(target).is_none_or(|local| {
                         local.partial.as_ref().is_none_or(|partial| {
                             partial.consumed_groups != 0 || partial.capture_count != 0
@@ -1690,8 +1705,8 @@ impl Analyzer {
     }
 
     pub(super) fn register_runtime_handler_actions(&mut self) {
-        for function_name in self.function_order.clone() {
-            let function = self.functions[&function_name].clone();
+        for function_name in self.collection.function_order.clone() {
+            let function = self.collection.functions[&function_name].clone();
             let Some(body) = function.body.as_ref() else {
                 continue;
             };
@@ -1728,6 +1743,7 @@ impl Analyzer {
                         .expect("exactly one normalized custom effect");
                     let root = effect.split('(').next().unwrap_or(&effect);
                     if self
+                        .collection
                         .effect_defs
                         .get(root)
                         .is_none_or(|definition| definition.operations.is_empty())
@@ -1746,7 +1762,7 @@ impl Analyzer {
                         .map(|input| self.lower_source_type(input))
                         .unwrap_or(Ty::Unit);
                     let output = self.lower_source_type(result);
-                    self.runtime_handler_actions.insert(
+                    self.lowering.runtime_handler_actions.insert(
                         (function_name.clone(), group_index, parameter_index),
                         RuntimeHandlerAction {
                             effect,
@@ -1884,8 +1900,8 @@ impl Analyzer {
                     analyzer.strip_authorized_unsafetys(&mut residual_effects);
                 }
                 if residual_effects != FunctionEffects::default() {
-                    let gate_id = analyzer.next_closure;
-                    analyzer.next_closure += 1;
+                    let gate_id = analyzer.lowering.next_closure;
+                    analyzer.lowering.next_closure += 1;
                     let gate_name = format!("$handler$operation$effects${gate_id}");
                     bindings.push(Stmt::Let(Binding {
                         value_source: None,
@@ -1942,8 +1958,8 @@ impl Analyzer {
                     );
                     return Err(());
                 };
-                let continuation_id = analyzer.next_closure;
-                analyzer.next_closure += 1;
+                let continuation_id = analyzer.lowering.next_closure;
+                analyzer.lowering.next_closure += 1;
                 let runtime_name = format!("$handler$continuation${continuation_id}");
                 let input_name = format!("$handler$resume$value${continuation_id}");
                 let continuation_body = continuation(analyzer, Expr::Name(input_name.clone()))?;
@@ -2196,8 +2212,8 @@ impl Analyzer {
                     handler,
                     resume,
                     Rc::new(move |analyzer, scrutinee| {
-                        let payload_id = analyzer.next_closure;
-                        analyzer.next_closure += 1;
+                        let payload_id = analyzer.lowering.next_closure;
+                        analyzer.lowering.next_closure += 1;
                         let payload = format!("$handler$coalesce$payload${payload_id}");
                         let success = next(analyzer, Expr::Name(payload.clone()))?;
                         let fallback = analyzer.transform_handler_expr(
@@ -2594,8 +2610,8 @@ impl Analyzer {
                         handler,
                         resume,
                         Rc::new(move |analyzer, scrutinee| {
-                            let match_id = analyzer.next_closure;
-                            analyzer.next_closure += 1;
+                            let match_id = analyzer.lowering.next_closure;
+                            analyzer.lowering.next_closure += 1;
                             let input = if can_delay_pattern_transfers {
                                 format!("$handler$match$inspect$input${match_id}")
                             } else {
@@ -2693,6 +2709,7 @@ impl Analyzer {
         let mut unit_variants = match match_probe {
             super::lower::TypeProbe::Known(Ty::Enum(name))
             | super::lower::TypeProbe::KnownSource(Ty::Enum(name), _) => self
+                .collection
                 .enum_layouts
                 .get(&name)
                 .map(|layout| {
@@ -2721,6 +2738,7 @@ impl Analyzer {
                 };
                 let source_binding = binding.rsplit('$').next().unwrap_or(binding);
                 let candidates = self
+                    .collection
                     .enum_templates
                     .values()
                     .filter(|definition| {
@@ -2778,7 +2796,8 @@ impl Analyzer {
             )
             .into_iter()
             .filter_map(|(_, canonical)| {
-                self.functions
+                self.collection
+                    .functions
                     .get(&canonical)
                     .is_some_and(|function| {
                         function
@@ -2831,8 +2850,8 @@ impl Analyzer {
         let arguments = groups[0].to_vec();
         let action_name = name.clone();
         let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
-            let specialization = analyzer.next_closure;
-            analyzer.next_closure += 1;
+            let specialization = analyzer.lowering.next_closure;
+            analyzer.lowering.next_closure += 1;
             let continuation_name = format!("$handler$erased$action$continuation${specialization}");
             let continuation_value_name = format!("$handler$erased$action$value${specialization}");
             let continuation_body =
@@ -2949,8 +2968,8 @@ impl Analyzer {
             handler,
             resume,
             Rc::new(move |analyzer, scrutinee| {
-                let id = analyzer.next_closure;
-                analyzer.next_closure += 1;
+                let id = analyzer.lowering.next_closure;
+                analyzer.lowering.next_closure += 1;
                 let payload = format!("$handler$chain$payload${id}");
                 let error = format!("$handler$chain$error${id}");
                 let success_wrap = |value| {
@@ -3176,7 +3195,7 @@ impl Analyzer {
                 {
                     return true;
                 }
-                if self.functions.get(name).is_some_and(|function| {
+                if self.collection.functions.get(name).is_some_and(|function| {
                     function
                         .effects
                         .custom
@@ -3223,7 +3242,7 @@ impl Analyzer {
         }
         let effect_name = source_type_expression_name(effect)?;
         let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
-        if !self.effect_defs.contains_key(root_name) || effect_name == handler.identity {
+        if !self.collection.effect_defs.contains_key(root_name) || effect_name == handler.identity {
             return None;
         }
 
@@ -3332,8 +3351,8 @@ impl Analyzer {
             self.error("a handler containing a resumable loop requires a contextual result type");
             return Err(());
         };
-        let specialization = self.next_closure;
-        self.next_closure += 1;
+        let specialization = self.lowering.next_closure;
+        self.lowering.next_closure += 1;
         let recursive_name = format!("$handler$recursive$loop${specialization}");
         let break_name = format!("$handler$loop$break${specialization}");
         rewrite_handler_loop_control(&mut body, &recursive_name, &break_name, 0);
@@ -3561,8 +3580,8 @@ impl Analyzer {
             ));
         }
 
-        let specialization = self.next_closure;
-        self.next_closure += 1;
+        let specialization = self.lowering.next_closure;
+        self.lowering.next_closure += 1;
         let value_name = format!("$handler$closure$continuation$value${specialization}");
         let continuation_name = format!("$handler$closure$continuation${specialization}");
         let continuation_body = match continuation(self, Expr::Name(value_name.clone())) {
@@ -3652,8 +3671,8 @@ impl Analyzer {
             return Some(Err(()));
         };
         let input = logical_effect_result_source(result, effects);
-        let specialization = self.next_closure;
-        self.next_closure += 1;
+        let specialization = self.lowering.next_closure;
+        self.lowering.next_closure += 1;
         let continuation_name = format!("$handler$closure$frame$continuation${specialization}");
         let continuation_ty = Type::Named(
             self.lang_item_name(LangItemKind::Continuation).to_owned(),
@@ -3746,7 +3765,7 @@ impl Analyzer {
         handled_effect: &Type,
         inference_context: &LowerCtx,
     ) -> Option<Result<(String, Function, usize), ()>> {
-        let template = self.function_templates.get(name)?.clone();
+        let template = self.collection.function_templates.get(name)?.clone();
         if groups.len() > template.compile_groups.len() + template.groups.len() {
             return None;
         }
@@ -3888,6 +3907,7 @@ impl Analyzer {
             None => return Some(Err(())),
         };
         let function = self
+            .collection
             .functions
             .get(&canonical)
             .cloned()
@@ -3911,7 +3931,7 @@ impl Analyzer {
         let source_name = source_name.clone();
         let selected_name = aliased_name.as_deref().unwrap_or(&source_name);
         let (name, function, runtime_group_start) =
-            if let Some(function) = self.functions.get(selected_name).cloned() {
+            if let Some(function) = self.collection.functions.get(selected_name).cloned() {
                 (selected_name.to_owned(), function, 0)
             } else {
                 let resolved = self.explicit_generic_handler_function(
@@ -3996,8 +4016,8 @@ impl Analyzer {
             ));
         }
         if let Some(frame) = handler.inlining.borrow().get(&name).cloned() {
-            let specialization = self.next_closure;
-            self.next_closure += 1;
+            let specialization = self.lowering.next_closure;
+            self.lowering.next_closure += 1;
             let has_borrow_channels = !frame.borrow_channels.is_empty();
             let value_name = format!("$handler$recursive$continuation$value${specialization}");
             let continuation_name = format!("$handler$recursive$continuation${specialization}");
@@ -4101,10 +4121,10 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
-        let specialization = self.next_closure;
+        let specialization = self.lowering.next_closure;
         let recursive_name = format!("$handler$recursive${specialization}");
         let prefix = format!("$handler$frame${specialization}${name}$");
-        self.next_closure += 1;
+        self.lowering.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
         let mut parameter_types = parameters
             .iter()
@@ -4130,6 +4150,7 @@ impl Analyzer {
             _ => {}
         });
         let origin = self
+            .collection
             .function_origins
             .get(&name)
             .cloned()
@@ -4160,9 +4181,10 @@ impl Analyzer {
                     candidates.retain(|(key, canonical)| {
                         forced_trait.is_none_or(|name| key.trait_ref.name == name)
                             && self
+                                .collection
                                 .functions
                                 .get(canonical)
-                                .or_else(|| self.function_templates.get(canonical))
+                                .or_else(|| self.collection.function_templates.get(canonical))
                                 .is_some_and(|function| {
                                     function.effects.custom.iter().any(|effect| {
                                         source_effect_identity(effect) == handler.identity
@@ -4180,9 +4202,10 @@ impl Analyzer {
                         }],
                     );
                     let group_count = self
+                        .collection
                         .functions
                         .get(canonical)
-                        .or_else(|| self.function_templates.get(canonical))
+                        .or_else(|| self.collection.function_templates.get(canonical))
                         .map_or(1, |function| function.groups.len());
                     for _ in 1..group_count {
                         call = Expr::Call(Box::new(call), Vec::new());
@@ -4235,7 +4258,7 @@ impl Analyzer {
                 .get(argument_name.as_str())
                 .cloned()
                 .unwrap_or_else(|| argument_name.clone());
-            if self.functions.contains_key(&target)
+            if self.collection.functions.contains_key(&target)
                 || handler.resumable_closures.borrow().contains_key(&target)
                 || handler.dynamic_callables.borrow().contains_key(&target)
             {
@@ -4793,7 +4816,7 @@ impl Analyzer {
             value: Expr::Name(erased_continuation_name),
         });
         let frame_name = format!("$handler$frame${specialization}");
-        self.handler_frame_parameter_modes.insert(
+        self.lowering.handler_frame_parameter_modes.insert(
             frame_name.clone(),
             flattened_parameters
                 .iter()
@@ -4867,9 +4890,9 @@ impl Analyzer {
         match first {
             Stmt::Let(mut binding) => {
                 if matches!(binding.value.unlocated(), Expr::Async { .. }) {
-                    let marker = format!("$handler$after$async${}", self.next_closure);
-                    self.next_closure += 1;
-                    self.deferred_handler_transforms.insert(
+                    let marker = format!("$handler$after$async${}", self.lowering.next_closure);
+                    self.lowering.next_closure += 1;
+                    self.lowering.deferred_handler_transforms.insert(
                         marker.clone(),
                         DeferredHandlerTransform {
                             statements,
@@ -4918,7 +4941,7 @@ impl Analyzer {
                                     }
                                     let hidden = format!(
                                         "$handler$dynamic$tag${}${index}",
-                                        self.next_closure
+                                        self.lowering.next_closure
                                     );
                                     tag_bindings.push(Stmt::Let(Binding {
                                         value_source: None,
@@ -4941,7 +4964,7 @@ impl Analyzer {
                                     .get(&target)
                                     .cloned()
                                     .unwrap_or(target);
-                                if !(self.functions.contains_key(&resolved)
+                                if !(self.collection.functions.contains_key(&resolved)
                                     || handler.resumable_closures.borrow().contains_key(&resolved))
                                 {
                                     valid = false;
@@ -5069,7 +5092,8 @@ impl Analyzer {
                         .cloned()
                         .unwrap_or_else(|| target.clone());
                     let aliases_handler_effect =
-                        self.functions
+                        self.collection
+                            .functions
                             .get(&resolved_target)
                             .is_some_and(|function| {
                                 function.effects.custom.iter().any(|effect| {
@@ -5187,7 +5211,7 @@ impl Analyzer {
         let Expr::Name(marker) = callee.unlocated() else {
             return None;
         };
-        let deferred = self.deferred_handler_transforms.remove(marker)?;
+        let deferred = self.lowering.deferred_handler_transforms.remove(marker)?;
         let mut handler = deferred.handler.as_ref().clone();
         handler.inference_context = context.clone();
         let transformed = match self.transform_handler_block(

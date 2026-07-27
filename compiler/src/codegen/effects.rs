@@ -25,7 +25,7 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn require_function_effects(&mut self, name: &str, context: &mut LowerCtx) {
         let display_name = self.diagnostic_function_name(name);
-        if let Some(signature) = self.signatures.get(name).cloned() {
+        if let Some(signature) = self.lowering.signatures.get(name).cloned() {
             let sources =
                 source_effect_source_map(&effect_identity_sources(&signature.custom_effects));
             self.require_callable_effects(
@@ -42,6 +42,7 @@ impl Analyzer {
             return;
         }
         let Some(effects) = self
+            .collection
             .functions
             .get(name)
             .map(|function| function.effects.clone())
@@ -309,7 +310,8 @@ impl Analyzer {
     ) -> Result<Option<(EffectDef, Type)>, ()> {
         let (name, arguments) = match expression {
             Expr::Name(name)
-                if !context.shadows_top_level_name(name) && self.effect_defs.contains_key(name) =>
+                if !context.shadows_top_level_name(name)
+                    && self.collection.effect_defs.contains_key(name) =>
             {
                 (name.clone(), Vec::new())
             }
@@ -317,7 +319,7 @@ impl Analyzer {
                 let Expr::Name(name) = callee.as_ref() else {
                     return Ok(None);
                 };
-                if !self.effect_defs.contains_key(name) {
+                if !self.collection.effect_defs.contains_key(name) {
                     return Ok(None);
                 }
                 if arguments.iter().any(|argument| argument.label.is_some()) {
@@ -339,7 +341,7 @@ impl Analyzer {
             }
             _ => return Ok(None),
         };
-        let definition = self.effect_defs[&name].clone();
+        let definition = self.collection.effect_defs[&name].clone();
         let parameters = definition
             .compile_groups
             .iter()
@@ -388,6 +390,7 @@ impl Analyzer {
         let diagnostic_count = self.diagnostics.len();
         let handle_protocol = self.lang_item_name(LangItemKind::Handle).to_owned();
         if !self
+            .collection
             .traits
             .get(&handle_protocol)
             .is_some_and(|schema| schema.valid && schema.self_parameter.kind == Sort::Effect)
@@ -638,14 +641,15 @@ impl Analyzer {
             .as_ref()
             .into_iter()
             .flat_map(|function_name| {
-                self.runtime_handler_actions
+                self.lowering
+                    .runtime_handler_actions
                     .iter()
                     .filter(move |((candidate, _, _), action)| {
                         candidate == function_name
                             && action.effect == source_effect_identity(instance)
                     })
                     .filter_map(|((_, group_index, parameter_index), action)| {
-                        let function = self.functions.get(function_name)?;
+                        let function = self.collection.functions.get(function_name)?;
                         let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
                         Some((
                             parameter.name.clone(),
@@ -830,7 +834,7 @@ impl Analyzer {
         }
         let identity = source_effect_identity(instance);
         let canonical = format!("$effect$operation${identity}${operation}${operation_index}");
-        if !self.functions.contains_key(&canonical) {
+        if !self.collection.functions.contains_key(&canonical) {
             function.name = canonical.clone();
             let signature = FunctionSig {
                 groups: function
@@ -859,8 +863,12 @@ impl Analyzer {
                     .as_ref()
                     .map(|result| self.lower_source_type(result)),
             };
-            self.functions.insert(canonical.clone(), function);
-            self.signatures.insert(canonical.clone(), signature);
+            self.collection
+                .functions
+                .insert(canonical.clone(), function);
+            self.lowering
+                .signatures
+                .insert(canonical.clone(), signature);
         }
         self.lower_named_function_call(&canonical, groups, expected, context)
     }

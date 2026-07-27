@@ -1,4 +1,4 @@
-use crate::ast::{CallArg, Expr};
+use crate::ast::{CallArg, Expr, PassMode, Type};
 use crate::core::LangItemKind;
 
 use super::fallible::InferredEnumHints;
@@ -10,6 +10,48 @@ use super::hir::{
 use super::lower::{error_expr, flatten_call, BoundMethodConstraint, TypeProbe};
 use super::registry::NominalKind;
 use super::Analyzer;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct CallableBridgeKey {
+    pub(super) callee: String,
+    pub(super) group: usize,
+    pub(super) parameter: usize,
+    pub(super) closure_shape: String,
+    pub(super) captures: Vec<(PassMode, Type)>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct CallableBridgeSpecialization {
+    pub(super) canonical: String,
+    pub(super) lifted_parameters: Vec<String>,
+}
+
+pub(super) fn rewrite_callable_bridge_groups(
+    groups: &[&[CallArg]],
+    group_index: usize,
+    parameter_index: usize,
+    lifted_parameters: &[String],
+    captures: &[(String, PassMode, Type)],
+) -> Vec<Vec<CallArg>> {
+    let mut rewritten = groups
+        .iter()
+        .map(|group| group.to_vec())
+        .collect::<Vec<_>>();
+    let labeled = rewritten[group_index]
+        .iter()
+        .all(|argument| argument.label.is_some());
+    rewritten[group_index].remove(parameter_index);
+    for (offset, (lifted, (source, _, _))) in lifted_parameters.iter().zip(captures).enumerate() {
+        rewritten[group_index].insert(
+            parameter_index + offset,
+            CallArg {
+                label: labeled.then(|| lifted.clone()),
+                value: Expr::Name(source.clone()),
+            },
+        );
+    }
+    rewritten
+}
 
 pub(super) fn empty_trailing_closure_constructor(expression: &Expr) -> Option<&Expr> {
     let Expr::Call(constructor, arguments) = expression.unlocated() else {
@@ -89,6 +131,7 @@ impl Analyzer {
                 };
                 let adapter = format!("$continuation$adapter${}", closure.function);
                 if !self
+                    .lowering
                     .continuation_adapters
                     .iter()
                     .any(|existing| existing.name == adapter)
@@ -97,14 +140,16 @@ impl Analyzer {
                         self.error("internal continuation closure has no callable type");
                         return error_expr();
                     };
-                    self.continuation_adapters.push(ContinuationAdapter {
-                        name: adapter.clone(),
-                        callable_ty: local.ty.clone(),
-                        function: closure.function,
-                        captures: callable_ty.captures.clone(),
-                        input: parameter.ty.clone(),
-                        output: closure.result,
-                    });
+                    self.lowering
+                        .continuation_adapters
+                        .push(ContinuationAdapter {
+                            name: adapter.clone(),
+                            callable_ty: local.ty.clone(),
+                            function: closure.function,
+                            captures: callable_ty.captures.clone(),
+                            input: parameter.ty.clone(),
+                            output: closure.result,
+                        });
                 }
                 return HirExpr {
                     ty: continuation_ty,
@@ -197,6 +242,7 @@ impl Analyzer {
                 };
                 let adapter = format!("$effect$callable$adapter${}", closure.function);
                 if !self
+                    .lowering
                     .effect_callable_adapters
                     .iter()
                     .any(|existing| existing.name == adapter)
@@ -205,15 +251,17 @@ impl Analyzer {
                         self.error("internal effect closure has no callable type");
                         return error_expr();
                     };
-                    self.effect_callable_adapters.push(EffectCallableAdapter {
-                        name: adapter.clone(),
-                        callable_ty: local.ty.clone(),
-                        function: closure.function,
-                        captures: callable_ty.captures.clone(),
-                        input,
-                        output: (**output).clone(),
-                        answer: (**answer).clone(),
-                    });
+                    self.lowering
+                        .effect_callable_adapters
+                        .push(EffectCallableAdapter {
+                            name: adapter.clone(),
+                            callable_ty: local.ty.clone(),
+                            function: closure.function,
+                            captures: callable_ty.captures.clone(),
+                            input,
+                            output: (**output).clone(),
+                            answer: (**answer).clone(),
+                        });
                 }
                 return HirExpr {
                     ty: action_ty,
@@ -382,9 +430,9 @@ impl Analyzer {
                     return self
                         .lower_indirect_function_call(name, &local, &groups, expected, context);
                 }
-                let has_top_level_callable = self.function_overloads.contains_key(name)
-                    || self.function_templates.contains_key(name)
-                    || self.functions.contains_key(name);
+                let has_top_level_callable = self.collection.function_overloads.contains_key(name)
+                    || self.collection.function_templates.contains_key(name)
+                    || self.collection.functions.contains_key(name);
                 if !has_top_level_callable {
                     self.error(format!("local value `{name}` is not callable"));
                     return error_expr();
@@ -403,34 +451,34 @@ impl Analyzer {
                     .expect("empty struct candidate has an empty trailing closure");
                 return self.lower_struct_literal(constructor, &[], expected, context);
             }
-            if self.function_overloads.contains_key(name) {
+            if self.collection.function_overloads.contains_key(name) {
                 let Some(selected) = self.resolve_function_overload(name, &groups) else {
                     return error_expr();
                 };
-                if self.function_templates.contains_key(&selected) {
+                if self.collection.function_templates.contains_key(&selected) {
                     return self.lower_generic_function_call(&selected, &groups, expected, context);
                 }
                 return self.lower_named_function_call(&selected, &groups, expected, context);
             }
-            if self.function_templates.contains_key(name) {
+            if self.collection.function_templates.contains_key(name) {
                 return self.lower_generic_function_call(name, &groups, expected, context);
             }
-            if self.functions.contains_key(name) {
+            if self.collection.functions.contains_key(name) {
                 return self.lower_named_function_call(name, &groups, expected, context);
             }
-            if self.struct_layouts.contains_key(name) {
+            if self.collection.struct_layouts.contains_key(name) {
                 self.error(format!(
                     "struct `{name}` is not callable; construct it with `{name} {{ ... }}`"
                 ));
                 return error_expr();
             }
-            if self.struct_templates.contains_key(name) {
+            if self.collection.struct_templates.contains_key(name) {
                 self.error(format!(
                     "generic struct `{name}` is not callable; construct it with `{name}(...) {{ ... }}` or `{name} {{ ... }}`"
                 ));
                 return error_expr();
             }
-            if self.enum_templates.contains_key(name) {
+            if self.collection.enum_templates.contains_key(name) {
                 self.error(format!(
                     "generic enum type `{name}` is not directly callable; select a variant"
                 ));
@@ -498,7 +546,7 @@ impl Analyzer {
                 );
             }
             if let Some((name, type_groups)) = self.inferred_generic_enum_type_head(base, context) {
-                let is_variant = self.enum_templates[&name]
+                let is_variant = self.collection.enum_templates[&name]
                     .variants
                     .iter()
                     .any(|variant| variant.name == *variant_name);
@@ -532,39 +580,48 @@ impl Analyzer {
                         || (groups.len() > 1
                             && group.iter().all(|argument| argument.label.is_none()))
                 });
-                let has_static_member =
-                    self.inherent_members
+                let has_static_member = self
+                    .collection
+                    .inherent_members
+                    .get(target_template)
+                    .is_some_and(|members| {
+                        members.functions.contains_key(variant_name)
+                            || members.constants.contains_key(variant_name)
+                    })
+                    || self
+                        .collection
+                        .enum_layouts
                         .get(target_template)
-                        .is_some_and(|members| {
-                            members.functions.contains_key(variant_name)
-                                || members.constants.contains_key(variant_name)
+                        .is_some_and(|layout| {
+                            layout
+                                .variants
+                                .iter()
+                                .any(|variant| variant.name == *variant_name)
                         })
-                        || self
-                            .enum_layouts
-                            .get(target_template)
-                            .is_some_and(|layout| {
-                                layout
-                                    .variants
-                                    .iter()
-                                    .any(|variant| variant.name == *variant_name)
-                            })
-                        || self
-                            .generic_inherent_functions
-                            .contains_key(&(target_template.clone(), variant_name.clone()))
-                        || self.inherent_overloads.contains_key(&(
-                            target_template.clone(),
-                            variant_name.clone(),
-                            false,
-                        ));
+                    || self
+                        .collection
+                        .generic_inherent_functions
+                        .contains_key(&(target_template.clone(), variant_name.clone()))
+                    || self.collection.inherent_overloads.contains_key(&(
+                        target_template.clone(),
+                        variant_name.clone(),
+                        false,
+                    ));
                 if !context.shadows_top_level_name(target_template)
                     || has_static_member
                     || explicit_method
                 {
                     if !explicit_method {
                         let overload_key = (target_template.clone(), variant_name.clone(), false);
-                        if (self.struct_templates.contains_key(target_template)
-                            || self.enum_templates.contains_key(target_template))
-                            && self.inherent_overloads.contains_key(&overload_key)
+                        if (self
+                            .collection
+                            .struct_templates
+                            .contains_key(target_template)
+                            || self.collection.enum_templates.contains_key(target_template))
+                            && self
+                                .collection
+                                .inherent_overloads
+                                .contains_key(&overload_key)
                         {
                             let Some(canonical) = self.resolve_inherent_overload(
                                 target_template,
@@ -579,6 +636,7 @@ impl Analyzer {
                             );
                         }
                         if let Some(canonical) = self
+                            .collection
                             .generic_inherent_functions
                             .get(&(target_template.clone(), variant_name.clone()))
                             .cloned()
@@ -587,8 +645,11 @@ impl Analyzer {
                                 &canonical, &groups, expected, context,
                             );
                         }
-                        if self.struct_templates.contains_key(target_template)
-                            || self.enum_templates.contains_key(target_template)
+                        if self
+                            .collection
+                            .struct_templates
+                            .contains_key(target_template)
+                            || self.collection.enum_templates.contains_key(target_template)
                         {
                             if let Some(result) = self
                                 .lower_constructor_trait_associated_function_call(
@@ -603,8 +664,11 @@ impl Analyzer {
                             }
                         }
                     }
-                    if self.struct_templates.contains_key(target_template)
-                        || self.enum_templates.contains_key(target_template)
+                    if self
+                        .collection
+                        .struct_templates
+                        .contains_key(target_template)
+                        || self.collection.enum_templates.contains_key(target_template)
                     {
                         if let Some([receiver]) = groups.first().copied() {
                             let receiver_ty =
@@ -620,6 +684,7 @@ impl Analyzer {
                                 _ => None,
                             }) {
                                 let belongs_to_template = self
+                                    .collection
                                     .nominal_instances
                                     .get(&canonical)
                                     .is_some_and(|instance| {
@@ -630,19 +695,20 @@ impl Analyzer {
                                     NominalKind::Struct => Ty::Struct(canonical.clone()),
                                     NominalKind::Enum => Ty::Enum(canonical.clone()),
                                 };
-                                let has_method =
-                                    self.inherent_members
-                                        .get(&canonical)
-                                        .is_some_and(|members| {
-                                            members.methods.contains_key(variant_name)
-                                        })
-                                        || !self
-                                            .trait_method_candidates(
-                                                &self_ty,
-                                                variant_name,
-                                                &context.origin,
-                                            )
-                                            .is_empty();
+                                let has_method = self
+                                    .collection
+                                    .inherent_members
+                                    .get(&canonical)
+                                    .is_some_and(|members| {
+                                        members.methods.contains_key(variant_name)
+                                    })
+                                    || !self
+                                        .trait_method_candidates(
+                                            &self_ty,
+                                            variant_name,
+                                            &context.origin,
+                                        )
+                                        .is_empty();
                                 if belongs_to_template && has_method {
                                     return self.lower_nominal_type_member_call(
                                         &canonical,
@@ -673,21 +739,30 @@ impl Analyzer {
                 Ok(None) => {}
             }
             if let Expr::Name(enum_name) = base.as_ref() {
-                let has_static_member =
-                    self.inherent_members.get(enum_name).is_some_and(|members| {
+                let has_static_member = self
+                    .collection
+                    .inherent_members
+                    .get(enum_name)
+                    .is_some_and(|members| {
                         members.functions.contains_key(variant_name)
                             || members.constants.contains_key(variant_name)
-                    }) || self.enum_layouts.get(enum_name).is_some_and(|layout| {
-                        layout
-                            .variants
-                            .iter()
-                            .any(|variant| variant.name == *variant_name)
-                    });
+                    })
+                    || self
+                        .collection
+                        .enum_layouts
+                        .get(enum_name)
+                        .is_some_and(|layout| {
+                            layout
+                                .variants
+                                .iter()
+                                .any(|variant| variant.name == *variant_name)
+                        });
                 if (!context.shadows_top_level_name(enum_name) || has_static_member)
-                    && (self.struct_layouts.contains_key(enum_name)
-                        || self.enum_layouts.contains_key(enum_name))
+                    && (self.collection.struct_layouts.contains_key(enum_name)
+                        || self.collection.enum_layouts.contains_key(enum_name))
                 {
                     if let Some(canonical) = self
+                        .collection
                         .inherent_members
                         .get(enum_name)
                         .and_then(|members| members.functions.get(variant_name))
@@ -697,6 +772,7 @@ impl Analyzer {
                             .lower_named_function_call(&canonical, &groups, expected, context);
                     }
                     if self
+                        .collection
                         .inherent_members
                         .get(enum_name)
                         .is_some_and(|members| members.constants.contains_key(variant_name))
@@ -708,7 +784,7 @@ impl Analyzer {
                     }
                 }
                 if !context.shadows_top_level_name(enum_name) || has_static_member {
-                    if let Some(layout) = self.enum_layouts.get(enum_name) {
+                    if let Some(layout) = self.collection.enum_layouts.get(enum_name) {
                         if let Some(variant) = layout
                             .variants
                             .iter()
@@ -718,6 +794,7 @@ impl Analyzer {
                                 .lower_enum_constructor(enum_name, variant, &groups, context);
                         }
                         if self
+                            .collection
                             .inherent_members
                             .get(enum_name)
                             .is_some_and(|members| members.methods.contains_key(variant_name))
@@ -732,8 +809,9 @@ impl Analyzer {
                         ));
                         return error_expr();
                     }
-                    if self.struct_layouts.contains_key(enum_name) {
+                    if self.collection.struct_layouts.contains_key(enum_name) {
                         if self
+                            .collection
                             .inherent_members
                             .get(enum_name)
                             .is_some_and(|members| members.methods.contains_key(variant_name))
@@ -785,12 +863,17 @@ impl Analyzer {
         {
             return false;
         }
-        self.struct_layouts
+        self.collection
+            .struct_layouts
             .get(name)
             .is_some_and(|layout| layout.fields.is_empty() && groups.len() == 1)
-            || self.struct_templates.get(name).is_some_and(|template| {
-                template.fields.is_empty() && groups.len() == template.compile_groups.len() + 1
-            })
+            || self
+                .collection
+                .struct_templates
+                .get(name)
+                .is_some_and(|template| {
+                    template.fields.is_empty() && groups.len() == template.compile_groups.len() + 1
+                })
     }
 
     fn lower_recursive_frame_call(
@@ -846,7 +929,7 @@ impl Analyzer {
         name: &str,
         groups: &[&[CallArg]],
     ) -> Option<String> {
-        let candidates = self.function_overloads.get(name)?.clone();
+        let candidates = self.collection.function_overloads.get(name)?.clone();
         let display_name = self.diagnostic_function_name(name);
         if !groups
             .iter()
@@ -898,7 +981,7 @@ impl Analyzer {
         groups: &[&[CallArg]],
     ) -> Option<String> {
         let key = (target.to_owned(), member.to_owned(), is_method);
-        let candidates = self.inherent_overloads.get(&key)?.clone();
+        let candidates = self.collection.inherent_overloads.get(&key)?.clone();
         let target = self.diagnostic_type_name(&Ty::Struct(target.to_owned()));
         if !groups
             .iter()
@@ -937,7 +1020,9 @@ impl Analyzer {
         candidates
             .iter()
             .filter(|candidate| {
-                let parameter_names = if let Some(signature) = self.signatures.get(*candidate) {
+                let parameter_names = if let Some(signature) =
+                    self.lowering.signatures.get(*candidate)
+                {
                     signature.groups[parameter_group_offset..]
                         .iter()
                         .map(|group| {
@@ -947,7 +1032,7 @@ impl Analyzer {
                                 .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>()
-                } else if let Some(template) = self.function_templates.get(*candidate) {
+                } else if let Some(template) = self.collection.function_templates.get(*candidate) {
                     template.groups[parameter_group_offset..]
                         .iter()
                         .map(|group| {
@@ -989,11 +1074,12 @@ impl Analyzer {
                                     })
                         })
                 };
-                if self.signatures.contains_key(*candidate) {
+                if self.lowering.signatures.contains_key(*candidate) {
                     matches_runtime(groups)
                 } else {
-                    let compile_group_count =
-                        self.function_templates[*candidate].compile_groups.len();
+                    let compile_group_count = self.collection.function_templates[*candidate]
+                        .compile_groups
+                        .len();
                     (0..=compile_group_count.min(groups.len())).any(|runtime_start| {
                         groups[runtime_start..]
                             .iter()

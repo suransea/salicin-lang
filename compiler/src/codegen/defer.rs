@@ -338,8 +338,8 @@ impl Analyzer {
     }
 
     fn fresh_defer_name(&mut self, role: &str) -> String {
-        let index = self.next_closure;
-        self.next_closure += 1;
+        let index = self.lowering.next_closure;
+        self.lowering.next_closure += 1;
         format!("$defer${role}${index}")
     }
 }

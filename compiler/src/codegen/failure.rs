@@ -117,7 +117,7 @@ impl Analyzer {
                     .then(|| self.failure_info_from_function(function))
                     .flatten();
             }
-            if let Some(candidates) = self.function_overloads.get(name) {
+            if let Some(candidates) = self.collection.function_overloads.get(name) {
                 if !groups
                     .iter()
                     .flat_map(|group| group.iter())
@@ -129,12 +129,12 @@ impl Analyzer {
                 let [selected] = matches.as_slice() else {
                     return None;
                 };
-                let signature = self.signatures.get(selected)?;
+                let signature = self.lowering.signatures.get(selected)?;
                 return (groups.len() == signature.groups.len())
                     .then(|| self.failure_info_from_signature(signature))
                     .flatten();
             }
-            let signature = self.signatures.get(name)?;
+            let signature = self.lowering.signatures.get(name)?;
             return (groups.len() == signature.groups.len())
                 .then(|| self.failure_info_from_signature(signature))
                 .flatten();
@@ -148,46 +148,48 @@ impl Analyzer {
                 _ => return None,
             };
             let overload_key = (target.clone(), member.clone(), false);
-            let canonical = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
-                if !groups
-                    .iter()
-                    .flat_map(|group| group.iter())
-                    .any(|argument| argument.label.is_some())
-                {
-                    return None;
-                }
-                let matches = self.matching_function_overloads(candidates, &groups, 0);
-                let [selected] = matches.as_slice() else {
-                    return None;
-                };
-                selected.clone()
-            } else if let Some(canonical) = self
-                .inherent_members
-                .get(&target)
-                .and_then(|members| members.functions.get(member))
-            {
-                canonical.clone()
-            } else {
-                let candidates =
-                    self.trait_associated_function_candidates(&ty, member, &context.origin);
-                match candidates.as_slice() {
-                    [canonical] => canonical.clone(),
-                    [_, _, ..]
-                        if groups
-                            .iter()
-                            .flat_map(|group| group.iter())
-                            .any(|argument| argument.label.is_some()) =>
+            let canonical =
+                if let Some(candidates) = self.collection.inherent_overloads.get(&overload_key) {
+                    if !groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some())
                     {
-                        let matches = self.matching_function_overloads(&candidates, &groups, 0);
-                        let [selected] = matches.as_slice() else {
-                            return None;
-                        };
-                        selected.clone()
+                        return None;
                     }
-                    _ => return None,
-                }
-            };
-            let signature = self.signatures.get(&canonical)?;
+                    let matches = self.matching_function_overloads(candidates, &groups, 0);
+                    let [selected] = matches.as_slice() else {
+                        return None;
+                    };
+                    selected.clone()
+                } else if let Some(canonical) = self
+                    .collection
+                    .inherent_members
+                    .get(&target)
+                    .and_then(|members| members.functions.get(member))
+                {
+                    canonical.clone()
+                } else {
+                    let candidates =
+                        self.trait_associated_function_candidates(&ty, member, &context.origin);
+                    match candidates.as_slice() {
+                        [canonical] => canonical.clone(),
+                        [_, _, ..]
+                            if groups
+                                .iter()
+                                .flat_map(|group| group.iter())
+                                .any(|argument| argument.label.is_some()) =>
+                        {
+                            let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                            let [selected] = matches.as_slice() else {
+                                return None;
+                            };
+                            selected.clone()
+                        }
+                        _ => return None,
+                    }
+                };
+            let signature = self.lowering.signatures.get(&canonical)?;
             return (groups.len() == signature.groups.len())
                 .then(|| self.failure_info_from_signature(signature))
                 .flatten();
@@ -201,25 +203,27 @@ impl Analyzer {
             _ => return None,
         };
         let overload_key = (target.clone(), member.clone(), true);
-        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
-            if !groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .any(|argument| argument.label.is_some())
-            {
-                return None;
-            }
-            let matches = self.matching_function_overloads(candidates, &groups, 1);
-            let [selected] = matches.as_slice() else {
-                return None;
+        let inherent =
+            if let Some(candidates) = self.collection.inherent_overloads.get(&overload_key) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups, 1);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                Some(selected.clone())
+            } else {
+                self.collection
+                    .inherent_members
+                    .get(target)
+                    .and_then(|members| members.methods.get(member))
+                    .cloned()
             };
-            Some(selected.clone())
-        } else {
-            self.inherent_members
-                .get(target)
-                .and_then(|members| members.methods.get(member))
-                .cloned()
-        };
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
@@ -246,7 +250,7 @@ impl Analyzer {
                 _ => return None,
             }
         };
-        let signature = self.signatures.get(&canonical)?;
+        let signature = self.lowering.signatures.get(&canonical)?;
         (groups.len() + 1 == signature.groups.len())
             .then(|| self.failure_info_from_signature(signature))
             .flatten()
@@ -364,7 +368,7 @@ impl Analyzer {
             return error_expr();
         };
         let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
-        let Some(definition) = self.effect_defs.get(&failure_name).cloned() else {
+        let Some(definition) = self.collection.effect_defs.get(&failure_name).cloned() else {
             self.error("compiler core did not register its validated `failure` effect");
             return error_expr();
         };
@@ -626,7 +630,7 @@ impl Analyzer {
             return false;
         };
         let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
-        if !self.effect_defs.contains_key(root_name) {
+        if !self.collection.effect_defs.contains_key(root_name) {
             return false;
         }
         groups[0].iter().any(|argument| {
@@ -765,7 +769,7 @@ impl Analyzer {
                 return (groups.len() == function.groups.len())
                     .then(|| function.custom_effects.clone());
             }
-            if let Some(candidates) = self.function_overloads.get(name) {
+            if let Some(candidates) = self.collection.function_overloads.get(name) {
                 if !groups
                     .iter()
                     .flat_map(|group| group.iter())
@@ -777,7 +781,7 @@ impl Analyzer {
                 let [selected] = matches.as_slice() else {
                     return None;
                 };
-                let signature = self.signatures.get(selected)?;
+                let signature = self.lowering.signatures.get(selected)?;
                 return (groups.len() == signature.groups.len())
                     .then(|| signature.custom_effects.clone());
             }
@@ -786,7 +790,7 @@ impl Analyzer {
             {
                 return Some(source_effect_identities(&sources));
             }
-            let signature = self.signatures.get(name)?;
+            let signature = self.lowering.signatures.get(name)?;
             return (groups.len() == signature.groups.len())
                 .then(|| signature.custom_effects.clone());
         }
@@ -800,46 +804,48 @@ impl Analyzer {
                 _ => return None,
             };
             let overload_key = (target.clone(), member.clone(), false);
-            let canonical = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
-                if !groups
-                    .iter()
-                    .flat_map(|group| group.iter())
-                    .any(|argument| argument.label.is_some())
-                {
-                    return None;
-                }
-                let matches = self.matching_function_overloads(candidates, &groups, 0);
-                let [selected] = matches.as_slice() else {
-                    return None;
-                };
-                selected.clone()
-            } else if let Some(canonical) = self
-                .inherent_members
-                .get(&target)
-                .and_then(|members| members.functions.get(member))
-            {
-                canonical.clone()
-            } else {
-                let candidates =
-                    self.trait_associated_function_candidates(&ty, member, &context.origin);
-                match candidates.as_slice() {
-                    [canonical] => canonical.clone(),
-                    [_, _, ..]
-                        if groups
-                            .iter()
-                            .flat_map(|group| group.iter())
-                            .any(|argument| argument.label.is_some()) =>
+            let canonical =
+                if let Some(candidates) = self.collection.inherent_overloads.get(&overload_key) {
+                    if !groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some())
                     {
-                        let matches = self.matching_function_overloads(&candidates, &groups, 0);
-                        let [selected] = matches.as_slice() else {
-                            return None;
-                        };
-                        selected.clone()
+                        return None;
                     }
-                    _ => return None,
-                }
-            };
-            let signature = self.signatures.get(&canonical)?;
+                    let matches = self.matching_function_overloads(candidates, &groups, 0);
+                    let [selected] = matches.as_slice() else {
+                        return None;
+                    };
+                    selected.clone()
+                } else if let Some(canonical) = self
+                    .collection
+                    .inherent_members
+                    .get(&target)
+                    .and_then(|members| members.functions.get(member))
+                {
+                    canonical.clone()
+                } else {
+                    let candidates =
+                        self.trait_associated_function_candidates(&ty, member, &context.origin);
+                    match candidates.as_slice() {
+                        [canonical] => canonical.clone(),
+                        [_, _, ..]
+                            if groups
+                                .iter()
+                                .flat_map(|group| group.iter())
+                                .any(|argument| argument.label.is_some()) =>
+                        {
+                            let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                            let [selected] = matches.as_slice() else {
+                                return None;
+                            };
+                            selected.clone()
+                        }
+                        _ => return None,
+                    }
+                };
+            let signature = self.lowering.signatures.get(&canonical)?;
             return (groups.len() == signature.groups.len())
                 .then(|| signature.custom_effects.clone());
         }
@@ -852,25 +858,27 @@ impl Analyzer {
             _ => return None,
         };
         let overload_key = (target.clone(), member.clone(), true);
-        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
-            if !groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .any(|argument| argument.label.is_some())
-            {
-                return None;
-            }
-            let matches = self.matching_function_overloads(candidates, &groups, 1);
-            let [selected] = matches.as_slice() else {
-                return None;
+        let inherent =
+            if let Some(candidates) = self.collection.inherent_overloads.get(&overload_key) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups, 1);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                Some(selected.clone())
+            } else {
+                self.collection
+                    .inherent_members
+                    .get(target)
+                    .and_then(|members| members.methods.get(member))
+                    .cloned()
             };
-            Some(selected.clone())
-        } else {
-            self.inherent_members
-                .get(target)
-                .and_then(|members| members.methods.get(member))
-                .cloned()
-        };
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
@@ -897,7 +905,7 @@ impl Analyzer {
                 _ => return None,
             }
         };
-        let signature = self.signatures.get(&canonical)?;
+        let signature = self.lowering.signatures.get(&canonical)?;
         (groups.len() + 1 == signature.groups.len()).then(|| signature.custom_effects.clone())
     }
 
@@ -920,7 +928,7 @@ impl Analyzer {
             return (groups.len() == function.groups.len())
                 .then(|| effect_identity_sources(&function.custom_effects));
         }
-        let canonical = if let Some(candidates) = self.function_overloads.get(name) {
+        let canonical = if let Some(candidates) = self.collection.function_overloads.get(name) {
             if !groups
                 .iter()
                 .flat_map(|group| group.iter())
@@ -941,9 +949,10 @@ impl Analyzer {
         {
             return Some(sources);
         }
-        let signature = self.signatures.get(&canonical)?;
+        let signature = self.lowering.signatures.get(&canonical)?;
         (groups.len() == signature.groups.len()).then(|| {
-            self.functions
+            self.collection
+                .functions
                 .get(&canonical)
                 .map(|function| function.effects.custom.clone())
                 .unwrap_or_else(|| effect_identity_sources(&signature.custom_effects))
@@ -956,7 +965,7 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &LowerCtx,
     ) -> Option<Vec<Type>> {
-        let template = self.function_templates.get(name)?;
+        let template = self.collection.function_templates.get(name)?;
         let (compile_parameters, mut inferred, runtime_group_start) = self
             .probe_type_argument_inference_seed(&template.compile_groups, groups, context, false)?;
         let runtime_groups = &groups[runtime_group_start..];
@@ -1167,7 +1176,8 @@ impl Analyzer {
                     );
                     return Some(error_expr());
                 }
-                let Some(definition) = self.effect_defs.get(&failure_name).cloned() else {
+                let Some(definition) = self.collection.effect_defs.get(&failure_name).cloned()
+                else {
                     self.error("compiler core did not register its validated `failure` effect");
                     return Some(error_expr());
                 };
@@ -1208,7 +1218,7 @@ impl Analyzer {
 
     fn standard_throw_effect_source(&self, error_source: Type) -> Option<Type> {
         let throw_name = self.lang_item_name(LangItemKind::Throw);
-        let mut function = self.function_templates.get(throw_name)?.clone();
+        let mut function = self.collection.function_templates.get(throw_name)?.clone();
         let substitutions = HashMap::from([("error".to_owned(), error_source)]);
         substitute_function_types(&mut function, &substitutions);
         if !function.effects.parameters.is_empty()
@@ -1461,7 +1471,7 @@ impl Analyzer {
             return;
         };
         let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
-        if !self.effect_defs.contains_key(root_name) {
+        if !self.collection.effect_defs.contains_key(root_name) {
             return;
         }
         for argument in groups[0] {

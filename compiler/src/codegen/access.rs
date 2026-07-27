@@ -44,15 +44,19 @@ impl Analyzer {
     }
 
     pub(super) fn nominal_access_or_internal(&mut self, name: &str) -> AccessBoundary {
-        self.nominal_accesses.get(name).cloned().unwrap_or_else(|| {
-            self.error(format!(
-                "internal error: nominal type `{name}` has no visibility metadata"
-            ));
-            AccessBoundary {
-                visibility: Visibility::Private,
-                origin: ItemOrigin::default(),
-            }
-        })
+        self.collection
+            .nominal_accesses
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| {
+                self.error(format!(
+                    "internal error: nominal type `{name}` has no visibility metadata"
+                ));
+                AccessBoundary {
+                    visibility: Visibility::Private,
+                    origin: ItemOrigin::default(),
+                }
+            })
     }
 
     pub(super) fn require_field_access(
@@ -62,11 +66,13 @@ impl Analyzer {
         origin: &ItemOrigin,
     ) -> bool {
         let display_owner = self
+            .collection
             .nominal_instances
             .get(owner)
             .map(|instance| instance.key.template.clone())
             .or_else(|| {
-                self.nominal_instances
+                self.collection
+                    .nominal_instances
                     .iter()
                     .find_map(|(canonical, instance)| {
                         owner.strip_prefix(canonical).and_then(|suffix| {
@@ -161,7 +167,7 @@ impl Analyzer {
         fields: &[Field],
         origin: &ItemOrigin,
     ) -> bool {
-        let Some(owner_access) = self.nominal_accesses.get(owner) else {
+        let Some(owner_access) = self.collection.nominal_accesses.get(owner) else {
             return false;
         };
         fields.iter().all(|field| {
@@ -181,7 +187,7 @@ impl Analyzer {
         let Type::Named(owner, _) = source else {
             return false;
         };
-        let Some(owner_access) = self.nominal_accesses.get(owner) else {
+        let Some(owner_access) = self.collection.nominal_accesses.get(owner) else {
             return false;
         };
         match fields {
@@ -309,19 +315,14 @@ impl Analyzer {
                     })
                 }
                 Ty::Struct(name) | Ty::Enum(name) => {
-                    let mut restricted =
-                        analyzer
-                            .nominal_accesses
-                            .get(name)
-                            .map_or(access.clone(), |nominal| {
-                                Analyzer::intersect_access_boundaries(
-                                    &access,
-                                    nominal,
-                                    fallback_origin,
-                                )
-                            });
+                    let mut restricted = analyzer.collection.nominal_accesses.get(name).map_or(
+                        access.clone(),
+                        |nominal| {
+                            Analyzer::intersect_access_boundaries(&access, nominal, fallback_origin)
+                        },
+                    );
                     if visited.insert(name.clone()) {
-                        if let Some(instance) = analyzer.nominal_instances.get(name) {
+                        if let Some(instance) = analyzer.collection.nominal_instances.get(name) {
                             for argument in &instance.key.arguments {
                                 restricted =
                                     visit(analyzer, restricted, argument, fallback_origin, visited);
@@ -436,15 +437,16 @@ impl Analyzer {
                 }
             }
             Ty::Struct(name) | Ty::Enum(name) => {
-                if self.abstract_type_parameters.contains_key(name) {
+                if self.collection.abstract_type_parameters.contains_key(name) {
                     return;
                 }
                 let display_name = self
+                    .collection
                     .nominal_instances
                     .get(name)
                     .map(|instance| instance.key.template.as_str())
                     .unwrap_or(name);
-                if let Some(referenced) = self.nominal_accesses.get(name) {
+                if let Some(referenced) = self.collection.nominal_accesses.get(name) {
                     if !Self::api_audience_is_contained(exposed, referenced) {
                         let exposed_visibility = match exposed.visibility {
                             Visibility::Private => "private",
@@ -462,7 +464,7 @@ impl Analyzer {
                     }
                 }
                 if visited.insert(name.clone()) {
-                    if let Some(instance) = self.nominal_instances.get(name) {
+                    if let Some(instance) = self.collection.nominal_instances.get(name) {
                         for argument in &instance.key.arguments {
                             self.collect_type_api_leaks(
                                 argument,
@@ -496,8 +498,8 @@ impl Analyzer {
 
     pub(super) fn validate_inferred_api_visibility(&mut self) {
         let mut diagnostics = Vec::new();
-        for (name, access) in &self.function_accesses {
-            let Some(function) = self.hir_functions.get(name) else {
+        for (name, access) in &self.collection.function_accesses {
+            let Some(function) = self.lowering.hir_functions.get(name) else {
                 continue;
             };
             for parameter in &function.params {
@@ -517,8 +519,8 @@ impl Analyzer {
                 &mut diagnostics,
             );
         }
-        for (name, access) in &self.global_accesses {
-            let Some(global) = self.hir_globals.get(name) else {
+        for (name, access) in &self.collection.global_accesses {
+            let Some(global) = self.lowering.hir_globals.get(name) else {
                 continue;
             };
             self.collect_type_api_leaks(

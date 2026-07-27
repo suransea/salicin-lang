@@ -32,14 +32,14 @@ impl Analyzer {
                 }
                 Ty::Array(element, _) => collect(analyzer, element, visiting, output),
                 Ty::Struct(name) => {
-                    if let Some(layout) = analyzer.struct_layouts.get(name) {
+                    if let Some(layout) = analyzer.collection.struct_layouts.get(name) {
                         for field in &layout.fields {
                             collect(analyzer, &field.ty, visiting, output);
                         }
                     }
                 }
                 Ty::Enum(name) => {
-                    if let Some(layout) = analyzer.enum_layouts.get(name) {
+                    if let Some(layout) = analyzer.collection.enum_layouts.get(name) {
                         for variant in &layout.variants {
                             for field in &variant.fields {
                                 collect(analyzer, &field.ty, visiting, output);
@@ -181,14 +181,20 @@ impl Analyzer {
         function: &str,
         arguments: &'a [HirArgument],
     ) -> Option<Vec<ReferenceCallSource<'a>>> {
-        let result = self.signatures.get(function)?.result.as_ref()?;
+        let result = self.lowering.signatures.get(function)?.result.as_ref()?;
         let result_regions = self.type_reference_requirements(result);
         if result_regions.is_empty() {
             return None;
         }
-        let source = self.functions.get(function)?;
+        let source = self.collection.functions.get(function)?;
         let parameters = source.groups.iter().flatten();
-        let runtime_parameters = self.signatures.get(function)?.groups.iter().flatten();
+        let runtime_parameters = self
+            .lowering
+            .signatures
+            .get(function)?
+            .groups
+            .iter()
+            .flatten();
         let mut sources = Vec::new();
         for ((parameter, runtime), argument) in parameters.zip(runtime_parameters).zip(arguments) {
             let parameter_region = match (&parameter.mode, &parameter.ty) {
@@ -568,14 +574,14 @@ impl Analyzer {
                 .flatten()
         });
         let result_mutable = result_requirements.iter().any(|(_, mutable)| *mutable);
-        let Some(source) = self.functions.get(function) else {
+        let Some(source) = self.collection.functions.get(function) else {
             self.error(format!(
                 "internal error: reference-returning function `{function}` has no source signature"
             ));
             return;
         };
         let source_parameters = source.groups.iter().flatten().cloned().collect::<Vec<_>>();
-        let runtime_parameters = self.signatures[function]
+        let runtime_parameters = self.lowering.signatures[function]
             .groups
             .iter()
             .flatten()

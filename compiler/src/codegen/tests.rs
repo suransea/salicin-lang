@@ -1,6 +1,7 @@
 use super::ctfe_value::CtfeValueKind;
+use super::operators::{BINARY_OPERATOR_TRAITS, UNARY_OPERATOR_TRAITS};
 use super::*;
-use crate::ast::Param;
+use crate::ast::{Binding, ExtendMember, Param, Stmt, VariantFields};
 use crate::cleanup::{
     CleanupEdge, CleanupOp, CleanupPlan, LocalKind as CleanupLocalKind,
     LocalOwnership as CleanupLocalOwnership, MovePathId as CleanupMovePathId,
@@ -159,6 +160,7 @@ fn monomorphizes_and_deduplicates_explicit_generic_function_calls() {
     assert!(hir.is_some());
     assert_eq!(
         analyzer
+            .collection
             .function_instances
             .values()
             .filter(|instance| instance.key.template == "identity")
@@ -166,6 +168,7 @@ fn monomorphizes_and_deduplicates_explicit_generic_function_calls() {
         1
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == "identity")
@@ -197,6 +200,7 @@ fn inferred_and_explicit_type_arguments_share_instance_cache_keys() {
     assert!(hir.is_some(), "mixed generic program hir");
 
     let function_instances: Vec<_> = analyzer
+        .collection
         .function_instances
         .values()
         .filter(|instance| instance.key.template == "identity")
@@ -205,6 +209,7 @@ fn inferred_and_explicit_type_arguments_share_instance_cache_keys() {
     assert_eq!(function_instances[0].key.arguments, vec![Ty::I32]);
 
     let nominal_instances: Vec<_> = analyzer
+        .collection
         .nominal_instances
         .values()
         .filter(|instance| instance.key.template == "cell")
@@ -239,8 +244,8 @@ fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
         template: "cell".into(),
         arguments: vec![Ty::I32],
     };
-    let canonical = &analyzer.nominal_instance_names[&key];
-    let members = &analyzer.inherent_members[canonical];
+    let canonical = &analyzer.collection.nominal_instance_names[&key];
+    let members = &analyzer.collection.inherent_members[canonical];
     assert!(members.functions.contains_key("new"));
     assert!(members.methods.contains_key("take"));
     assert!(hir
@@ -248,6 +253,7 @@ fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
         .iter()
         .any(|function| function.name == members.methods["take"]));
     assert!(analyzer
+        .collection
         .generic_inherent_functions
         .contains_key(&("cell".to_owned(), "new".to_owned())));
 }
@@ -357,15 +363,19 @@ fn inference_reifies_and_decomposes_generic_nominal_types() {
         template: "cell".into(),
         arguments: vec![Ty::I32],
     };
-    let inner = analyzer.nominal_instance_names[&inner_key].clone();
+    let inner = analyzer.collection.nominal_instance_names[&inner_key].clone();
     let outer_key = NominalInstanceKey {
         kind: NominalKind::Struct,
         template: "cell".into(),
         arguments: vec![Ty::Struct(inner)],
     };
-    assert!(analyzer.nominal_instance_names.contains_key(&outer_key));
+    assert!(analyzer
+        .collection
+        .nominal_instance_names
+        .contains_key(&outer_key));
 
     let unwrap_instances: Vec<_> = analyzer
+        .collection
         .function_instances
         .values()
         .filter(|instance| instance.key.template == "unwrap")
@@ -394,6 +404,7 @@ fn integer_constraints_precede_defaulting_independent_of_source_order() {
     );
     for template in ["same", "accept"] {
         let instances: Vec<_> = analyzer
+            .collection
             .function_instances
             .values()
             .filter(|instance| instance.key.template == template)
@@ -431,10 +442,12 @@ fn inference_conflicts_do_not_materialize_instances() {
             .contains("conflicting inference for type parameter `t`")
     }));
     assert!(analyzer
+        .collection
         .function_instances
         .values()
         .all(|instance| instance.key.template.contains("::")));
     assert!(analyzer
+        .collection
         .function_instance_names
         .keys()
         .all(|key| key.template.contains("::")));
@@ -443,6 +456,7 @@ fn inference_conflicts_do_not_materialize_instances() {
         analyzer.lang_item_name(LangItemKind::PartialOrdering),
     ];
     assert!(analyzer
+        .collection
         .nominal_instances
         .values()
         .all(
@@ -450,6 +464,7 @@ fn inference_conflicts_do_not_materialize_instances() {
                 || instance.key.template.contains("::")
         ));
     assert!(analyzer
+        .collection
         .nominal_instance_names
         .keys()
         .all(
@@ -472,23 +487,32 @@ fn template_validation_rolls_back_temporary_instances_and_emits_closed_ir() {
         analyzer.diagnostics
     );
     assert!(analyzer
+        .collection
         .function_instances
         .values()
         .all(|instance| instance.key.template.contains("::")));
     assert!(analyzer
+        .collection
         .function_instance_names
         .keys()
         .all(|key| key.template.contains("::")));
     assert!(analyzer
+        .collection
         .function_type_substitutions
         .keys()
         .all(|name| name.contains("::")));
     assert!(analyzer
+        .collection
         .function_order
         .iter()
         .all(|name| !name.contains("$generic$")));
 
-    let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+    let markers: HashSet<_> = analyzer
+        .collection
+        .abstract_type_parameters
+        .keys()
+        .cloned()
+        .collect();
     let hir = analyzer.analyze().expect("closed program hir");
     assert!(
         analyzer.diagnostics.is_empty(),
@@ -497,6 +521,7 @@ fn template_validation_rolls_back_temporary_instances_and_emits_closed_ir() {
     );
     assert_eq!(
         analyzer
+            .collection
             .function_instances
             .values()
             .filter(|instance| matches!(instance.key.template.as_str(), "identity" | "wrap"))
@@ -507,16 +532,20 @@ fn template_validation_rolls_back_temporary_instances_and_emits_closed_ir() {
         .functions
         .iter()
         .all(|function| !function.name.contains("$generic$")));
-    assert!(analyzer.function_instances.values().all(|instance| {
-        instance
-            .key
-            .arguments
-            .iter()
-            .all(|argument| match argument {
-                Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
-                _ => true,
-            })
-    }));
+    assert!(analyzer
+        .collection
+        .function_instances
+        .values()
+        .all(|instance| {
+            instance
+                .key
+                .arguments
+                .iter()
+                .all(|argument| match argument {
+                    Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
+                    _ => true,
+                })
+        }));
 
     let ir = compile(&program).expect("closed generic composition must compile");
     for marker in markers {
@@ -540,19 +569,27 @@ fn inferred_template_calls_roll_back_abstract_instances() {
         analyzer.diagnostics
     );
     assert!(analyzer
+        .collection
         .function_instances
         .values()
         .all(|instance| instance.key.template.contains("::")));
     assert!(analyzer
+        .collection
         .function_instance_names
         .keys()
         .all(|key| key.template.contains("::")));
     assert!(analyzer
+        .collection
         .function_type_substitutions
         .keys()
         .all(|name| name.contains("::")));
 
-    let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+    let markers: HashSet<_> = analyzer
+        .collection
+        .abstract_type_parameters
+        .keys()
+        .cloned()
+        .collect();
     let hir = analyzer.analyze().expect("closed inferred generic hir");
     assert!(
         analyzer.diagnostics.is_empty(),
@@ -561,6 +598,7 @@ fn inferred_template_calls_roll_back_abstract_instances() {
     );
     assert_eq!(
         analyzer
+            .collection
             .function_instances
             .values()
             .filter(|instance| matches!(instance.key.template.as_str(), "identity" | "wrap"))
@@ -571,16 +609,20 @@ fn inferred_template_calls_roll_back_abstract_instances() {
         .functions
         .iter()
         .all(|function| !function.name.contains("$generic$")));
-    assert!(analyzer.function_instances.values().all(|instance| {
-        instance
-            .key
-            .arguments
-            .iter()
-            .all(|argument| match argument {
-                Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
-                _ => true,
-            })
-    }));
+    assert!(analyzer
+        .collection
+        .function_instances
+        .values()
+        .all(|instance| {
+            instance
+                .key
+                .arguments
+                .iter()
+                .all(|argument| match argument {
+                    Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
+                    _ => true,
+                })
+        }));
 
     let ir = compile(&program).expect("closed inferred composition must compile");
     for marker in markers {
@@ -605,6 +647,7 @@ fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
     );
 
     let plain = analyzer
+        .collection
         .nominal_instances
         .get("plain")
         .expect("plain nominal metadata");
@@ -613,6 +656,7 @@ fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
     assert_eq!(plain.key.template, "plain");
     assert!(plain.key.arguments.is_empty());
     assert!(analyzer
+        .collection
         .nominal_instances
         .values()
         .all(|instance| instance.key.arguments.is_empty()
@@ -631,10 +675,12 @@ fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
         arguments: vec![Ty::I32],
     };
     let canonical = analyzer
+        .collection
         .nominal_instance_names
         .get(&key)
         .expect("cell(i32) canonical name");
     let instances: Vec<_> = analyzer
+        .collection
         .nominal_instances
         .values()
         .filter(|instance| instance.key.template == "cell")
@@ -689,16 +735,16 @@ fn materializes_nested_generic_struct_layouts_in_dependency_order() {
         template: "cell".into(),
         arguments: vec![Ty::I32],
     };
-    let inner = analyzer.nominal_instance_names[&inner_key].clone();
+    let inner = analyzer.collection.nominal_instance_names[&inner_key].clone();
     let outer_key = NominalInstanceKey {
         kind: NominalKind::Struct,
         template: "cell".into(),
         arguments: vec![Ty::Struct(inner.clone())],
     };
-    let outer = analyzer.nominal_instance_names[&outer_key].clone();
+    let outer = analyzer.collection.nominal_instance_names[&outer_key].clone();
     assert_ne!(inner, outer);
     assert_eq!(
-        analyzer.struct_layouts[&outer].fields[0].ty,
+        analyzer.collection.struct_layouts[&outer].fields[0].ty,
         Ty::Struct(inner.clone())
     );
     let inner_index = hir
@@ -776,24 +822,25 @@ fn registers_source_backed_core_lang_items() {
         LangItemKind::MoveParameters,
     ] {
         assert!(!analyzer
+            .collection
             .function_templates
             .contains_key(analyzer.lang_item_name(kind)));
     }
-    let async_function =
-        &analyzer.function_templates[analyzer.lang_item_name(LangItemKind::AsyncFunction)];
-    let await_function =
-        &analyzer.function_templates[analyzer.lang_item_name(LangItemKind::AwaitFunction)];
+    let async_function = &analyzer.collection.function_templates
+        [analyzer.lang_item_name(LangItemKind::AsyncFunction)];
+    let await_function = &analyzer.collection.function_templates
+        [analyzer.lang_item_name(LangItemKind::AwaitFunction)];
     assert!(async_function.builtin && async_function.body.is_none());
     assert!(!await_function.builtin && await_function.body.is_some());
     assert_eq!(
-        &analyzer.enum_template_order[..2],
+        &analyzer.collection.enum_template_order[..2],
         &[
             "core::option::option".to_owned(),
             "core::result::result".to_owned()
         ]
     );
 
-    let option = &analyzer.enum_templates["core::option::option"];
+    let option = &analyzer.collection.enum_templates["core::option::option"];
     assert_eq!(option.compile_groups.len(), 1);
     assert_eq!(option.compile_groups[0].len(), 1);
     assert_eq!(option.compile_groups[0][0].name, "t");
@@ -806,7 +853,7 @@ fn registers_source_backed_core_lang_items() {
     assert_eq!(option.variants[1].name, "none");
     assert_eq!(option.variants[1].fields, VariantFields::Unit);
 
-    let result = &analyzer.enum_templates["core::result::result"];
+    let result = &analyzer.collection.enum_templates["core::result::result"];
     assert_eq!(result.compile_groups.len(), 2);
     assert_eq!(result.compile_groups[0].len(), 1);
     assert_eq!(result.compile_groups[0][0].name, "e");
@@ -826,13 +873,15 @@ fn registers_source_backed_core_lang_items() {
     assert_eq!(result.variants[1].name, "err");
 
     let never_name = analyzer.lang_item_name(LangItemKind::Never);
-    let never = &analyzer.enum_defs[never_name];
+    let never = &analyzer.collection.enum_defs[never_name];
     assert!(never.compile_groups.is_empty());
     assert!(never.variants.is_empty());
-    assert!(analyzer.enum_layouts[never_name].variants.is_empty());
+    assert!(analyzer.collection.enum_layouts[never_name]
+        .variants
+        .is_empty());
     for operator_trait in BINARY_OPERATOR_TRAITS {
         let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
-        assert!(analyzer.traits[&name].valid);
+        assert!(analyzer.collection.traits[&name].valid);
         assert_eq!(
             analyzer.lang_item_name(operator_trait.lang_item),
             analyzer
@@ -843,7 +892,7 @@ fn registers_source_backed_core_lang_items() {
     }
     for operator_trait in UNARY_OPERATOR_TRAITS {
         let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
-        assert!(analyzer.traits[&name].valid);
+        assert!(analyzer.collection.traits[&name].valid);
         assert_eq!(
             analyzer.lang_item_name(operator_trait.lang_item),
             analyzer
@@ -853,7 +902,7 @@ fn registers_source_backed_core_lang_items() {
         );
     }
     let throw_name = analyzer.lang_item_name(LangItemKind::Throw);
-    let throw = &analyzer.function_templates[throw_name];
+    let throw = &analyzer.collection.function_templates[throw_name];
     assert_eq!(
         throw.compile_groups,
         vec![vec![CompileParam {
@@ -877,57 +926,86 @@ fn registers_source_backed_core_lang_items() {
     );
     let unsafe_name = analyzer.lang_item_name(LangItemKind::Unsafe);
     assert!(
-        analyzer.function_templates[unsafe_name].body.is_some(),
+        analyzer.collection.function_templates[unsafe_name]
+            .body
+            .is_some(),
         "core.control.unsafe must remain source-backed"
     );
-    assert!(analyzer.nominal_instances.len() >= 2);
-    assert!(analyzer.nominal_instance_names.len() >= 2);
+    assert!(analyzer.collection.nominal_instances.len() >= 2);
+    assert!(analyzer.collection.nominal_instance_names.len() >= 2);
     let partial_ordering = analyzer.lang_item_name(LangItemKind::PartialOrdering);
     assert!(analyzer
+        .collection
         .nominal_instances
         .values()
         .any(|instance| instance.key.kind == NominalKind::Enum
             && instance.key.template == partial_ordering
             && instance.key.arguments.is_empty()));
-    assert!(analyzer.functions.keys().all(|name| name.contains("::")));
+    assert!(analyzer
+        .collection
+        .functions
+        .keys()
+        .all(|name| name.contains("::")));
     let boxed = |name: &str| format!("alloc::boxed::{name}");
     let vec = |name: &str| format!("alloc::vec::{name}");
-    assert!(analyzer.function_templates.contains_key(&boxed("box_new")));
     assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&boxed("box_new")));
+    assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_into_raw")));
-    assert!(analyzer.function_templates.contains_key(&boxed("box_read")));
     assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&boxed("box_read")));
+    assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_write")));
     assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_into_inner")));
     assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_replace")));
     assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_as_ref")));
     assert!(!analyzer
+        .collection
         .function_templates
         .contains_key(&boxed("box_as_mut")));
     assert!(matches!(
-        analyzer.function_templates[&boxed("box_as_ref")]
+        analyzer.collection.function_templates[&boxed("box_as_ref")]
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
             if access.name == "a" && access.kind.is_access()
                 && ty.name == "t" && ty.kind == Sort::Type)
     ));
-    assert!(analyzer.function_templates.contains_key(&vec("vec_new")));
     assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&vec("vec_new")));
+    assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&vec("vec_with_capacity")));
-    assert!(analyzer.function_templates.contains_key(&vec("vec_at")));
-    assert!(!analyzer.function_templates.contains_key(&vec("vec_at_mut")));
+    assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&vec("vec_at")));
+    assert!(!analyzer
+        .collection
+        .function_templates
+        .contains_key(&vec("vec_at_mut")));
     assert!(matches!(
-        analyzer.function_templates[&vec("vec_at")]
+        analyzer.collection.function_templates[&vec("vec_at")]
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
@@ -949,26 +1027,39 @@ fn registers_source_backed_core_lang_items() {
         "vec_remove",
         "vec_append",
     ] {
-        assert!(analyzer.function_templates.contains_key(&vec(name)));
+        assert!(analyzer
+            .collection
+            .function_templates
+            .contains_key(&vec(name)));
     }
     assert!(analyzer
+        .collection
         .function_templates
         .contains_key(&vec("vec_shrink_to_fit")));
-    assert!(analyzer.function_templates.contains_key(&vec("vec_read")));
-    assert!(analyzer.function_templates.contains_key(&vec("vec_write")));
     assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&vec("vec_read")));
+    assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&vec("vec_write")));
+    assert!(analyzer
+        .collection
         .generic_inherent_functions
         .contains_key(&("alloc::boxed::box".to_owned(), "new".to_owned())));
     assert!(analyzer
+        .collection
         .generic_inherent_functions
         .contains_key(&("alloc::vec::vec".to_owned(), "new".to_owned())));
-    assert!(analyzer.generic_inherent_extensions["alloc::vec::vec"]
+    assert!(analyzer.collection.generic_inherent_extensions["alloc::vec::vec"]
         .iter()
         .flat_map(|extension| &extension.members)
         .any(
             |member| matches!(member, ExtendMember::Function(function) if function.name == "push")
         ));
     assert!(analyzer
+        .collection
         .function_order
         .iter()
         .all(|name| name.contains("::")));
@@ -1629,7 +1720,10 @@ let main(): i32 = { boxed { value: 40 }.apply(i32)(2) }
         },
     };
     let canonical = trait_method_name(&key, "apply");
-    assert!(analyzer.function_templates.contains_key(&canonical));
+    assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&canonical));
     let mut analyzed = Analyzer::new(&program);
     let lowered = analyzed.analyze();
     assert!(
@@ -1638,6 +1732,7 @@ let main(): i32 = { boxed { value: 40 }.apply(i32)(2) }
         analyzed.diagnostics
     );
     let instance = analyzed
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == canonical)
@@ -1977,6 +2072,7 @@ let main(): i32 = {
             );
             assert_eq!(
                 analyzer
+                    .collection
                     .functions
                     .keys()
                     .filter(|name| name.contains("$callable$bridge$"))
@@ -2033,6 +2129,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == template)
@@ -2085,6 +2182,7 @@ let main(): i32 = {
     let template = trait_method_name(&key, "chain");
     let mut analyzer = Analyzer::new(&program);
     let implementation = analyzer
+        .collection
         .trait_impls
         .get(&key)
         .expect("maybe(boxed) must implement chain");
@@ -2099,6 +2197,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == template)
@@ -2122,7 +2221,7 @@ let main(): i32 = { 0 }
 "#,
     );
     let analyzer = Analyzer::new(&program);
-    let parameters = &analyzer.traits["lend"].associated_type_parameters["item"];
+    let parameters = &analyzer.collection.traits["lend"].associated_type_parameters["item"];
     assert_eq!(parameters.len(), 2);
     assert_eq!(parameters[0].kind, Sort::Named("access".into()));
     assert_eq!(parameters[1].kind, Sort::Region);
@@ -2185,6 +2284,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == template)
@@ -2243,6 +2343,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let implementation = analyzer
+        .collection
         .trait_impls
         .get(&key)
         .expect("generic maybe(boxed) instance must implement chain");
@@ -2251,6 +2352,7 @@ let main(): i32 = {
         Type::Named("maybe".into(), Vec::new())
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == template)
@@ -2411,19 +2513,20 @@ let main(): i32 = {
         template: "core::option::option".into(),
         arguments: vec![Ty::Bool],
     };
-    let option_i32_name = analyzer.nominal_instance_names[&option_i32].clone();
-    let option_bool_name = analyzer.nominal_instance_names[&option_bool].clone();
+    let option_i32_name = analyzer.collection.nominal_instance_names[&option_i32].clone();
+    let option_bool_name = analyzer.collection.nominal_instance_names[&option_bool].clone();
     assert_ne!(option_i32_name, option_bool_name);
     assert_eq!(
-        analyzer.enum_layouts[&option_i32_name].variants[0].fields[0].ty,
+        analyzer.collection.enum_layouts[&option_i32_name].variants[0].fields[0].ty,
         Ty::I32
     );
     assert_eq!(
-        analyzer.enum_layouts[&option_bool_name].variants[0].fields[0].ty,
+        analyzer.collection.enum_layouts[&option_bool_name].variants[0].fields[0].ty,
         Ty::Bool
     );
 
     let result_keys = analyzer
+        .collection
         .nominal_instances
         .values()
         .filter(|instance| instance.key.template == "core::result::result")
@@ -2466,7 +2569,9 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `never`" }),
         "prelude `never` should not reserve a user top-level name"
     );
-    assert!(analyzer.enum_defs["core::never::never"].variants.is_empty());
+    assert!(analyzer.collection.enum_defs["core::never::never"]
+        .variants
+        .is_empty());
 
     let program =
         crate::parser::parse("let add = struct { value: i32 }\nlet main(): i32 = { 42 }\n")
@@ -2476,8 +2581,8 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
         .diagnostics
         .iter()
         .any(|diagnostic| { diagnostic.message == "duplicate top-level name `add`" }));
-    assert!(analyzer.struct_defs.contains_key("add"));
-    assert!(analyzer.traits["core::ops::arith::add"].valid);
+    assert!(analyzer.collection.struct_defs.contains_key("add"));
+    assert!(analyzer.collection.traits["core::ops::arith::add"].valid);
 
     let errors = compile_text("let invalid(value: void): () = { () }\nlet main(): i32 = { 42 }\n")
         .expect_err("`void` must not resolve as a unit alias");
@@ -3400,6 +3505,7 @@ fn generic_function_validation_rolls_back_temporary_nominal_instances() {
         analyzer.lang_item_name(LangItemKind::PartialOrdering),
     ];
     assert!(analyzer
+        .collection
         .nominal_instances
         .values()
         .all(
@@ -3407,15 +3513,25 @@ fn generic_function_validation_rolls_back_temporary_nominal_instances() {
                 || instance.key.template.contains("::")
         ));
     assert!(analyzer
+        .collection
         .nominal_instance_names
         .keys()
         .all(
             |key| baseline_nominals.contains(&key.template.as_str()) || key.template.contains("::")
         ));
-    assert!(!analyzer.struct_layouts.contains_key("cell"));
-    assert!(!analyzer.struct_order.iter().any(|name| name == "cell"));
+    assert!(!analyzer.collection.struct_layouts.contains_key("cell"));
+    assert!(!analyzer
+        .collection
+        .struct_order
+        .iter()
+        .any(|name| name == "cell"));
 
-    let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+    let markers: HashSet<_> = analyzer
+        .collection
+        .abstract_type_parameters
+        .keys()
+        .cloned()
+        .collect();
     analyzer.analyze().expect("closed generic nominal hir");
     assert!(
         analyzer.diagnostics.is_empty(),
@@ -3423,13 +3539,14 @@ fn generic_function_validation_rolls_back_temporary_nominal_instances() {
         analyzer.diagnostics
     );
     let instances: Vec<_> = analyzer
+        .collection
         .nominal_instances
         .values()
         .filter(|instance| instance.key.template == "cell")
         .collect();
     assert_eq!(instances.len(), 1);
     assert_eq!(instances[0].key.arguments, vec![Ty::I32]);
-    assert!(analyzer.nominal_instances.keys().all(|name| {
+    assert!(analyzer.collection.nominal_instances.keys().all(|name| {
         !name.contains("$generic$") && markers.iter().all(|marker| !name.contains(marker))
     }));
 
@@ -3456,13 +3573,15 @@ fn where_bound_validation_rolls_back_assumed_trait_implementations() {
     let mut analyzer = Analyzer::new(&program);
     assert!(
         analyzer
+            .lowering
             .signatures
             .keys()
             .all(|name| !name.contains("$generic$bound$")),
         "assumed method signatures escaped template validation"
     );
-    assert!(analyzer.trait_impls.keys().all(|key| {
+    assert!(analyzer.collection.trait_impls.keys().all(|key| {
         !analyzer
+            .collection
             .abstract_type_parameters
             .keys()
             .any(|marker| nominal_name(&key.self_ty) == Some(marker.as_str()))
@@ -7145,6 +7264,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let (key, implementation) = analyzer
+        .collection
         .trait_impls
         .iter()
         .find(|(key, _)| key.trait_ref.name == "convert")
@@ -7202,7 +7322,7 @@ fn higher_kinded_trait_method_signatures_validate() {
         analyzer.diagnostics
     );
     assert_eq!(
-        analyzer.traits["functor"].self_parameter.kind,
+        analyzer.collection.traits["functor"].self_parameter.kind,
         Sort::TypeConstructor {
             parameter_groups: vec![vec![Sort::Type]],
         }
@@ -7363,22 +7483,31 @@ let main(): i32 = { 0 }
         analyzer.diagnostics
     );
     let carrier_headers = analyzer
+        .collection
         .constructor_trait_impl_headers
         .iter()
         .filter(|key| key.target.name == "carrier")
         .collect::<Vec<_>>();
     assert_eq!(carrier_headers.len(), 2);
-    assert!(analyzer.constructor_trait_impl_headers.iter().any(|key| {
-        key.target.name == "carrier"
-            && key.target.parameter_count == 1
-            && key.trait_ref.name == "higher"
-            && key.trait_ref.arguments.is_empty()
-    }));
-    assert!(analyzer.constructor_trait_impl_headers.iter().any(|key| {
-        key.target.name == "carrier"
-            && key.trait_ref.name == "tagged"
-            && key.trait_ref.arguments == vec![Ty::I32]
-    }));
+    assert!(analyzer
+        .collection
+        .constructor_trait_impl_headers
+        .iter()
+        .any(|key| {
+            key.target.name == "carrier"
+                && key.target.parameter_count == 1
+                && key.trait_ref.name == "higher"
+                && key.trait_ref.arguments.is_empty()
+        }));
+    assert!(analyzer
+        .collection
+        .constructor_trait_impl_headers
+        .iter()
+        .any(|key| {
+            key.target.name == "carrier"
+                && key.trait_ref.name == "tagged"
+                && key.trait_ref.arguments == vec![Ty::I32]
+        }));
 
     compile(&program).expect("marker constructor trait implementations must compile");
 }
@@ -7414,12 +7543,14 @@ let main(): i32 = { 0 }
         analyzer.diagnostics
     );
     let carrier_headers = analyzer
+        .collection
         .constructor_trait_impl_headers
         .iter()
         .filter(|key| key.target.name == "carrier")
         .collect::<Vec<_>>();
     assert_eq!(carrier_headers.len(), 1);
     let key = analyzer
+        .collection
         .constructor_trait_impl_headers
         .iter()
         .find(|key| key.target.name == "carrier")
@@ -7427,12 +7558,15 @@ let main(): i32 = { 0 }
         .clone();
     let canonical = constructor_trait_method_name(&key, "map");
     assert_eq!(
-        analyzer.constructor_trait_impl_methods[&key]["map"],
+        analyzer.collection.constructor_trait_impl_methods[&key]["map"],
         canonical
     );
-    assert!(analyzer.function_templates.contains_key(&canonical));
+    assert!(analyzer
+        .collection
+        .function_templates
+        .contains_key(&canonical));
     assert_eq!(
-        analyzer.function_templates[&canonical].return_type,
+        analyzer.collection.function_templates[&canonical].return_type,
         Some(Type::Named(
             "carrier".into(),
             vec![Type::Named("b".into(), Vec::new())]
@@ -7477,6 +7611,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let key = analyzer
+        .collection
         .constructor_trait_impl_headers
         .iter()
         .find(|key| key.target.name == "carrier")
@@ -7491,6 +7626,7 @@ let main(): i32 = {
         analyzer.diagnostics
     );
     let instance = analyzer
+        .collection
         .function_instances
         .values()
         .find(|instance| instance.key.template == template)
@@ -8467,7 +8603,7 @@ let main(): i32 = {
     )
     .expect("method precedence source must parse");
     let analyzer = Analyzer::new(&program);
-    let trait_key = analyzer.trait_impls.keys().next().unwrap();
+    let trait_key = analyzer.collection.trait_impls.keys().next().unwrap();
     let trait_symbol = function_symbol(&trait_method_name(trait_key, "answer"));
     let inherent_symbol = function_symbol(&inherent_method_name("number", "answer"));
     let ir = compile(&program).expect("method precedence source must compile");
@@ -8811,12 +8947,12 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
     };
     assert_eq!(step.carry, Ty::Tuple(vec![Ty::I32, Ty::Bool]));
     assert_eq!(step.output, Ty::Struct("output".to_owned()));
-    assert_eq!(analyzer.enum_order.last(), Some(step_name));
+    assert_eq!(analyzer.collection.enum_order.last(), Some(step_name));
     assert_eq!(
-        analyzer.nominal_accesses[step_name].visibility,
+        analyzer.collection.nominal_accesses[step_name].visibility,
         Visibility::Private
     );
-    let layout = &analyzer.enum_layouts[step_name];
+    let layout = &analyzer.collection.enum_layouts[step_name];
     assert_eq!(layout.variants.len(), 2);
     assert_eq!(layout.variants[0].name, "iteration_skip");
     assert_eq!(layout.variants[0].payload_offset, 0);

@@ -26,7 +26,7 @@ impl Analyzer {
                 let Some(local) = context.lookup(name).cloned() else {
                     if context.has_type_parameter(name) {
                         self.error(format!("type parameter `{name}` is not a data place"));
-                    } else if self.globals.contains_key(name) {
+                    } else if self.collection.globals.contains_key(name) {
                         self.error(format!(
                             "global constant `{name}` is not a borrowable place"
                         ));
@@ -468,7 +468,7 @@ impl Analyzer {
             leaves.push(key);
             return;
         }
-        let Some(layout) = self.struct_layouts.get(name) else {
+        let Some(layout) = self.collection.struct_layouts.get(name) else {
             visiting.remove(name);
             leaves.push(key);
             return;

@@ -224,14 +224,20 @@ impl Analyzer {
         member: &str,
         origin: &ItemOrigin,
     ) -> Vec<TraitImplKey> {
-        self.trait_methods_by_receiver
+        self.collection
+            .trait_methods_by_receiver
             .get(&(receiver.clone(), member.to_owned()))
             .into_iter()
             .flatten()
             .filter(|candidate| {
-                self.trait_impls
+                self.collection
+                    .trait_impls
                     .get(*candidate)
-                    .and_then(|implementation| self.traits.get(&implementation.key.trait_ref.name))
+                    .and_then(|implementation| {
+                        self.collection
+                            .traits
+                            .get(&implementation.key.trait_ref.name)
+                    })
                     .is_some_and(|schema| Self::access_boundary_allows(origin, &schema.access))
             })
             .cloned()
@@ -245,6 +251,7 @@ impl Analyzer {
         origin: &ItemOrigin,
     ) -> Vec<String> {
         let mut candidates = self
+            .collection
             .trait_impls
             .values()
             .filter_map(|implementation| {
@@ -253,7 +260,10 @@ impl Analyzer {
                 {
                     return None;
                 }
-                let schema = self.traits.get(&implementation.key.trait_ref.name)?;
+                let schema = self
+                    .collection
+                    .traits
+                    .get(&implementation.key.trait_ref.name)?;
                 let method_ids = schema
                     .method_overloads
                     .get(member)
@@ -285,13 +295,14 @@ impl Analyzer {
         origin: &ItemOrigin,
     ) -> Vec<String> {
         let mut candidates = self
+            .collection
             .constructor_trait_impl_methods
             .iter()
             .filter_map(|(key, methods)| {
                 if key.target.name != target {
                     return None;
                 }
-                let schema = self.traits.get(&key.trait_ref.name)?;
+                let schema = self.collection.traits.get(&key.trait_ref.name)?;
                 let method_ids = schema
                     .method_overloads
                     .get(member)
@@ -308,7 +319,8 @@ impl Analyzer {
                         })
                         .filter_map(|method_id| methods.get(&method_id).cloned())
                         .filter(|canonical| {
-                            self.function_accesses
+                            self.collection
+                                .function_accesses
                                 .get(canonical)
                                 .is_some_and(|access| Self::access_boundary_allows(origin, access))
                         })
@@ -330,8 +342,8 @@ impl Analyzer {
         self.trait_method_candidates(receiver, member, origin)
             .into_iter()
             .flat_map(|key| {
-                let implementation = &self.trait_impls[&key];
-                let schema = &self.traits[&key.trait_ref.name];
+                let implementation = &self.collection.trait_impls[&key];
+                let schema = &self.collection.traits[&key.trait_ref.name];
                 let method_ids = schema
                     .method_overloads
                     .get(member)
@@ -362,17 +374,18 @@ impl Analyzer {
             Ty::Enum(name) => (name, NominalKind::Enum),
             _ => return Vec::new(),
         };
-        let Some(instance) = self.nominal_instances.get(receiver_name) else {
+        let Some(instance) = self.collection.nominal_instances.get(receiver_name) else {
             return Vec::new();
         };
         let mut candidates = self
+            .collection
             .constructor_trait_impl_methods
             .iter()
             .filter_map(|(key, methods)| {
                 if key.target.name != instance.key.template || key.target.kind != receiver_kind {
                     return None;
                 }
-                let schema = self.traits.get(&key.trait_ref.name)?;
+                let schema = self.collection.traits.get(&key.trait_ref.name)?;
                 let method_ids = schema
                     .method_overloads
                     .get(member)
@@ -389,7 +402,8 @@ impl Analyzer {
                         })
                         .filter_map(|method_id| methods.get(&method_id).cloned())
                         .filter(|canonical| {
-                            self.function_accesses
+                            self.collection
+                                .function_accesses
                                 .get(canonical)
                                 .is_some_and(|access| Self::access_boundary_allows(origin, access))
                         })
@@ -409,13 +423,14 @@ impl Analyzer {
         member: &str,
         origin: &ItemOrigin,
     ) -> bool {
-        self.constructor_trait_impl_methods
+        self.collection
+            .constructor_trait_impl_methods
             .iter()
             .any(|(key, methods)| {
                 if key.target.name != target {
                     return false;
                 }
-                let Some(schema) = self.traits.get(&key.trait_ref.name) else {
+                let Some(schema) = self.collection.traits.get(&key.trait_ref.name) else {
                     return false;
                 };
                 let method_ids = schema
@@ -429,7 +444,8 @@ impl Analyzer {
                         .get(&method_id)
                         .is_some_and(|function| !schema_function_has_receiver(function))
                         && methods.get(&method_id).is_some_and(|canonical| {
-                            self.function_accesses
+                            self.collection
+                                .function_accesses
                                 .get(canonical)
                                 .is_some_and(|access| !Self::access_boundary_allows(origin, access))
                         })
@@ -448,11 +464,13 @@ impl Analyzer {
         member: &str,
         origin: &ItemOrigin,
     ) -> bool {
-        self.trait_methods_by_receiver
+        self.collection
+            .trait_methods_by_receiver
             .get(&(receiver.clone(), member.to_owned()))
             .is_some_and(|candidates| {
                 candidates.iter().any(|candidate| {
-                    self.trait_impls
+                    self.collection
+                        .trait_impls
                         .get(candidate)
                         .is_some_and(|implementation| {
                             !Self::access_boundary_allows(origin, &implementation.access)

@@ -97,6 +97,7 @@ impl Analyzer {
     ) -> Vec<BinaryOperatorCandidate> {
         let trait_name = self.lang_item_name(operator_trait.lang_item);
         if !self
+            .collection
             .traits
             .get(trait_name)
             .is_some_and(|schema| schema.valid)
@@ -105,6 +106,7 @@ impl Analyzer {
         }
 
         let mut candidates = self
+            .collection
             .trait_impls
             .values()
             .filter_map(|implementation| {
@@ -190,12 +192,16 @@ impl Analyzer {
         origin: &ItemOrigin,
     ) -> Option<(String, Ty)> {
         let trait_name = self.lang_item_name(operator.lang_item);
-        let implementation = self.trait_impls.values().find(|implementation| {
-            implementation.key.self_ty == *receiver
-                && implementation.key.trait_ref.name == trait_name
-                && implementation.key.trait_ref.arguments.is_empty()
-                && Self::access_boundary_allows(origin, &implementation.access)
-        })?;
+        let implementation = self
+            .collection
+            .trait_impls
+            .values()
+            .find(|implementation| {
+                implementation.key.self_ty == *receiver
+                    && implementation.key.trait_ref.name == trait_name
+                    && implementation.key.trait_ref.arguments.is_empty()
+                    && Self::access_boundary_allows(origin, &implementation.access)
+            })?;
         let method = implementation.methods.get(operator.method())?.clone();
         let output = implementation.associated_types.get("output")?.clone();
         expected
@@ -292,7 +298,7 @@ impl Analyzer {
         let trait_display_name = operator_trait.lang_item.source_name();
         let method_name = operator_trait.method();
         let spelling = binary_spelling(operator_trait.operator);
-        let Some(schema) = self.traits.get(&trait_name) else {
+        let Some(schema) = self.collection.traits.get(&trait_name) else {
             self.error(format!(
                 "operator `{spelling}` for `{receiver}` requires the core `{trait_display_name}` trait"
             ));
@@ -351,7 +357,7 @@ impl Analyzer {
             }
         };
 
-        let Some(signature) = self.signatures.get(&candidate.method).cloned() else {
+        let Some(signature) = self.lowering.signatures.get(&candidate.method).cloned() else {
             self.error(format!(
                 "internal error: `{trait_display_name}.{method_name}` implementation has no function signature"
             ));
@@ -377,7 +383,9 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if !self.functions.contains_key(&candidate.method) && primitive_scalar_type(receiver) {
+        if !self.collection.functions.contains_key(&candidate.method)
+            && primitive_scalar_type(receiver)
+        {
             let left = match left {
                 BinaryOperatorLeft::Source(left) => self.lower_expr(left, Some(receiver), context),
                 BinaryOperatorLeft::Lowered(left) => *left,
@@ -503,7 +511,7 @@ impl Analyzer {
             ));
             return error_expr();
         };
-        let Some(signature) = self.signatures.get(&method).cloned() else {
+        let Some(signature) = self.lowering.signatures.get(&method).cloned() else {
             self.error(format!(
                 "internal error: `{trait_name}.{}` implementation has no function signature",
                 operator.method()
@@ -523,7 +531,7 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if !self.functions.contains_key(&method) && primitive_scalar_type(receiver) {
+        if !self.collection.functions.contains_key(&method) && primitive_scalar_type(receiver) {
             let operand = self.lower_expr(operand, Some(receiver), context);
             return HirExpr {
                 ty: output,
@@ -667,7 +675,7 @@ impl Analyzer {
             }
         };
         if let Some(operator_trait) = binary_operator_trait(operator) {
-            let implemented = self.trait_impls.keys().any(|key| {
+            let implemented = self.collection.trait_impls.keys().any(|key| {
                 key.self_ty == left.ty
                     && key.trait_ref.name == self.lang_item_name(operator_trait.lang_item)
                     && key.trait_ref.arguments.as_slice() == [right.ty.clone()]

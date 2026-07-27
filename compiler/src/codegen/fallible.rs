@@ -61,7 +61,7 @@ impl Analyzer {
         let Ty::Enum(canonical) = ty else {
             return None;
         };
-        let instance = self.nominal_instances.get(canonical)?;
+        let instance = self.collection.nominal_instances.get(canonical)?;
         if instance.key.kind != NominalKind::Enum {
             return None;
         }
@@ -241,7 +241,7 @@ impl Analyzer {
         kind: StandardFallibleKind,
         enum_name: &str,
     ) -> Option<CompileParam> {
-        let template = self.enum_templates.get(enum_name)?;
+        let template = self.collection.enum_templates.get(enum_name)?;
         let payload_variant = match kind {
             StandardFallibleKind::Option => "some",
             StandardFallibleKind::Result => "ok",
@@ -282,7 +282,7 @@ impl Analyzer {
                 .flat_map(|group| group.iter())
                 .find(|argument| argument.label.as_deref() == Some(parameter_name));
         }
-        let position = self.enum_templates[owner]
+        let position = self.collection.enum_templates[owner]
             .compile_groups
             .iter()
             .flatten()

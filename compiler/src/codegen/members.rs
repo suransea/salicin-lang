@@ -40,6 +40,7 @@ impl Analyzer {
         }
         if let Expr::Name(target) = base {
             if let Some(canonical) = self
+                .collection
                 .inherent_members
                 .get(target)
                 .and_then(|members| members.constants.get(member))
@@ -51,10 +52,11 @@ impl Analyzer {
                 };
             }
             if !context.shadows_top_level_name(target)
-                && (self.struct_layouts.contains_key(target)
-                    || self.enum_layouts.contains_key(target))
+                && (self.collection.struct_layouts.contains_key(target)
+                    || self.collection.enum_layouts.contains_key(target))
             {
                 if let Some(canonical) = self
+                    .collection
                     .inherent_members
                     .get(target)
                     .and_then(|members| members.constants.get(member))
@@ -66,6 +68,7 @@ impl Analyzer {
                     };
                 }
                 if self
+                    .collection
                     .inherent_members
                     .get(target)
                     .is_some_and(|members| members.functions.contains_key(member))
@@ -77,7 +80,7 @@ impl Analyzer {
                 }
             }
             if !context.shadows_top_level_name(target) {
-                if let Some(layout) = self.enum_layouts.get(target).cloned() {
+                if let Some(layout) = self.collection.enum_layouts.get(target).cloned() {
                     if let Some((variant, variant_layout)) = layout
                         .variants
                         .iter()
@@ -100,6 +103,7 @@ impl Analyzer {
                         };
                     }
                     if self
+                        .collection
                         .inherent_members
                         .get(target)
                         .is_some_and(|members| members.methods.contains_key(member))
@@ -114,8 +118,9 @@ impl Analyzer {
                     ));
                     return error_expr();
                 }
-                if self.struct_layouts.contains_key(target) {
+                if self.collection.struct_layouts.contains_key(target) {
                     if self
+                        .collection
                         .inherent_members
                         .get(target)
                         .is_some_and(|members| members.methods.contains_key(member))
@@ -160,6 +165,7 @@ impl Analyzer {
             }
             if let Ty::Struct(target) | Ty::Enum(target) = &place.ty {
                 if self
+                    .collection
                     .inherent_members
                     .get(target)
                     .is_some_and(|members| members.methods.contains_key(member))
@@ -170,22 +176,26 @@ impl Analyzer {
                     return error_expr();
                 }
                 let has_field = self
+                    .collection
                     .struct_layouts
                     .get(target)
                     .is_some_and(|layout| layout.fields.iter().any(|field| field.name == member));
                 if !has_field {
                     if self
+                        .collection
                         .inherent_members
                         .get(target)
                         .is_some_and(|members| members.constants.contains_key(member))
                     {
-                        let canonical = self.inherent_members[target].constants[member].clone();
+                        let canonical =
+                            self.collection.inherent_members[target].constants[member].clone();
                         return HirExpr {
                             ty: self.global_type(&canonical),
                             kind: HirExprKind::Global(canonical),
                         };
                     }
                     if self
+                        .collection
                         .inherent_members
                         .get(target)
                         .is_some_and(|members| members.functions.contains_key(member))
@@ -301,6 +311,7 @@ impl Analyzer {
         member: &str,
     ) -> HirExpr {
         if let Some(canonical) = self
+            .collection
             .inherent_members
             .get(target)
             .and_then(|members| members.constants.get(member))
@@ -312,6 +323,7 @@ impl Analyzer {
             };
         }
         if self
+            .collection
             .inherent_members
             .get(target)
             .is_some_and(|members| members.functions.contains_key(member))
@@ -348,6 +360,7 @@ impl Analyzer {
             }
         }
         if self
+            .collection
             .inherent_members
             .get(target)
             .is_some_and(|members| members.methods.contains_key(member))

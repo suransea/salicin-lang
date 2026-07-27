@@ -9,29 +9,31 @@ use super::Analyzer;
 
 impl Analyzer {
     pub(super) fn collect_nominal_layouts(&mut self) {
-        for name in self.struct_order.clone() {
+        for name in self.collection.struct_order.clone() {
             let is_ready = self
+                .collection
                 .nominal_instances
                 .get(&name)
-                .and_then(|instance| self.nominal_instance_states.get(&instance.key))
+                .and_then(|instance| self.collection.nominal_instance_states.get(&instance.key))
                 == Some(&NominalInstanceState::Ready);
             if is_ready {
                 continue;
             }
-            let definition = self.struct_defs[&name].clone();
+            let definition = self.collection.struct_defs[&name].clone();
             self.build_struct_layout(&name, definition);
         }
 
-        for name in self.enum_order.clone() {
+        for name in self.collection.enum_order.clone() {
             let is_ready = self
+                .collection
                 .nominal_instances
                 .get(&name)
-                .and_then(|instance| self.nominal_instance_states.get(&instance.key))
+                .and_then(|instance| self.collection.nominal_instance_states.get(&instance.key))
                 == Some(&NominalInstanceState::Ready);
             if is_ready {
                 continue;
             }
-            let definition = self.enum_defs[&name].clone();
+            let definition = self.collection.enum_defs[&name].clone();
             self.build_enum_layout(&name, definition);
         }
     }
@@ -56,7 +58,7 @@ impl Analyzer {
                 access: Self::effective_member_access(&owner_access, field.visibility),
             });
         }
-        self.struct_layouts.insert(
+        self.collection.struct_layouts.insert(
             name.to_owned(),
             StructLayout {
                 name: name.to_owned(),
@@ -65,8 +67,9 @@ impl Analyzer {
                 fields,
             },
         );
-        if let Some(info) = self.nominal_instances.get(name) {
-            self.nominal_instance_states
+        if let Some(info) = self.collection.nominal_instances.get(name) {
+            self.collection
+                .nominal_instance_states
                 .insert(info.key.clone(), NominalInstanceState::Ready);
         }
     }
@@ -128,15 +131,16 @@ impl Analyzer {
             });
             payload_offset += field_count;
         }
-        self.enum_layouts.insert(
+        self.collection.enum_layouts.insert(
             name.to_owned(),
             EnumLayout {
                 name: name.to_owned(),
                 variants,
             },
         );
-        if let Some(info) = self.nominal_instances.get(name) {
-            self.nominal_instance_states
+        if let Some(info) = self.collection.nominal_instances.get(name) {
+            self.collection
+                .nominal_instance_states
                 .insert(info.key.clone(), NominalInstanceState::Ready);
         }
     }
@@ -145,9 +149,10 @@ impl Analyzer {
         let mut states = HashMap::new();
         let mut stack = Vec::new();
         let names: Vec<_> = self
+            .collection
             .struct_order
             .iter()
-            .chain(&self.enum_order)
+            .chain(&self.collection.enum_order)
             .cloned()
             .collect();
         for name in names {
@@ -177,22 +182,23 @@ impl Analyzer {
         }
         states.insert(name.to_owned(), 1);
         stack.push(name.to_owned());
-        let dependencies: Vec<String> = if let Some(layout) = self.struct_layouts.get(name) {
-            layout
-                .fields
-                .iter()
-                .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
-                .collect()
-        } else if let Some(layout) = self.enum_layouts.get(name) {
-            layout
-                .variants
-                .iter()
-                .flat_map(|variant| &variant.fields)
-                .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let dependencies: Vec<String> =
+            if let Some(layout) = self.collection.struct_layouts.get(name) {
+                layout
+                    .fields
+                    .iter()
+                    .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
+                    .collect()
+            } else if let Some(layout) = self.collection.enum_layouts.get(name) {
+                layout
+                    .variants
+                    .iter()
+                    .flat_map(|variant| &variant.fields)
+                    .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         for dependency in dependencies {
             self.visit_nominal_layout(&dependency, states, stack);
         }
@@ -201,10 +207,10 @@ impl Analyzer {
     }
 
     pub(super) fn struct_layout_or_diagnostic(&mut self, name: &str) -> Option<StructLayout> {
-        if let Some(layout) = self.struct_layouts.get(name) {
+        if let Some(layout) = self.collection.struct_layouts.get(name) {
             return Some(layout.clone());
         }
-        if let Some(parameter) = self.abstract_type_parameters.get(name).cloned() {
+        if let Some(parameter) = self.collection.abstract_type_parameters.get(name).cloned() {
             self.error(format!(
                 "generic parameter `{parameter}` has no known fields or struct layout"
             ));
@@ -217,10 +223,10 @@ impl Analyzer {
     }
 
     pub(super) fn enum_layout_or_diagnostic(&mut self, name: &str) -> Option<EnumLayout> {
-        if let Some(layout) = self.enum_layouts.get(name) {
+        if let Some(layout) = self.collection.enum_layouts.get(name) {
             return Some(layout.clone());
         }
-        if let Some(parameter) = self.abstract_type_parameters.get(name).cloned() {
+        if let Some(parameter) = self.collection.abstract_type_parameters.get(name).cloned() {
             self.error(format!(
                 "generic parameter `{parameter}` has no known variants or enum layout"
             ));

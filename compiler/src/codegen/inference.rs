@@ -29,6 +29,7 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<(String, usize)> {
         let template = self
+            .collection
             .function_templates
             .get(name)
             .unwrap_or_else(|| panic!("missing generic function template `{name}`"))
@@ -162,7 +163,7 @@ impl Analyzer {
             let Type::Named(trait_name, trait_arguments) = &predicate.trait_ref else {
                 continue;
             };
-            let Some(schema) = self.traits.get(trait_name) else {
+            let Some(schema) = self.collection.traits.get(trait_name) else {
                 continue;
             };
             if !trait_arguments.iter().zip(&schema.compile_parameters).any(
@@ -180,6 +181,7 @@ impl Analyzer {
                 continue;
             };
             let candidates = self
+                .collection
                 .trait_impls
                 .values()
                 .filter(|implementation| {
@@ -337,7 +339,8 @@ impl Analyzer {
                             Ty::Struct(name) | Ty::Enum(name) => name,
                             _ => return Err(mismatch()),
                         };
-                        let Some(instance) = self.nominal_instances.get(actual_name) else {
+                        let Some(instance) = self.collection.nominal_instances.get(actual_name)
+                        else {
                             return Err(mismatch());
                         };
                         let actual_sources = instance
@@ -838,7 +841,7 @@ impl Analyzer {
                 if arguments.is_empty() && name == actual_name {
                     return Ok(false);
                 }
-                if let Some(instance) = self.nominal_instances.get(actual_name) {
+                if let Some(instance) = self.collection.nominal_instances.get(actual_name) {
                     if instance.key.kind != actual_kind
                         || instance.key.template != *name
                         || instance.key.arguments.len() != arguments.len()
@@ -1118,35 +1121,39 @@ impl Analyzer {
                         self.resolved_template_ty(argument, compile_parameters, inferred)
                     })
                     .collect::<Option<Vec<_>>>()?;
-                if self.struct_templates.contains_key(name) {
+                if self.collection.struct_templates.contains_key(name) {
                     let key = NominalInstanceKey {
                         kind: NominalKind::Struct,
                         template: name.clone(),
                         arguments,
                     };
                     Some(Ty::Struct(
-                        self.nominal_instance_names
+                        self.collection
+                            .nominal_instance_names
                             .get(&key)
                             .cloned()
                             .unwrap_or_else(|| nominal_instance_name(&key)),
                     ))
-                } else if self.enum_templates.contains_key(name) {
+                } else if self.collection.enum_templates.contains_key(name) {
                     let key = NominalInstanceKey {
                         kind: NominalKind::Enum,
                         template: name.clone(),
                         arguments,
                     };
                     Some(Ty::Enum(
-                        self.nominal_instance_names
+                        self.collection
+                            .nominal_instance_names
                             .get(&key)
                             .cloned()
                             .unwrap_or_else(|| nominal_instance_name(&key)),
                     ))
-                } else if arguments.is_empty() && self.struct_defs.contains_key(name) {
+                } else if arguments.is_empty() && self.collection.struct_defs.contains_key(name) {
                     Some(Ty::Struct(name.clone()))
-                } else if arguments.is_empty() && self.enum_defs.contains_key(name) {
+                } else if arguments.is_empty() && self.collection.enum_defs.contains_key(name) {
                     Some(Ty::Enum(name.clone()))
-                } else if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) {
+                } else if arguments.is_empty()
+                    && self.collection.abstract_type_parameters.contains_key(name)
+                {
                     Some(Ty::Struct(name.clone()))
                 } else {
                     None
@@ -1303,7 +1310,7 @@ impl Analyzer {
                             {
                                 effect_row_source(true, None, &[])
                             }
-                            Expr::Name(name) if self.effects.contains(name) => {
+                            Expr::Name(name) if self.collection.effects.contains(name) => {
                                 effect_row_source(false, None, std::slice::from_ref(name))
                             }
                             Expr::Name(name) if effect_row_from_marker(name).is_some() => {
@@ -1322,7 +1329,7 @@ impl Analyzer {
                             Expr::Call(callee, arguments)
                                 if matches!(
                                     callee.as_ref(),
-                                    Expr::Name(name) if self.effects.contains(name)
+                                    Expr::Name(name) if self.collection.effects.contains(name)
                                 ) =>
                             {
                                 let Expr::Name(name) = callee.as_ref() else {
@@ -1488,7 +1495,8 @@ impl Analyzer {
                                     if mutable { "mut" } else { "shared" }.to_owned()
                                 })
                             } else {
-                                self.closed_type_values
+                                self.collection
+                                    .closed_type_values
                                     .get(compile_type)
                                     .and_then(|members| {
                                         closed_value_member(compile_type, &member, members)
@@ -1570,6 +1578,7 @@ impl Analyzer {
                 (&parameter.kind, &parameter.default)
             {
                 if self
+                    .collection
                     .closed_type_values
                     .get(compile_type)
                     .is_some_and(|members| members.contains(member))
@@ -1688,6 +1697,7 @@ impl Analyzer {
                 (&parameter.kind, &parameter.default)
             {
                 if self
+                    .collection
                     .closed_type_values
                     .get(compile_type)
                     .is_some_and(|members| members.contains(member))

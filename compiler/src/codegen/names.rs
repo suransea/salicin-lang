@@ -27,6 +27,7 @@ impl Analyzer {
             }
         }
         let source = self
+            .collection
             .function_instances
             .get(name)
             .map_or(name, |instance| instance.key.template.as_str());
@@ -376,7 +377,7 @@ fn function_abi_encoding(analyzer: &Analyzer, name: &str, function: &HirFunction
         &mut encoded,
         &value_abi_encoding(&analyzer.stable_abi_type(&function.result)),
     );
-    if let Some(signature) = analyzer.signatures.get(name) {
+    if let Some(signature) = analyzer.lowering.signatures.get(name) {
         encoded.push_str(if signature.unsafety {
             "unsafe:"
         } else {
@@ -487,6 +488,7 @@ impl Analyzer {
 
     fn stable_abi_nominal_name(&self, name: &str) -> String {
         let package = self
+            .collection
             .nominal_accesses
             .get(name)
             .map_or(self.primary_package, |access| access.origin.package);

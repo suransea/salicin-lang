@@ -24,7 +24,7 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &LowerCtx,
     ) -> Option<(String, usize)> {
-        let template = self.struct_templates[name].clone();
+        let template = self.collection.struct_templates[name].clone();
         if !self.require_source_fields_access(name, &template.fields, &context.origin) {
             return None;
         }
@@ -161,10 +161,12 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return None;
         };
-        if context.shadows_top_level_name(name) || !self.enum_templates.contains_key(name) {
+        if context.shadows_top_level_name(name)
+            || !self.collection.enum_templates.contains_key(name)
+        {
             return None;
         }
-        let compile_group_count = self.enum_templates[name].compile_groups.len();
+        let compile_group_count = self.collection.enum_templates[name].compile_groups.len();
         if groups.len() > compile_group_count {
             return None;
         }
@@ -180,7 +182,7 @@ impl Analyzer {
         hints: InferredEnumHints<'_>,
         context: &LowerCtx,
     ) -> Option<String> {
-        let template = self.enum_templates[name].clone();
+        let template = self.collection.enum_templates[name].clone();
         let (compile_parameters, mut inferred, consumed_groups) = self
             .seed_type_argument_inference(
                 name,
@@ -399,14 +401,15 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &LowerCtx,
     ) -> Option<(String, usize, NominalKind)> {
-        let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
-            (NominalKind::Struct, template.compile_groups.clone())
-        } else if let Some(template) = self.enum_templates.get(name) {
-            (NominalKind::Enum, template.compile_groups.clone())
-        } else {
-            self.error(format!("unknown generic nominal type `{name}`"));
-            return None;
-        };
+        let (kind, compile_groups) =
+            if let Some(template) = self.collection.struct_templates.get(name) {
+                (NominalKind::Struct, template.compile_groups.clone())
+            } else if let Some(template) = self.collection.enum_templates.get(name) {
+                (NominalKind::Enum, template.compile_groups.clone())
+            } else {
+                self.error(format!("unknown generic nominal type `{name}`"));
+                return None;
+            };
         let (compile_parameters, inferred, consumed_groups) =
             self.seed_type_argument_inference(name, &compile_groups, groups, context, true)?;
         if consumed_groups != groups.len() {
@@ -437,12 +440,12 @@ impl Analyzer {
                 Err(())
             }
             Expr::Name(name) if !context.shadows_top_level_name(name) => {
-                if self.struct_layouts.contains_key(name) {
+                if self.collection.struct_layouts.contains_key(name) {
                     Ok(Some((name.clone(), NominalKind::Struct)))
-                } else if self.enum_layouts.contains_key(name) {
+                } else if self.collection.enum_layouts.contains_key(name) {
                     Ok(Some((name.clone(), NominalKind::Enum)))
-                } else if self.struct_templates.contains_key(name)
-                    || self.enum_templates.contains_key(name)
+                } else if self.collection.struct_templates.contains_key(name)
+                    || self.collection.enum_templates.contains_key(name)
                 {
                     self.error(format!(
                         "generic type `{name}` requires explicit type arguments"
@@ -464,16 +467,17 @@ impl Analyzer {
                     ));
                     return Err(());
                 }
-                if !self.struct_templates.contains_key(name)
-                    && !self.enum_templates.contains_key(name)
+                if !self.collection.struct_templates.contains_key(name)
+                    && !self.collection.enum_templates.contains_key(name)
                 {
                     return Ok(None);
                 }
-                let expected_groups = if let Some(template) = self.struct_templates.get(name) {
-                    template.compile_groups.clone()
-                } else {
-                    self.enum_templates[name].compile_groups.clone()
-                };
+                let expected_groups =
+                    if let Some(template) = self.collection.struct_templates.get(name) {
+                        template.compile_groups.clone()
+                    } else {
+                        self.collection.enum_templates[name].compile_groups.clone()
+                    };
                 if groups.len() > expected_groups.len() {
                     return Ok(None);
                 }
@@ -529,51 +533,58 @@ impl Analyzer {
 
     pub(super) fn snapshot_nominals(&self) -> NominalSnapshot {
         NominalSnapshot {
-            struct_defs: self.struct_defs.clone(),
-            enum_defs: self.enum_defs.clone(),
-            struct_layouts: self.struct_layouts.clone(),
-            enum_layouts: self.enum_layouts.clone(),
-            nominal_accesses: self.nominal_accesses.clone(),
-            struct_order: self.struct_order.clone(),
-            enum_order: self.enum_order.clone(),
-            instance_names: self.nominal_instance_names.clone(),
-            instances: self.nominal_instances.clone(),
-            states: self.nominal_instance_states.clone(),
-            invalid_recursive_nominals: self.invalid_recursive_nominals.clone(),
+            struct_defs: self.collection.struct_defs.clone(),
+            enum_defs: self.collection.enum_defs.clone(),
+            struct_layouts: self.collection.struct_layouts.clone(),
+            enum_layouts: self.collection.enum_layouts.clone(),
+            nominal_accesses: self.collection.nominal_accesses.clone(),
+            struct_order: self.collection.struct_order.clone(),
+            enum_order: self.collection.enum_order.clone(),
+            instance_names: self.collection.nominal_instance_names.clone(),
+            instances: self.collection.nominal_instances.clone(),
+            states: self.collection.nominal_instance_states.clone(),
+            invalid_recursive_nominals: self.collection.invalid_recursive_nominals.clone(),
         }
     }
 
     pub(super) fn restore_nominals(&mut self, snapshot: NominalSnapshot) {
-        self.struct_defs = snapshot.struct_defs;
-        self.enum_defs = snapshot.enum_defs;
-        self.struct_layouts = snapshot.struct_layouts;
-        self.enum_layouts = snapshot.enum_layouts;
-        self.nominal_accesses = snapshot.nominal_accesses;
-        self.struct_order = snapshot.struct_order;
-        self.enum_order = snapshot.enum_order;
-        self.nominal_instance_names = snapshot.instance_names;
-        self.nominal_instances = snapshot.instances;
-        self.nominal_instance_states = snapshot.states;
-        self.invalid_recursive_nominals = snapshot.invalid_recursive_nominals;
+        self.collection.struct_defs = snapshot.struct_defs;
+        self.collection.enum_defs = snapshot.enum_defs;
+        self.collection.struct_layouts = snapshot.struct_layouts;
+        self.collection.enum_layouts = snapshot.enum_layouts;
+        self.collection.nominal_accesses = snapshot.nominal_accesses;
+        self.collection.struct_order = snapshot.struct_order;
+        self.collection.enum_order = snapshot.enum_order;
+        self.collection.nominal_instance_names = snapshot.instance_names;
+        self.collection.nominal_instances = snapshot.instances;
+        self.collection.nominal_instance_states = snapshot.states;
+        self.collection.invalid_recursive_nominals = snapshot.invalid_recursive_nominals;
     }
 
     pub(super) fn validate_generic_nominal_cycles(&mut self) {
         let nominal_names: HashSet<_> = self
+            .collection
             .struct_defs
             .keys()
-            .chain(self.enum_defs.keys())
-            .chain(self.struct_templates.keys())
-            .chain(self.enum_templates.keys())
+            .chain(self.collection.enum_defs.keys())
+            .chain(self.collection.struct_templates.keys())
+            .chain(self.collection.enum_templates.keys())
             .cloned()
             .collect();
         let generic_names: HashSet<_> = self
+            .collection
             .struct_templates
             .keys()
-            .chain(self.enum_templates.keys())
+            .chain(self.collection.enum_templates.keys())
             .cloned()
             .collect();
         let mut dependencies = HashMap::new();
-        for (name, definition) in self.struct_defs.iter().chain(&self.struct_templates) {
+        for (name, definition) in self
+            .collection
+            .struct_defs
+            .iter()
+            .chain(&self.collection.struct_templates)
+        {
             let bound: HashSet<_> = definition
                 .compile_groups
                 .iter()
@@ -586,7 +597,12 @@ impl Analyzer {
             }
             dependencies.insert(name.clone(), direct);
         }
-        for (name, definition) in self.enum_defs.iter().chain(&self.enum_templates) {
+        for (name, definition) in self
+            .collection
+            .enum_defs
+            .iter()
+            .chain(&self.collection.enum_templates)
+        {
             let bound: HashSet<_> = definition
                 .compile_groups
                 .iter()
@@ -654,7 +670,9 @@ impl Analyzer {
                 if cycle.iter().any(|item| generic_names.contains(item)) {
                     for item in &cycle {
                         if generic_names.contains(item) {
-                            self.invalid_recursive_nominals.insert(item.clone());
+                            self.collection
+                                .invalid_recursive_nominals
+                                .insert(item.clone());
                         }
                     }
                     self.error(format!(
@@ -685,27 +703,33 @@ impl Analyzer {
 
     pub(super) fn validate_nominal_templates(&mut self) {
         let templates: Vec<_> = self
+            .collection
             .struct_template_order
             .iter()
             .map(|name| (NominalKind::Struct, name.clone()))
             .chain(
-                self.enum_template_order
+                self.collection
+                    .enum_template_order
                     .iter()
                     .map(|name| (NominalKind::Enum, name.clone())),
             )
             .collect();
         for (kind, template_name) in templates {
-            if self.invalid_recursive_nominals.contains(&template_name) {
+            if self
+                .collection
+                .invalid_recursive_nominals
+                .contains(&template_name)
+            {
                 continue;
             }
             let parameters = match kind {
-                NominalKind::Struct => self.struct_templates[&template_name]
+                NominalKind::Struct => self.collection.struct_templates[&template_name]
                     .compile_groups
                     .iter()
                     .flatten()
                     .cloned()
                     .collect::<Vec<_>>(),
-                NominalKind::Enum => self.enum_templates[&template_name]
+                NominalKind::Enum => self.collection.enum_templates[&template_name]
                     .compile_groups
                     .iter()
                     .flatten()
@@ -719,7 +743,8 @@ impl Analyzer {
                     Sort::Type => {
                         let owner = format!("nominal::{template_name}");
                         let marker = generic_parameter_marker(&owner, index, &parameter.name);
-                        self.abstract_type_parameters
+                        self.collection
+                            .abstract_type_parameters
                             .insert(marker.clone(), parameter.name.clone());
                         source_arguments.push(Type::Named(marker.clone(), Vec::new()));
                         arguments.push(Ty::Struct(marker));
@@ -734,6 +759,7 @@ impl Analyzer {
                     }
                     Sort::Named(ref compile_type) => {
                         let Some(member) = self
+                            .collection
                             .closed_type_values
                             .get(compile_type)
                             .and_then(|members| members.first())
@@ -767,19 +793,24 @@ impl Analyzer {
                 continue;
             }
             let snapshot = self.snapshot_nominals();
-            self.suppress_generic_inherent_instantiation += 1;
+            self.collection.suppress_generic_inherent_instantiation += 1;
             let instance =
                 self.ensure_nominal_instance(kind, &template_name, source_arguments, arguments);
-            self.suppress_generic_inherent_instantiation -= 1;
+            self.collection.suppress_generic_inherent_instantiation -= 1;
             if let Some(canonical) = instance {
                 let mut states = HashMap::new();
                 let mut stack = Vec::new();
                 self.visit_nominal_layout(&canonical, &mut states, &mut stack);
             }
-            let dynamically_invalid = self.invalid_recursive_nominals.contains(&template_name);
+            let dynamically_invalid = self
+                .collection
+                .invalid_recursive_nominals
+                .contains(&template_name);
             self.restore_nominals(snapshot);
             if dynamically_invalid {
-                self.invalid_recursive_nominals.insert(template_name);
+                self.collection
+                    .invalid_recursive_nominals
+                    .insert(template_name);
             }
         }
     }
@@ -791,7 +822,11 @@ impl Analyzer {
         source_arguments: Vec<Type>,
         arguments: Vec<Ty>,
     ) -> Option<String> {
-        if self.invalid_recursive_nominals.contains(template_name) {
+        if self
+            .collection
+            .invalid_recursive_nominals
+            .contains(template_name)
+        {
             return None;
         }
         let key = NominalInstanceKey {
@@ -799,12 +834,12 @@ impl Analyzer {
             template: template_name.to_owned(),
             arguments,
         };
-        if let Some(canonical) = self.nominal_instance_names.get(&key) {
+        if let Some(canonical) = self.collection.nominal_instance_names.get(&key) {
             let canonical = canonical.clone();
-            let info = &self.nominal_instances[&canonical];
+            let info = &self.collection.nominal_instances[&canonical];
             debug_assert_eq!(info.key, key);
             debug_assert_eq!(info.canonical, canonical);
-            match self.nominal_instance_states.get(&key) {
+            match self.collection.nominal_instance_states.get(&key) {
                 Some(NominalInstanceState::Ready) => {
                     self.instantiate_generic_trait_extensions_for_instance(
                         template_name,
@@ -817,7 +852,8 @@ impl Analyzer {
                     self.error(format!(
                         "recursive generic value layout has infinite size while instantiating `{template_name}`"
                     ));
-                    self.invalid_recursive_nominals
+                    self.collection
+                        .invalid_recursive_nominals
                         .insert(template_name.to_owned());
                     return None;
                 }
@@ -830,41 +866,47 @@ impl Analyzer {
             }
         }
         let growing_recursive_instance =
-            self.nominal_instance_states.iter().any(|(active, state)| {
-                if *state != NominalInstanceState::Building
-                    || active.kind != kind
-                    || active.template != template_name
-                    || active.arguments.is_empty()
-                {
-                    return false;
-                }
-                let Some(active_canonical) = self.nominal_instance_names.get(active) else {
-                    return false;
-                };
-                let active_complexity = active
-                    .arguments
-                    .iter()
-                    .map(|argument| self.nominal_type_complexity(argument))
-                    .sum::<usize>();
-                let next_complexity = key
-                    .arguments
-                    .iter()
-                    .map(|argument| self.nominal_type_complexity(argument))
-                    .sum::<usize>();
-                key.arguments
-                    .iter()
-                    .any(|argument| ty_contains_nominal(argument, active_canonical))
-                    || next_complexity >= active_complexity
-            });
+            self.collection
+                .nominal_instance_states
+                .iter()
+                .any(|(active, state)| {
+                    if *state != NominalInstanceState::Building
+                        || active.kind != kind
+                        || active.template != template_name
+                        || active.arguments.is_empty()
+                    {
+                        return false;
+                    }
+                    let Some(active_canonical) = self.collection.nominal_instance_names.get(active)
+                    else {
+                        return false;
+                    };
+                    let active_complexity = active
+                        .arguments
+                        .iter()
+                        .map(|argument| self.nominal_type_complexity(argument))
+                        .sum::<usize>();
+                    let next_complexity = key
+                        .arguments
+                        .iter()
+                        .map(|argument| self.nominal_type_complexity(argument))
+                        .sum::<usize>();
+                    key.arguments
+                        .iter()
+                        .any(|argument| ty_contains_nominal(argument, active_canonical))
+                        || next_complexity >= active_complexity
+                });
         if growing_recursive_instance {
             self.error(format!(
                 "recursive generic value layout has infinite size while instantiating `{template_name}` with growing type arguments"
             ));
-            self.invalid_recursive_nominals
+            self.collection
+                .invalid_recursive_nominals
                 .insert(template_name.to_owned());
             return None;
         }
         let instance_count = self
+            .collection
             .nominal_instances
             .values()
             .filter(|instance| !instance.key.arguments.is_empty())
@@ -877,13 +919,13 @@ impl Analyzer {
         }
 
         let parameters = match kind {
-            NominalKind::Struct => self.struct_templates[template_name]
+            NominalKind::Struct => self.collection.struct_templates[template_name]
                 .compile_groups
                 .iter()
                 .flatten()
                 .cloned()
                 .collect::<Vec<_>>(),
-            NominalKind::Enum => self.enum_templates[template_name]
+            NominalKind::Enum => self.collection.enum_templates[template_name]
                 .compile_groups
                 .iter()
                 .flatten()
@@ -914,26 +956,28 @@ impl Analyzer {
         }
 
         let canonical = nominal_instance_name(&key);
-        if let Some(existing) = self.nominal_instances.get(&canonical) {
+        if let Some(existing) = self.collection.nominal_instances.get(&canonical) {
             self.error(format!(
                 "internal error: nominal instance name collision between `{}` and `{template_name}`",
                 existing.key.template
             ));
             return None;
         }
-        self.nominal_instance_names
+        self.collection
+            .nominal_instance_names
             .insert(key.clone(), canonical.clone());
-        self.nominal_instances.insert(
+        self.collection.nominal_instances.insert(
             canonical.clone(),
             NominalInstanceInfo {
                 key: key.clone(),
                 canonical: canonical.clone(),
             },
         );
-        self.nominal_instance_states
+        self.collection
+            .nominal_instance_states
             .insert(key.clone(), NominalInstanceState::Building);
         let access = self
-            .nominal_accesses
+            .collection.nominal_accesses
             .get(template_name)
             .cloned()
             .unwrap_or_else(|| {
@@ -945,49 +989,57 @@ impl Analyzer {
                     origin: ItemOrigin::default(),
                 }
             });
-        self.nominal_accesses.insert(canonical.clone(), access);
+        self.collection
+            .nominal_accesses
+            .insert(canonical.clone(), access);
 
         match kind {
             NominalKind::Struct => {
-                self.struct_layouts.insert(
+                self.collection.struct_layouts.insert(
                     canonical.clone(),
                     StructLayout {
                         name: canonical.clone(),
                         source_name: template_name.to_owned(),
-                        representation: self.struct_templates[template_name].representation,
+                        representation: self.collection.struct_templates[template_name]
+                            .representation,
                         fields: Vec::new(),
                     },
                 );
-                let mut definition = self.struct_templates[template_name].clone();
+                let mut definition = self.collection.struct_templates[template_name].clone();
                 substitute_struct_types(&mut definition, &substitutions);
                 definition.name = canonical.clone();
                 definition.compile_groups.clear();
-                self.struct_defs
+                self.collection
+                    .struct_defs
                     .insert(canonical.clone(), definition.clone());
                 self.build_struct_layout(&canonical, definition);
-                self.struct_order.push(canonical.clone());
+                self.collection.struct_order.push(canonical.clone());
             }
             NominalKind::Enum => {
-                self.enum_layouts.insert(
+                self.collection.enum_layouts.insert(
                     canonical.clone(),
                     EnumLayout {
                         name: canonical.clone(),
                         variants: Vec::new(),
                     },
                 );
-                let mut definition = self.enum_templates[template_name].clone();
+                let mut definition = self.collection.enum_templates[template_name].clone();
                 substitute_enum_types(&mut definition, &substitutions);
                 definition.name = canonical.clone();
                 definition.compile_groups.clear();
-                self.enum_defs.insert(canonical.clone(), definition.clone());
+                self.collection
+                    .enum_defs
+                    .insert(canonical.clone(), definition.clone());
                 self.build_enum_layout(&canonical, definition);
-                self.enum_order.push(canonical.clone());
+                self.collection.enum_order.push(canonical.clone());
             }
         }
-        self.nominal_instance_states
+        self.collection
+            .nominal_instance_states
             .insert(key, NominalInstanceState::Ready);
-        if self.suppress_generic_inherent_instantiation == 0 {
+        if self.collection.suppress_generic_inherent_instantiation == 0 {
             let extensions = self
+                .collection
                 .generic_inherent_extensions
                 .get(template_name)
                 .cloned()
@@ -1001,6 +1053,7 @@ impl Analyzer {
                 );
             }
             let trait_extensions = self
+                .collection
                 .generic_trait_extensions
                 .get(template_name)
                 .cloned()
@@ -1030,6 +1083,7 @@ impl Analyzer {
                 }
                 let nominal_complexity = canonical_type_encoding(ty).len();
                 let arguments = self
+                    .collection
                     .nominal_instances
                     .get(name)
                     .map(|instance| instance.key.arguments.as_slice())

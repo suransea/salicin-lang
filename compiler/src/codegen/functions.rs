@@ -16,7 +16,11 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn lower_function(&mut self, name: &str) -> Ty {
         let previous = self.current_origin.replace(Box::new(
-            self.function_origins.get(name).cloned().unwrap_or_default(),
+            self.collection
+                .function_origins
+                .get(name)
+                .cloned()
+                .unwrap_or_default(),
         ));
         let result = self.lower_function_with_origin(name);
         self.current_origin = previous;
@@ -24,11 +28,14 @@ impl Analyzer {
     }
 
     fn lower_function_with_origin(&mut self, name: &str) -> Ty {
-        if self.function_states.get(name) == Some(&ResolutionState::Resolved) {
-            return self.signatures[name].result.clone().unwrap_or(Ty::Error);
+        if self.lowering.function_states.get(name) == Some(&ResolutionState::Resolved) {
+            return self.lowering.signatures[name]
+                .result
+                .clone()
+                .unwrap_or(Ty::Error);
         }
-        if self.function_states.get(name) == Some(&ResolutionState::Resolving) {
-            if let Some(result) = self.signatures[name].result.clone() {
+        if self.lowering.function_states.get(name) == Some(&ResolutionState::Resolving) {
+            if let Some(result) = self.lowering.signatures[name].result.clone() {
                 return result;
             }
             self.error(format!(
@@ -37,11 +44,12 @@ impl Analyzer {
             return Ty::Error;
         }
 
-        self.function_states
+        self.lowering
+            .function_states
             .insert(name.to_owned(), ResolutionState::Resolving);
-        let function = self.functions[name].clone();
+        let function = self.collection.functions[name].clone();
         if function.foreign.is_some() {
-            let signature = self.signatures[name].clone();
+            let signature = self.lowering.signatures[name].clone();
             let result = signature.result.clone().unwrap_or(Ty::Error);
             let mut valid = signature.groups.len() == 1
                 && signature.failure_error.is_none()
@@ -65,17 +73,19 @@ impl Analyzer {
                 ));
                 valid = false;
             }
-            self.function_states
+            self.lowering
+                .function_states
                 .insert(name.to_owned(), ResolutionState::Resolved);
             let resolved = if valid { result } else { Ty::Error };
             self.set_function_result(name, resolved.clone());
             return resolved;
         }
-        let signature = self.signatures[name].clone();
+        let signature = self.lowering.signatures[name].clone();
         let mut context = LowerCtx::for_function(
             name,
             signature.result.clone(),
-            self.function_origins
+            self.collection
+                .function_origins
                 .get(name)
                 .cloned()
                 .expect("every registered function has source provenance"),
@@ -98,6 +108,7 @@ impl Analyzer {
             });
         }
         context.type_substitutions = self
+            .collection
             .function_type_substitutions
             .get(name)
             .cloned()
@@ -108,6 +119,7 @@ impl Analyzer {
             for (parameter_index, param) in group.iter().enumerate() {
                 self.validate_parameter_mode(name, param);
                 let runtime_ty = self
+                    .lowering
                     .runtime_handler_actions
                     .get(&(name.to_owned(), group_index, parameter_index))
                     .map(|action| Ty::EffectCallable {
@@ -215,21 +227,24 @@ impl Analyzer {
 
         let Some(body) = function.body.as_ref() else {
             if name.starts_with("$trait$impl$") {
-                self.function_states
+                self.lowering
+                    .function_states
                     .insert(name.to_owned(), ResolutionState::Resolved);
                 let result = signature.result.clone().unwrap_or(Ty::Error);
                 self.set_function_result(name, result.clone());
                 return result;
             }
             self.error(format!("function `{name}` has no body"));
-            self.function_states
+            self.lowering
+                .function_states
                 .insert(name.to_owned(), ResolutionState::Resolved);
             self.set_function_result(name, Ty::Error);
             return Ty::Error;
         };
 
         let body = self.lower_lexical_defers(body);
-        self.functions
+        self.collection
+            .functions
             .get_mut(name)
             .expect("lowered function exists")
             .body = Some(body.clone());
@@ -237,7 +252,8 @@ impl Analyzer {
             let Type::Named(effect_name, _) = effect else {
                 return false;
             };
-            self.effect_defs
+            self.collection
+                .effect_defs
                 .get(effect_name)
                 .is_some_and(|definition| !definition.operations.is_empty())
         });
@@ -249,10 +265,11 @@ impl Analyzer {
                 )
                 .is_some()
             });
-        let lifted_functions_before = self.lifted_functions.len();
-        let continuation_adapters_before = self.continuation_adapters.len();
-        let effect_callable_adapters_before = self.effect_callable_adapters.len();
-        let handler_frame_parameter_modes_before = self.handler_frame_parameter_modes.clone();
+        let lifted_functions_before = self.lowering.lifted_functions.len();
+        let continuation_adapters_before = self.lowering.continuation_adapters.len();
+        let effect_callable_adapters_before = self.lowering.effect_callable_adapters.len();
+        let handler_frame_parameter_modes_before =
+            self.lowering.handler_frame_parameter_modes.clone();
         let boundary = context.return_boundary.clone();
         let lowered_body = if let Some(boundary) = &boundary {
             self.lower_return_value(&body, boundary, &mut context)
@@ -293,7 +310,7 @@ impl Analyzer {
 
         self.set_function_result(name, result.clone());
         if !requires_resumable_lowering {
-            self.hir_functions.insert(
+            self.lowering.hir_functions.insert(
                 name.to_owned(),
                 HirFunction {
                     name: name.to_owned(),
@@ -303,14 +320,19 @@ impl Analyzer {
                 },
             );
         } else if standard_failure_requires_handler_lowering {
-            self.lifted_functions.truncate(lifted_functions_before);
-            self.continuation_adapters
+            self.lowering
+                .lifted_functions
+                .truncate(lifted_functions_before);
+            self.lowering
+                .continuation_adapters
                 .truncate(continuation_adapters_before);
-            self.effect_callable_adapters
+            self.lowering
+                .effect_callable_adapters
                 .truncate(effect_callable_adapters_before);
-            self.handler_frame_parameter_modes = handler_frame_parameter_modes_before;
+            self.lowering.handler_frame_parameter_modes = handler_frame_parameter_modes_before;
         }
-        self.function_states
+        self.lowering
+            .function_states
             .insert(name.to_owned(), ResolutionState::Resolved);
         result
     }
@@ -327,25 +349,31 @@ impl Analyzer {
     }
 
     fn set_function_result(&mut self, name: &str, result: Ty) {
-        if let Some(signature) = self.signatures.get_mut(name) {
+        if let Some(signature) = self.lowering.signatures.get_mut(name) {
             signature.result = Some(result);
         }
     }
 
     pub(super) fn function_type(&mut self, name: &str) -> Ty {
-        let Some(signature) = self.signatures.get(name) else {
+        let Some(signature) = self.lowering.signatures.get(name) else {
             self.error(format!("unknown function `{name}`"));
             return Ty::Error;
         };
         if signature.result.is_none() {
             self.lower_function(name);
         }
-        self.signatures[name].function_ty().unwrap_or(Ty::Error)
+        self.lowering.signatures[name]
+            .function_ty()
+            .unwrap_or(Ty::Error)
     }
 
     pub(super) fn lower_global(&mut self, name: &str) -> Ty {
         let previous = self.current_origin.replace(Box::new(
-            self.global_origins.get(name).cloned().unwrap_or_default(),
+            self.collection
+                .global_origins
+                .get(name)
+                .cloned()
+                .unwrap_or_default(),
         ));
         let result = self.lower_global_with_origin(name);
         self.current_origin = previous;
@@ -353,20 +381,22 @@ impl Analyzer {
     }
 
     fn lower_global_with_origin(&mut self, name: &str) -> Ty {
-        if self.global_states.get(name) == Some(&ResolutionState::Resolved) {
-            return self.hir_globals[name].ty.clone();
+        if self.lowering.global_states.get(name) == Some(&ResolutionState::Resolved) {
+            return self.lowering.hir_globals[name].ty.clone();
         }
-        if self.global_states.get(name) == Some(&ResolutionState::Resolving) {
+        if self.lowering.global_states.get(name) == Some(&ResolutionState::Resolving) {
             self.error(format!("cyclic global constant involving `{name}`"));
             return Ty::Error;
         }
-        self.global_states
+        self.lowering
+            .global_states
             .insert(name.to_owned(), ResolutionState::Resolving);
 
-        let binding = self.globals[name].clone();
-        let expected = self.global_annotations[name].clone();
+        let binding = self.collection.globals[name].clone();
+        let expected = self.lowering.global_annotations[name].clone();
         let mut context = LowerCtx::for_global(
-            self.global_origins
+            self.collection
+                .global_origins
                 .get(name)
                 .cloned()
                 .expect("every registered global has source provenance"),
@@ -381,14 +411,15 @@ impl Analyzer {
                 "global function values are not supported in M0 (`{name}`)"
             ));
         }
-        self.hir_globals.insert(
+        self.lowering.hir_globals.insert(
             name.to_owned(),
             HirGlobal {
                 name: name.to_owned(),
                 ty: ty.clone(),
             },
         );
-        self.global_states
+        self.lowering
+            .global_states
             .insert(name.to_owned(), ResolutionState::Resolved);
         ty
     }
@@ -398,7 +429,7 @@ impl Analyzer {
     }
 
     pub(super) fn validate_entry_point(&mut self) {
-        let Some(signature) = self.signatures.get("main").cloned() else {
+        let Some(signature) = self.lowering.signatures.get("main").cloned() else {
             self.error("binary program has no `main` function");
             return;
         };
@@ -406,15 +437,15 @@ impl Analyzer {
             Some(result) => result,
             None => self.lower_function("main"),
         };
-        let signature = self.signatures["main"].clone();
+        let signature = self.lowering.signatures["main"].clone();
         if signature.groups.len() != 1 || !signature.groups[0].is_empty() {
             self.error("`main` must have exactly one empty parameter group: `main()`");
         }
-        if self.function_effects_unsafe(&self.functions["main"].effects) {
+        if self.function_effects_unsafe(&self.collection.functions["main"].effects) {
             self.error("`main` cannot expose an unhandled `unsafe` effect");
         }
         if !self
-            .function_effects_custom_identities(&self.functions["main"].effects)
+            .function_effects_custom_identities(&self.collection.functions["main"].effects)
             .is_empty()
         {
             self.error("`main` cannot expose unhandled custom effects");
@@ -440,20 +471,20 @@ impl Analyzer {
             template: template_name.to_owned(),
             arguments,
         };
-        if let Some(canonical) = self.function_instance_names.get(&key) {
-            let info = &self.function_instances[canonical];
+        if let Some(canonical) = self.collection.function_instance_names.get(&key) {
+            let info = &self.collection.function_instances[canonical];
             debug_assert_eq!(info.key, key);
             debug_assert_eq!(info.canonical, *canonical);
             return Some(canonical.clone());
         }
-        if self.function_instances.len() >= MAX_FUNCTION_INSTANCES {
+        if self.collection.function_instances.len() >= MAX_FUNCTION_INSTANCES {
             self.error(format!(
                 "generic function instance limit of {MAX_FUNCTION_INSTANCES} exceeded while instantiating `{template_name}`"
             ));
             return None;
         }
 
-        let template = self.function_templates[template_name].clone();
+        let template = self.collection.function_templates[template_name].clone();
         let compile_parameters: Vec<_> = template.compile_groups.iter().flatten().collect();
         if compile_parameters.len() != source_arguments.len() {
             self.error(format!(
@@ -501,23 +532,25 @@ impl Analyzer {
         }
 
         let canonical = function_instance_name(&key);
-        if let Some(existing) = self.function_instances.get(&canonical) {
+        if let Some(existing) = self.collection.function_instances.get(&canonical) {
             self.error(format!(
                 "internal error: generic function instance name collision between `{}` and `{template_name}`",
                 existing.key.template
             ));
             return None;
         }
-        self.function_instance_names
+        self.collection
+            .function_instance_names
             .insert(key.clone(), canonical.clone());
-        self.function_instances.insert(
+        self.collection.function_instances.insert(
             canonical.clone(),
             FunctionInstanceInfo {
                 key,
                 canonical: canonical.clone(),
             },
         );
-        self.function_type_substitutions
+        self.collection
+            .function_type_substitutions
             .insert(canonical.clone(), substitutions.clone());
 
         function.name = canonical.clone();
@@ -545,7 +578,7 @@ impl Analyzer {
             .failure
             .as_deref()
             .map(|error| self.lower_source_type(error));
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             canonical.clone(),
             FunctionSig {
                 groups,
@@ -555,12 +588,14 @@ impl Analyzer {
                 result,
             },
         );
-        self.functions.insert(canonical.clone(), function);
-        self.function_origins.insert(
+        self.collection
+            .functions
+            .insert(canonical.clone(), function);
+        self.collection.function_origins.insert(
             canonical.clone(),
-            self.function_template_origins[template_name].clone(),
+            self.collection.function_template_origins[template_name].clone(),
         );
-        self.function_order.push(canonical.clone());
+        self.collection.function_order.push(canonical.clone());
         Some(canonical)
     }
 }

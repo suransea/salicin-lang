@@ -6,6 +6,7 @@ use crate::ast::{
 };
 use crate::core::LangItemKind;
 
+use super::async_source::*;
 use super::compile_time::source_type_from_identity;
 use super::effects::standard_failure_error_source;
 use super::hir::{
@@ -74,10 +75,15 @@ impl Analyzer {
         body: &Expr,
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
-        let mut source_plan = multiple_await_recurring_loop_source(body, self.next_async_future)
-            .or_else(|| simple_recurring_async_loop_source(body, self.next_async_future))
-            .or_else(|| general_unit_recurring_loop_source(body, self.next_async_future))
-            .unwrap_or_else(|| split_async_source(body));
+        let mut source_plan =
+            multiple_await_recurring_loop_source(body, self.lowering.next_async_future)
+                .or_else(|| {
+                    simple_recurring_async_loop_source(body, self.lowering.next_async_future)
+                })
+                .or_else(|| {
+                    general_unit_recurring_loop_source(body, self.lowering.next_async_future)
+                })
+                .unwrap_or_else(|| split_async_source(body));
         if !source_plan.has_await {
             if let Some(loop_source) = recurring_suspended_loop_source(body) {
                 let suspension = match (loop_source.condition_suspends, loop_source.body_suspends) {
@@ -189,7 +195,7 @@ impl Analyzer {
                 ));
             }
         }
-        self.async_factory_depth += 1;
+        self.lowering.async_factory_depth += 1;
         let lowered = self.lower_local_closure(
             &[],
             &source_plan.factory_body,
@@ -201,7 +207,7 @@ impl Analyzer {
             ClosureCapturePolicy::AsyncOwned,
             context,
         );
-        self.async_factory_depth -= 1;
+        self.lowering.async_factory_depth -= 1;
         let HirExprKind::LocalClosure(mut closure) = lowered.kind else {
             return lowered;
         };
@@ -624,13 +630,18 @@ impl Analyzer {
                 || awaited.source_loop_factory && awaited.loop_carry_types.is_empty())
                 && (!heterogeneous_branch
                     || match &awaited.ty {
-                        Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
-                            heterogeneous_branch_factory(
-                                &source_plan.factory_body,
-                                layout.variants.len(),
-                            )
-                            .is_some()
-                        }),
+                        Ty::Enum(name) => {
+                            self.collection
+                                .enum_layouts
+                                .get(name)
+                                .is_some_and(|layout| {
+                                    heterogeneous_branch_factory(
+                                        &source_plan.factory_body,
+                                        layout.variants.len(),
+                                    )
+                                    .is_some()
+                                })
+                        }
                         _ => false,
                     })
                 && closure
@@ -671,8 +682,8 @@ impl Analyzer {
             return super::lower::error_expr();
         }
 
-        let name = format!("$async$state${}", self.next_async_future);
-        self.next_async_future += 1;
+        let name = format!("$async$state${}", self.lowering.next_async_future);
+        self.lowering.next_async_future += 1;
         let access = AccessBoundary {
             visibility: Visibility::Private,
             origin: self
@@ -778,8 +789,10 @@ impl Analyzer {
             field
         });
 
-        self.nominal_accesses.insert(name.clone(), access);
-        self.struct_layouts.insert(
+        self.collection
+            .nominal_accesses
+            .insert(name.clone(), access);
+        self.collection.struct_layouts.insert(
             name.clone(),
             StructLayout {
                 name: name.clone(),
@@ -788,7 +801,7 @@ impl Analyzer {
                 fields,
             },
         );
-        self.struct_order.push(name.clone());
+        self.collection.struct_order.push(name.clone());
         let output = awaited
             .as_ref()
             .map(|awaited| {
@@ -834,7 +847,7 @@ impl Analyzer {
                 awaited
             }),
         };
-        self.async_futures.insert(name.clone(), metadata);
+        self.lowering.async_futures.insert(name.clone(), metadata);
         self.register_future_poll(&name);
         if has_residual_effects && source_plan.has_await {
             self.register_suspended_async_handler_templates(
@@ -897,6 +910,7 @@ impl Analyzer {
         }
         let candidate = candidates.pop().expect("one future candidate");
         let implementation = self
+            .collection
             .trait_impls
             .get(&candidate)
             .cloned()
@@ -912,6 +926,7 @@ impl Analyzer {
             .cloned()
             .expect("validated Future implementation has poll");
         let signature = self
+            .lowering
             .signatures
             .get(&poll_function)
             .cloned()
@@ -959,7 +974,7 @@ impl Analyzer {
     }
 
     pub(super) fn register_async_branch_future(&mut self, branch_types: &[Ty]) -> Option<String> {
-        if self.async_factory_depth == 0 || branch_types.len() < 2 {
+        if self.lowering.async_factory_depth == 0 || branch_types.len() < 2 {
             return None;
         }
         let origin = self
@@ -992,8 +1007,8 @@ impl Analyzer {
             return None;
         }
 
-        let name = format!("$async$branch${}", self.next_async_future);
-        self.next_async_future += 1;
+        let name = format!("$async$branch${}", self.lowering.next_async_future);
+        self.lowering.next_async_future += 1;
         let access = AccessBoundary {
             visibility: Visibility::Private,
             origin,
@@ -1017,15 +1032,17 @@ impl Analyzer {
                 variant
             })
             .collect::<Vec<_>>();
-        self.enum_layouts.insert(
+        self.collection.enum_layouts.insert(
             name.clone(),
             EnumLayout {
                 name: name.clone(),
                 variants: variants.clone(),
             },
         );
-        self.enum_order.push(name.clone());
-        self.nominal_accesses.insert(name.clone(), access.clone());
+        self.collection.enum_order.push(name.clone());
+        self.collection
+            .nominal_accesses
+            .insert(name.clone(), access.clone());
 
         let self_ty = Ty::Enum(name.clone());
         let self_reference = Ty::Reference {
@@ -1047,7 +1064,7 @@ impl Analyzer {
             },
         };
         let poll_function = trait_method_name(&trait_key, "poll");
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             poll_function.clone(),
             FunctionSig {
                 groups: vec![
@@ -1064,20 +1081,23 @@ impl Analyzer {
                 result: Some(poll_ty.clone()),
             },
         );
-        self.function_accesses
+        self.collection
+            .function_accesses
             .insert(poll_function.clone(), access.clone());
-        self.inherent_members
+        self.collection
+            .inherent_members
             .entry(name.clone())
             .or_default()
             .methods
             .insert("poll".to_owned(), poll_function.clone());
-        self.trait_impl_headers.insert(trait_key.clone());
-        self.trait_methods_by_receiver
+        self.collection.trait_impl_headers.insert(trait_key.clone());
+        self.collection
+            .trait_methods_by_receiver
             .entry((self_ty.clone(), "poll".to_owned()))
             .or_default()
             .push(trait_key.clone());
         let output_source = self.source_type_for_ty(&output)?;
-        self.trait_impls.insert(
+        self.collection.trait_impls.insert(
             trait_key.clone(),
             TraitImplInfo {
                 key: trait_key,
@@ -1141,7 +1161,7 @@ impl Analyzer {
                 }
             })
             .collect();
-        self.lifted_functions.push(HirFunction {
+        self.lowering.lifted_functions.push(HirFunction {
             name: poll_function,
             params: vec![HirParam {
                 id: 0,
@@ -1174,8 +1194,8 @@ impl Analyzer {
         continue_constructor: String,
         break_constructor: String,
     ) -> AsyncLoopStepInfo {
-        let name = format!("$async$loop$step${}", self.next_async_future);
-        self.next_async_future += 1;
+        let name = format!("$async$loop$step${}", self.lowering.next_async_future);
+        self.lowering.next_async_future += 1;
         let access = AccessBoundary {
             visibility: Visibility::Private,
             origin: self
@@ -1184,7 +1204,7 @@ impl Analyzer {
                 .cloned()
                 .unwrap_or_else(ItemOrigin::default),
         };
-        self.enum_layouts.insert(
+        self.collection.enum_layouts.insert(
             name.clone(),
             EnumLayout {
                 name: name.clone(),
@@ -1212,10 +1232,12 @@ impl Analyzer {
                 ],
             },
         );
-        self.enum_order.push(name.clone());
-        self.nominal_accesses.insert(name.clone(), access);
+        self.collection.enum_order.push(name.clone());
+        self.collection
+            .nominal_accesses
+            .insert(name.clone(), access);
         let ty = Ty::Enum(name.clone());
-        self.internal_async_loop_constructors.insert(
+        self.lowering.internal_async_loop_constructors.insert(
             continue_constructor.clone(),
             InternalAsyncLoopConstructor {
                 name: name.clone(),
@@ -1224,7 +1246,7 @@ impl Analyzer {
                 field: carry.clone(),
             },
         );
-        self.internal_async_loop_constructors.insert(
+        self.lowering.internal_async_loop_constructors.insert(
             break_constructor.clone(),
             InternalAsyncLoopConstructor {
                 name: name.clone(),
@@ -1248,6 +1270,7 @@ impl Analyzer {
             return None;
         };
         let constructor = self
+            .lowering
             .internal_async_loop_constructors
             .get(constructor)
             .cloned()?;
@@ -1271,7 +1294,7 @@ impl Analyzer {
     }
 
     fn register_future_poll(&mut self, name: &str) {
-        let Some(future) = self.async_futures.get(name).cloned() else {
+        let Some(future) = self.lowering.async_futures.get(name).cloned() else {
             return;
         };
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
@@ -1322,7 +1345,7 @@ impl Analyzer {
             ty: self_reference.clone(),
             mode: PassMode::Inferred,
         };
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             poll_function.clone(),
             FunctionSig {
                 groups: vec![vec![receiver], Vec::new()],
@@ -1332,30 +1355,34 @@ impl Analyzer {
                 result: Some(poll_ty.clone()),
             },
         );
-        self.function_accesses
-            .insert(poll_function.clone(), self.nominal_accesses[name].clone());
-        self.inherent_members
+        self.collection.function_accesses.insert(
+            poll_function.clone(),
+            self.collection.nominal_accesses[name].clone(),
+        );
+        self.collection
+            .inherent_members
             .entry(name.to_owned())
             .or_default()
             .methods
             .insert("poll".to_owned(), poll_function.clone());
-        self.trait_impl_headers.insert(trait_key.clone());
-        self.trait_methods_by_receiver
+        self.collection.trait_impl_headers.insert(trait_key.clone());
+        self.collection
+            .trait_methods_by_receiver
             .entry((self_ty.clone(), "poll".to_owned()))
             .or_default()
             .push(trait_key.clone());
-        self.trait_impls.insert(
+        self.collection.trait_impls.insert(
             trait_key.clone(),
             TraitImplInfo {
                 key: trait_key,
                 associated_types: HashMap::from([("output".to_owned(), future.output.clone())]),
                 associated_type_sources: HashMap::from([("output".to_owned(), output_source)]),
                 methods: HashMap::from([("poll".to_owned(), poll_function.clone())]),
-                access: self.nominal_accesses[name].clone(),
+                access: self.collection.nominal_accesses[name].clone(),
             },
         );
 
-        let layout = self.struct_layouts[name].clone();
+        let layout = self.collection.struct_layouts[name].clone();
         let arguments = future
             .capture_modes
             .iter()
@@ -1454,7 +1481,7 @@ impl Analyzer {
         } else {
             ready_poll_body(&self_ty, &poll_ty, &poll_name, &future.output, resume)
         };
-        self.lifted_functions.push(HirFunction {
+        self.lowering.lifted_functions.push(HirFunction {
             name: poll_function,
             params: vec![HirParam {
                 id: 0,
@@ -1474,7 +1501,7 @@ impl Analyzer {
         resume_function: &str,
         resume_captures: &[(String, Ty, PassMode)],
     ) {
-        let future = self.async_futures[name].clone();
+        let future = self.lowering.async_futures[name].clone();
         debug_assert!(future.awaited.is_none());
         debug_assert!(future
             .capture_modes
@@ -1509,8 +1536,8 @@ impl Analyzer {
             return;
         };
         let effects = self.async_source_effects(&future);
-        let origin = self.nominal_accesses[name].origin.clone();
-        self.functions.insert(
+        let origin = self.collection.nominal_accesses[name].origin.clone();
+        self.collection.functions.insert(
             resume_function.to_owned(),
             Function {
                 name: resume_function.to_owned(),
@@ -1524,7 +1551,8 @@ impl Analyzer {
                 body: Some(resume_body.clone()),
             },
         );
-        self.function_origins
+        self.collection
+            .function_origins
             .insert(resume_function.to_owned(), origin.clone());
 
         let effect_row = Ty::EffectRow {
@@ -1545,7 +1573,8 @@ impl Analyzer {
             },
         };
         let poll_function = trait_method_name(&trait_key, "poll");
-        self.lifted_functions
+        self.lowering
+            .lifted_functions
             .retain(|function| function.name != resume_function && function.name != poll_function);
         let resume = Expr::Call(
             Box::new(Expr::Name(resume_function.to_owned())),
@@ -1609,7 +1638,7 @@ impl Analyzer {
                 body: Box::new(Expr::Unit),
             })),
         };
-        self.functions.insert(
+        self.collection.functions.insert(
             poll_function.clone(),
             Function {
                 name: poll_function.clone(),
@@ -1641,7 +1670,9 @@ impl Analyzer {
                 body: Some(body),
             },
         );
-        self.function_origins.insert(poll_function, origin);
+        self.collection
+            .function_origins
+            .insert(poll_function, origin);
     }
 
     fn register_suspended_async_handler_templates(
@@ -1651,7 +1682,7 @@ impl Analyzer {
         resume_function: &str,
         resume_captures: &[(String, Ty, PassMode)],
     ) {
-        let future = self.async_futures[name].clone();
+        let future = self.lowering.async_futures[name].clone();
         let awaited = future
             .awaited
             .as_ref()
@@ -1665,8 +1696,11 @@ impl Analyzer {
             return;
         };
         let branch_factory = match &awaited.ty {
-            Ty::Enum(branch_name) if branch_name.starts_with("$async$branch$") => {
-                self.enum_layouts.get(branch_name).and_then(|layout| {
+            Ty::Enum(branch_name) if branch_name.starts_with("$async$branch$") => self
+                .collection
+                .enum_layouts
+                .get(branch_name)
+                .and_then(|layout| {
                     heterogeneous_branch_factory(resume_body, layout.variants.len()).and_then(
                         |(prefix, selection, retained)| {
                             if retained.len() != awaited.retained_types.len() {
@@ -1691,8 +1725,7 @@ impl Analyzer {
                             ))
                         },
                     )
-                })
-            }
+                }),
             _ => None,
         };
         let factory_output_source = self.source_type_for_ty(&awaited.factory_output);
@@ -1725,9 +1758,9 @@ impl Analyzer {
             return;
         };
         let effects = self.async_source_effects(&future);
-        let origin = self.nominal_accesses[name].origin.clone();
+        let origin = self.collection.nominal_accesses[name].origin.clone();
         if branch_factory.is_none() {
-            self.functions.insert(
+            self.collection.functions.insert(
                 resume_function.to_owned(),
                 Function {
                     name: resume_function.to_owned(),
@@ -1745,7 +1778,8 @@ impl Analyzer {
                     body: Some(resume_body.clone()),
                 },
             );
-            self.function_origins
+            self.collection
+                .function_origins
                 .insert(resume_function.to_owned(), origin.clone());
         }
 
@@ -1767,7 +1801,7 @@ impl Analyzer {
             },
         };
         let poll_function = trait_method_name(&trait_key, "poll");
-        let poll_ty = self.signatures[&poll_function]
+        let poll_ty = self.lowering.signatures[&poll_function]
             .result
             .clone()
             .expect("generated poll has an output");
@@ -1816,7 +1850,7 @@ impl Analyzer {
                     mode: *mode,
                 })
                 .collect::<Vec<_>>();
-            self.signatures.insert(
+            self.lowering.signatures.insert(
                 pack_function.clone(),
                 FunctionSig {
                     groups: vec![parameters],
@@ -1866,7 +1900,7 @@ impl Analyzer {
                     },
                 })
                 .collect();
-            self.lifted_functions.push(HirFunction {
+            self.lowering.lifted_functions.push(HirFunction {
                 name: pack_function.clone(),
                 params: pack_params,
                 result: input_ty.clone(),
@@ -1970,7 +2004,7 @@ impl Analyzer {
             ty: self_reference.clone(),
             mode: PassMode::Inferred,
         };
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             start_helper.clone(),
             FunctionSig {
                 groups: vec![vec![
@@ -1987,7 +2021,7 @@ impl Analyzer {
                 result: Some(machine_poll_ty.clone()),
             },
         );
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             wait_helper.clone(),
             FunctionSig {
                 groups: vec![vec![self_parameter.clone()]],
@@ -2011,7 +2045,7 @@ impl Analyzer {
             parameters: Vec::new(),
         };
         if let Some(factory_output_source) = factory_output_source {
-            self.functions.insert(
+            self.collection.functions.insert(
                 start_helper.clone(),
                 Function {
                     name: start_helper.clone(),
@@ -2046,7 +2080,7 @@ impl Analyzer {
                 },
             );
         }
-        self.functions.insert(
+        self.collection.functions.insert(
             wait_helper.clone(),
             Function {
                 name: wait_helper.clone(),
@@ -2070,15 +2104,21 @@ impl Analyzer {
                 body: None,
             },
         );
-        self.function_origins
+        self.collection
+            .function_origins
             .insert(start_helper.clone(), origin.clone());
-        self.function_origins
+        self.collection
+            .function_origins
             .insert(wait_helper.clone(), origin.clone());
-        self.function_accesses
-            .insert(start_helper.clone(), self.nominal_accesses[name].clone());
-        self.function_accesses
-            .insert(wait_helper.clone(), self.nominal_accesses[name].clone());
-        self.lifted_functions.push(HirFunction {
+        self.collection.function_accesses.insert(
+            start_helper.clone(),
+            self.collection.nominal_accesses[name].clone(),
+        );
+        self.collection.function_accesses.insert(
+            wait_helper.clone(),
+            self.collection.nominal_accesses[name].clone(),
+        );
+        self.lowering.lifted_functions.push(HirFunction {
             name: start_helper.clone(),
             params: vec![
                 HirParam {
@@ -2128,7 +2168,7 @@ impl Analyzer {
                         }),
                 );
                 signature_parameters.push(self_parameter.clone());
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     helper.clone(),
                     FunctionSig {
                         groups: vec![signature_parameters],
@@ -2174,7 +2214,7 @@ impl Analyzer {
                     name: "self".to_owned(),
                     ty: self_source_reference.clone(),
                 });
-                self.functions.insert(
+                self.collection.functions.insert(
                     helper.clone(),
                     Function {
                         name: helper.clone(),
@@ -2191,9 +2231,13 @@ impl Analyzer {
                         body: None,
                     },
                 );
-                self.function_origins.insert(helper.clone(), origin.clone());
-                self.function_accesses
-                    .insert(helper.clone(), self.nominal_accesses[name].clone());
+                self.collection
+                    .function_origins
+                    .insert(helper.clone(), origin.clone());
+                self.collection.function_accesses.insert(
+                    helper.clone(),
+                    self.collection.nominal_accesses[name].clone(),
+                );
                 let segment = HirExpr {
                     ty: (*branch_ty).clone(),
                     kind: HirExprKind::Read {
@@ -2299,7 +2343,7 @@ impl Analyzer {
                 });
                 let mut arguments = vec![HirArgument::Move(bundle)];
                 arguments.push(HirArgument::Copy(self_value));
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: helper.clone(),
                     params,
                     result: machine_poll_ty.clone(),
@@ -2316,7 +2360,7 @@ impl Analyzer {
                 branch_start_helpers.push(helper);
             }
         }
-        self.lifted_functions.push(HirFunction {
+        self.lowering.lifted_functions.push(HirFunction {
             name: wait_helper.clone(),
             params: vec![HirParam {
                 id: 0,
@@ -2329,7 +2373,7 @@ impl Analyzer {
         });
 
         let begin_helper = format!("{poll_function}$begin");
-        self.signatures.insert(
+        self.lowering.signatures.insert(
             begin_helper.clone(),
             FunctionSig {
                 groups: vec![vec![self_parameter.clone()]],
@@ -2339,7 +2383,7 @@ impl Analyzer {
                 result: Some(Ty::Unit),
             },
         );
-        self.functions.insert(
+        self.collection.functions.insert(
             begin_helper.clone(),
             Function {
                 name: begin_helper.clone(),
@@ -2360,11 +2404,14 @@ impl Analyzer {
                 body: None,
             },
         );
-        self.function_origins
+        self.collection
+            .function_origins
             .insert(begin_helper.clone(), origin.clone());
-        self.function_accesses
-            .insert(begin_helper.clone(), self.nominal_accesses[name].clone());
-        self.lifted_functions.push(HirFunction {
+        self.collection.function_accesses.insert(
+            begin_helper.clone(),
+            self.collection.nominal_accesses[name].clone(),
+        );
+        self.lowering.lifted_functions.push(HirFunction {
             name: begin_helper.clone(),
             params: vec![HirParam {
                 id: 0,
@@ -2383,7 +2430,7 @@ impl Analyzer {
                 let condition_call = loop_condition.clone()?;
                 let condition_helper = format!("{poll_function}$loop$condition");
                 let done_helper = format!("{poll_function}$loop$done");
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     condition_helper.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
@@ -2393,7 +2440,7 @@ impl Analyzer {
                         result: Some(Ty::Bool),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     done_helper.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
@@ -2413,7 +2460,7 @@ impl Analyzer {
                         ),
                     ),
                 ] {
-                    self.functions.insert(
+                    self.collection.functions.insert(
                         helper.clone(),
                         Function {
                             name: helper.clone(),
@@ -2434,11 +2481,14 @@ impl Analyzer {
                             body: None,
                         },
                     );
-                    self.function_origins.insert(helper.clone(), origin.clone());
-                    self.function_accesses
-                        .insert(helper, self.nominal_accesses[name].clone());
+                    self.collection
+                        .function_origins
+                        .insert(helper.clone(), origin.clone());
+                    self.collection
+                        .function_accesses
+                        .insert(helper, self.collection.nominal_accesses[name].clone());
                 }
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: condition_helper.clone(),
                     params: vec![HirParam {
                         id: 0,
@@ -2449,7 +2499,7 @@ impl Analyzer {
                     result: Ty::Bool,
                     body: condition_call,
                 });
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: done_helper.clone(),
                     params: vec![HirParam {
                         id: 0,
@@ -2494,14 +2544,14 @@ impl Analyzer {
                 let complete = format!("{poll_function}$next$complete");
                 let extract = format!("{poll_function}$next$extract");
                 let poll = format!("{poll_function}$next$poll");
-                let next_poll_source = self.functions.get(&next.poll_function)?.clone();
+                let next_poll_source = self.collection.functions.get(&next.poll_function)?.clone();
                 next_poll_source.body.as_ref()?;
                 let owned_poll_ty = Ty::Tuple(vec![next.poll_ty.clone(), next.ty.clone()]);
                 let owned_poll_source = Type::Tuple(vec![
                     next_poll_source.return_type.clone()?,
                     next_source.clone(),
                 ]);
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     owner.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
@@ -2511,7 +2561,7 @@ impl Analyzer {
                         result: Some(owner_ty.clone()),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     take.clone(),
                     FunctionSig {
                         groups: vec![vec![ParamSig {
@@ -2525,7 +2575,7 @@ impl Analyzer {
                         result: Some(next.ty.clone()),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     put.clone(),
                     FunctionSig {
                         groups: vec![vec![
@@ -2546,7 +2596,7 @@ impl Analyzer {
                         result: Some(Ty::Unit),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     complete.clone(),
                     FunctionSig {
                         groups: vec![vec![
@@ -2567,7 +2617,7 @@ impl Analyzer {
                         result: Some(Ty::Unit),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     extract.clone(),
                     FunctionSig {
                         groups: vec![vec![ParamSig {
@@ -2581,7 +2631,7 @@ impl Analyzer {
                         result: Some(next.ty.clone()),
                     },
                 );
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     poll.clone(),
                     FunctionSig {
                         groups: vec![vec![ParamSig {
@@ -2665,7 +2715,7 @@ impl Analyzer {
                         Type::Unit,
                     ),
                 ] {
-                    self.functions.insert(
+                    self.collection.functions.insert(
                         helper.clone(),
                         Function {
                             name: helper.clone(),
@@ -2679,11 +2729,14 @@ impl Analyzer {
                             body: None,
                         },
                     );
-                    self.function_origins.insert(helper.clone(), origin.clone());
-                    self.function_accesses
-                        .insert(helper, self.nominal_accesses[name].clone());
+                    self.collection
+                        .function_origins
+                        .insert(helper.clone(), origin.clone());
+                    self.collection
+                        .function_accesses
+                        .insert(helper, self.collection.nominal_accesses[name].clone());
                 }
-                self.functions.insert(
+                self.collection.functions.insert(
                     extract.clone(),
                     Function {
                         name: extract.clone(),
@@ -2704,14 +2757,17 @@ impl Analyzer {
                         body: None,
                     },
                 );
-                self.function_origins
+                self.collection
+                    .function_origins
                     .insert(extract.clone(), origin.clone());
-                self.function_accesses
-                    .insert(extract.clone(), self.nominal_accesses[name].clone());
+                self.collection.function_accesses.insert(
+                    extract.clone(),
+                    self.collection.nominal_accesses[name].clone(),
+                );
                 let owned = "$async$owned$next".to_owned();
                 let output = "$async$owned$poll".to_owned();
                 let returned = "$async$returned$next".to_owned();
-                self.functions.insert(
+                self.collection.functions.insert(
                     poll.clone(),
                     Function {
                         name: poll.clone(),
@@ -2772,13 +2828,16 @@ impl Analyzer {
                         )),
                     },
                 );
-                self.function_origins.insert(poll.clone(), origin.clone());
-                self.function_accesses
-                    .insert(poll.clone(), self.nominal_accesses[name].clone());
+                self.collection
+                    .function_origins
+                    .insert(poll.clone(), origin.clone());
+                self.collection
+                    .function_accesses
+                    .insert(poll.clone(), self.collection.nominal_accesses[name].clone());
 
                 let next_place = async_field_place(0, self_ty.clone(), next.field, next.ty.clone());
                 let local = 61_000;
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: owner.clone(),
                     params: vec![HirParam {
                         id: 0,
@@ -2805,7 +2864,7 @@ impl Analyzer {
                     },
                 });
                 let extracted = 61_100;
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: extract,
                     params: vec![HirParam {
                         id: 0,
@@ -2889,7 +2948,7 @@ impl Analyzer {
                         ),
                     },
                 });
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: take.clone(),
                     params: vec![HirParam {
                         id: 0,
@@ -2942,7 +3001,7 @@ impl Analyzer {
                         ),
                     },
                 });
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: put.clone(),
                     params: vec![
                         HirParam {
@@ -3001,7 +3060,7 @@ impl Analyzer {
                         ),
                     },
                 });
-                self.lifted_functions.push(HirFunction {
+                self.lowering.lifted_functions.push(HirFunction {
                     name: complete.clone(),
                     params: vec![
                         HirParam {
@@ -3070,7 +3129,7 @@ impl Analyzer {
                 Some((owner, take, put, complete, poll))
             });
 
-        let layout = self.struct_layouts[name].clone();
+        let layout = self.collection.struct_layouts[name].clone();
         let mut capture_helpers = Vec::new();
         for (index, mode) in future.capture_modes.iter().enumerate() {
             let field = index + 1;
@@ -3079,7 +3138,7 @@ impl Analyzer {
                 return;
             };
             let helper = format!("{poll_function}$capture${index}");
-            self.signatures.insert(
+            self.lowering.signatures.insert(
                 helper.clone(),
                 FunctionSig {
                     groups: vec![vec![self_parameter.clone()]],
@@ -3089,7 +3148,7 @@ impl Analyzer {
                     result: Some(ty.clone()),
                 },
             );
-            self.functions.insert(
+            self.collection.functions.insert(
                 helper.clone(),
                 Function {
                     name: helper.clone(),
@@ -3110,9 +3169,13 @@ impl Analyzer {
                     body: None,
                 },
             );
-            self.function_origins.insert(helper.clone(), origin.clone());
-            self.function_accesses
-                .insert(helper.clone(), self.nominal_accesses[name].clone());
+            self.collection
+                .function_origins
+                .insert(helper.clone(), origin.clone());
+            self.collection.function_accesses.insert(
+                helper.clone(),
+                self.collection.nominal_accesses[name].clone(),
+            );
             let place = async_field_place(0, self_ty.clone(), field, ty.clone());
             let body = match mode {
                 PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => HirExpr {
@@ -3136,7 +3199,7 @@ impl Analyzer {
                     unreachable!("suspended residual capture modes are normalized")
                 }
             };
-            self.lifted_functions.push(HirFunction {
+            self.lowering.lifted_functions.push(HirFunction {
                 name: helper.clone(),
                 params: vec![HirParam {
                     id: 0,
@@ -3207,7 +3270,7 @@ impl Analyzer {
                     })
                     .collect::<Vec<_>>();
                 signature_parameters.push(self_parameter.clone());
-                self.signatures.insert(
+                self.lowering.signatures.insert(
                     helper.clone(),
                     FunctionSig {
                         groups: vec![signature_parameters],
@@ -3224,7 +3287,7 @@ impl Analyzer {
                         result: Some(machine_poll_ty.clone()),
                     },
                 );
-                self.functions.insert(
+                self.collection.functions.insert(
                     helper.clone(),
                     Function {
                         name: helper.clone(),
@@ -3246,7 +3309,9 @@ impl Analyzer {
                         )),
                     },
                 );
-                self.function_origins.insert(helper.clone(), origin.clone());
+                self.collection
+                    .function_origins
+                    .insert(helper.clone(), origin.clone());
                 helper
             });
         let state = || Expr::Member(Box::new(self_value()), "state".to_owned());
@@ -3361,7 +3426,7 @@ impl Analyzer {
         let body = if let Some((residual, input_ty, input_source, input_modes)) =
             residual_transition
         {
-            self.functions.insert(
+            self.collection.functions.insert(
                 residual.function.clone(),
                 Function {
                     name: residual.function.clone(),
@@ -3375,7 +3440,8 @@ impl Analyzer {
                     body: Some(residual.body.clone()),
                 },
             );
-            self.function_origins
+            self.collection
+                .function_origins
                 .insert(residual.function.clone(), origin.clone());
 
             let Ty::Tuple(input_types) = input_ty else {
@@ -3592,7 +3658,7 @@ impl Analyzer {
         } else {
             body
         };
-        self.functions.insert(
+        self.collection.functions.insert(
             poll_function.clone(),
             Function {
                 name: poll_function.clone(),
@@ -3624,8 +3690,10 @@ impl Analyzer {
                 body: Some(body),
             },
         );
-        self.function_origins.insert(poll_function.clone(), origin);
-        self.lifted_functions.retain(|function| {
+        self.collection
+            .function_origins
+            .insert(poll_function.clone(), origin);
+        self.lowering.lifted_functions.retain(|function| {
             function.name != resume_function
                 && function.name != poll_function
                 && awaited
@@ -4594,1177 +4662,4 @@ pub(super) struct InternalAsyncLoopConstructor {
     pub(super) ty: Ty,
     pub(super) variant: usize,
     pub(super) field: Ty,
-}
-
-struct AsyncSourcePlan {
-    factory_body: Expr,
-    has_await: bool,
-    continuation: Option<AsyncContinuationSource>,
-    retained: Vec<AsyncRetainedSource>,
-    loop_step: Option<AsyncLoopStepSource>,
-    loop_condition: Option<AsyncLoopConditionSource>,
-}
-
-struct AsyncContinuationSource {
-    name: String,
-    mutable: bool,
-    body: Expr,
-}
-
-struct AsyncRetainedSource {
-    name: String,
-    referent: Option<String>,
-    borrowed: bool,
-}
-
-struct AsyncLoopStepSource {
-    binding: String,
-    break_value: Expr,
-    output_hint: Option<Ty>,
-    probe_awaits: Vec<(String, Expr)>,
-    carry_names: Vec<String>,
-    continue_constructor: String,
-    break_constructor: String,
-}
-
-struct AsyncLoopConditionSource {
-    expression: Expr,
-    post_test: bool,
-}
-
-#[derive(Clone, Copy)]
-enum AsyncLoopKind {
-    Loop,
-    While,
-    DoWhile,
-}
-
-impl AsyncLoopKind {
-    fn description(self) -> &'static str {
-        match self {
-            Self::Loop => "`loop`",
-            Self::While => "pre-test `while`",
-            Self::DoWhile => "post-test `while`",
-        }
-    }
-}
-
-struct AsyncLoopSuspensionSource {
-    kind: AsyncLoopKind,
-    condition_suspends: bool,
-    body_suspends: bool,
-    has_continue: bool,
-    has_fallthrough: bool,
-    has_value_break: bool,
-}
-
-fn recurring_suspended_loop_source(expression: &Expr) -> Option<AsyncLoopSuspensionSource> {
-    match expression.unlocated() {
-        Expr::Loop { body } if terminating_loop_iteration(body).is_none() => {
-            let body_suspends = split_async_source(body).has_await;
-            body_suspends.then(|| async_loop_source(AsyncLoopKind::Loop, false, true, body))
-        }
-        Expr::While {
-            condition,
-            body,
-            post_test,
-        } if terminating_loop_iteration(body).is_none() => {
-            let condition_suspends = split_async_source(condition).has_await;
-            let body_suspends = split_async_source(body).has_await;
-            (condition_suspends || body_suspends).then(|| {
-                async_loop_source(
-                    if *post_test {
-                        AsyncLoopKind::DoWhile
-                    } else {
-                        AsyncLoopKind::While
-                    },
-                    condition_suspends,
-                    body_suspends,
-                    body,
-                )
-            })
-        }
-        Expr::Block(statements, tail) => statements
-            .iter()
-            .find_map(|statement| match statement {
-                Stmt::Let(binding) => recurring_suspended_loop_source(&binding.value),
-                Stmt::Expr(expression) => recurring_suspended_loop_source(expression),
-            })
-            .or_else(|| tail.as_deref().and_then(recurring_suspended_loop_source)),
-        _ => None,
-    }
-}
-
-fn async_loop_source(
-    kind: AsyncLoopKind,
-    condition_suspends: bool,
-    body_suspends: bool,
-    body: &Expr,
-) -> AsyncLoopSuspensionSource {
-    let recursive_name = "$async$loop$analysis$continue";
-    let break_name = "$handler$loop$break$async-analysis";
-    let mut rewritten = body.clone();
-    super::handlers::rewrite_handler_loop_control(&mut rewritten, recursive_name, break_name, 0);
-    let mut has_continue = false;
-    let mut has_value_break = false;
-    super::source_rewrite::visit_expr_mut(&mut rewritten, &mut |expression| {
-        if matches!(expression.unlocated(), Expr::Name(name) if name == recursive_name) {
-            has_continue = true;
-        }
-        if let Some((name, value)) =
-            super::handlers::internal_handler_loop_break_argument(expression.unlocated())
-        {
-            if name == break_name && !matches!(value.unlocated(), Expr::Unit) {
-                has_value_break = true;
-            }
-        }
-    });
-    AsyncLoopSuspensionSource {
-        kind,
-        condition_suspends,
-        body_suspends,
-        has_continue,
-        has_fallthrough: !iteration_body_definitely_exits(body),
-        has_value_break,
-    }
-}
-
-fn iteration_body_definitely_exits(expression: &Expr) -> bool {
-    match expression.unlocated() {
-        Expr::Break(_) | Expr::Continue | Expr::Return(_) => true,
-        Expr::Block(statements, tail) => tail.as_deref().map_or_else(
-            || {
-                statements.last().is_some_and(|statement| match statement {
-                    Stmt::Expr(expression) => iteration_body_definitely_exits(expression),
-                    Stmt::Let(_) => false,
-                })
-            },
-            iteration_body_definitely_exits,
-        ),
-        Expr::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        } => {
-            iteration_body_definitely_exits(then_branch)
-                && iteration_body_definitely_exits(else_branch)
-        }
-        Expr::Match { arms, .. } if !arms.is_empty() => arms
-            .iter()
-            .all(|arm| iteration_body_definitely_exits(&arm.body)),
-        _ => false,
-    }
-}
-
-fn general_unit_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
-    let loop_expression = match body.unlocated() {
-        Expr::Loop { .. } | Expr::While { .. } => body,
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
-        Expr::Block(statements, None) => {
-            let [Stmt::Expr(expression)] = statements.as_slice() else {
-                return None;
-            };
-            expression
-        }
-        _ => return None,
-    };
-    let (loop_body, loop_condition) = match loop_expression.unlocated() {
-        Expr::Loop { body } => (body.as_ref(), None),
-        Expr::While {
-            condition,
-            body,
-            post_test,
-        } => (
-            body.as_ref(),
-            Some(AsyncLoopConditionSource {
-                expression: (**condition).clone(),
-                post_test: *post_test,
-            }),
-        ),
-        _ => return None,
-    };
-    if !split_async_source(loop_body).has_await {
-        return None;
-    }
-
-    let continue_constructor = format!("$async$loop$continue${id}");
-    let break_constructor = format!("$async$loop$break${id}");
-    let recursive_name = format!("$async$loop$rewrite$continue${id}");
-    let handler_break_name = format!("$handler$loop$break$async-rewrite${id}");
-    let handler_return_name = format!("$handler$return${recursive_name}");
-    let construct = |name: &str, value: Expr| {
-        Expr::Call(
-            Box::new(Expr::Name(name.to_owned())),
-            vec![crate::ast::CallArg { label: None, value }],
-        )
-    };
-    let continue_step = construct(&continue_constructor, Expr::Unit);
-    let mut iteration = loop_body.clone();
-    super::handlers::rewrite_handler_loop_control(
-        &mut iteration,
-        &recursive_name,
-        &handler_break_name,
-        0,
-    );
-    let mut has_break = false;
-    let mut non_unit_break = false;
-    super::source_rewrite::visit_expr_mut(&mut iteration, &mut |expression| {
-        let Expr::Call(callee, arguments) = expression.unlocated() else {
-            return;
-        };
-        if !matches!(callee.unlocated(), Expr::Name(name) if name == &handler_return_name) {
-            return;
-        }
-        let [argument] = arguments.as_slice() else {
-            return;
-        };
-        let replacement = if matches!(
-            argument.value.unlocated(),
-            Expr::Call(inner, arguments)
-                if matches!(inner.unlocated(), Expr::Name(name) if name == &recursive_name)
-                    && arguments.is_empty()
-        ) {
-            Some(continue_step.clone())
-        } else if let Some((name, value)) =
-            super::handlers::internal_handler_loop_break_argument(argument.value.unlocated())
-        {
-            if name != handler_break_name {
-                None
-            } else {
-                has_break = true;
-                non_unit_break |= !matches!(value.unlocated(), Expr::Unit);
-                Some(construct(&break_constructor, value))
-            }
-        } else {
-            None
-        };
-        if let Some(replacement) = replacement {
-            *expression = Expr::Return(Some(Box::new(replacement)));
-        }
-    });
-    if non_unit_break {
-        return None;
-    }
-    append_async_iteration_fallthrough(&mut iteration, &continue_step);
-    Some(AsyncSourcePlan {
-        factory_body: Expr::Async {
-            body: Box::new(iteration),
-        },
-        has_await: true,
-        continuation: None,
-        retained: Vec::new(),
-        loop_step: Some(AsyncLoopStepSource {
-            binding: String::new(),
-            break_value: Expr::Unit,
-            output_hint: Some(if has_break || loop_condition.is_some() {
-                Ty::Unit
-            } else {
-                Ty::Never
-            }),
-            probe_awaits: Vec::new(),
-            carry_names: Vec::new(),
-            continue_constructor,
-            break_constructor,
-        }),
-        loop_condition,
-    })
-}
-
-fn append_async_iteration_fallthrough(expression: &mut Expr, continue_step: &Expr) {
-    match expression.unlocated_mut() {
-        Expr::Return(_) => {}
-        Expr::Block(_, Some(tail)) => {
-            append_async_iteration_fallthrough(tail, continue_step);
-        }
-        Expr::Block(_, tail @ None) => {
-            *tail = Some(Box::new(Expr::Return(Some(Box::new(
-                continue_step.clone(),
-            )))));
-        }
-        Expr::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            append_async_iteration_fallthrough(then_branch, continue_step);
-            if let Some(else_branch) = else_branch {
-                append_async_iteration_fallthrough(else_branch, continue_step);
-            } else {
-                *else_branch = Some(Box::new(Expr::Return(Some(Box::new(
-                    continue_step.clone(),
-                )))));
-            }
-        }
-        Expr::Match { arms, .. } => {
-            for arm in arms {
-                append_async_iteration_fallthrough(&mut arm.body, continue_step);
-            }
-        }
-        _ => {
-            let value = std::mem::replace(expression, Expr::Unit);
-            *expression = Expr::Block(
-                vec![Stmt::Expr(value)],
-                Some(Box::new(Expr::Return(Some(Box::new(
-                    continue_step.clone(),
-                ))))),
-            );
-        }
-    }
-}
-
-fn multiple_await_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
-    let loop_expression = match body.unlocated() {
-        Expr::Loop { .. } | Expr::While { .. } => body,
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
-        Expr::Block(statements, None) => {
-            let [Stmt::Expr(expression)] = statements.as_slice() else {
-                return None;
-            };
-            expression
-        }
-        _ => return None,
-    };
-    let (loop_body, loop_condition) = match loop_expression.unlocated() {
-        Expr::Loop { body } => (body.as_ref(), None),
-        Expr::While {
-            condition,
-            body,
-            post_test,
-        } => (
-            body.as_ref(),
-            Some(AsyncLoopConditionSource {
-                expression: (**condition).clone(),
-                post_test: *post_test,
-            }),
-        ),
-        _ => return None,
-    };
-    let Expr::Block(statements, tail) = loop_body.unlocated() else {
-        return None;
-    };
-    let (iteration_statements, decision) = match (statements.as_slice(), tail.as_deref()) {
-        (statements, Some(decision)) => (statements, Some(decision)),
-        ([prefix @ .., Stmt::Expr(decision)], None) => (prefix, Some(decision)),
-        (statements, None) if loop_condition.is_some() => (statements, None),
-        _ => return None,
-    };
-    let probe_awaits = iteration_statements
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            let Expr::Await(child) = binding.value.unlocated() else {
-                return None;
-            };
-            Some((binding.name.clone(), (**child).clone()))
-        })
-        .collect::<Vec<_>>();
-    if probe_awaits.len() < 2 {
-        return None;
-    }
-
-    let continue_constructor = format!("$async$loop$continue${id}");
-    let break_constructor = format!("$async$loop$break${id}");
-    let construct = |name: &str, value: Expr| {
-        Expr::Call(
-            Box::new(Expr::Name(name.to_owned())),
-            vec![crate::ast::CallArg { label: None, value }],
-        )
-    };
-    let continue_step = construct(&continue_constructor, Expr::Unit);
-    let (rewritten_decision, break_value) = if let Some(decision) = decision {
-        let (condition, then_control, else_control) = simple_loop_decision(decision)?;
-        let break_value = match (&then_control, &else_control) {
-            (SimpleLoopControl::Break(value), control) if control.continues() => value.clone(),
-            (control, SimpleLoopControl::Break(value)) if control.continues() => value.clone(),
-            _ => return None,
-        };
-        let break_step = construct(&break_constructor, break_value.clone());
-        let lower_control = |control: SimpleLoopControl| match control {
-            SimpleLoopControl::Break(_) => break_step.clone(),
-            SimpleLoopControl::Continue => continue_step.clone(),
-            SimpleLoopControl::Fallthrough(expression) => Expr::Block(
-                vec![Stmt::Expr(expression)],
-                Some(Box::new(continue_step.clone())),
-            ),
-        };
-        (
-            Expr::If {
-                condition: Box::new(condition),
-                then_branch: Box::new(lower_control(then_control)),
-                else_branch: Some(Box::new(lower_control(else_control))),
-            },
-            break_value,
-        )
-    } else {
-        (continue_step, Expr::Unit)
-    };
-    Some(AsyncSourcePlan {
-        factory_body: Expr::Async {
-            body: Box::new(Expr::Block(
-                iteration_statements.to_vec(),
-                Some(Box::new(rewritten_decision)),
-            )),
-        },
-        has_await: true,
-        continuation: None,
-        retained: Vec::new(),
-        loop_step: Some(AsyncLoopStepSource {
-            binding: String::new(),
-            break_value,
-            output_hint: None,
-            probe_awaits,
-            carry_names: Vec::new(),
-            continue_constructor,
-            break_constructor,
-        }),
-        loop_condition,
-    })
-}
-
-fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
-    let loop_expression = match body.unlocated() {
-        Expr::Loop { .. } | Expr::While { .. } => body,
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
-        Expr::Block(statements, None) => {
-            let [Stmt::Expr(expression)] = statements.as_slice() else {
-                return None;
-            };
-            expression
-        }
-        _ => return None,
-    };
-    let (loop_body, loop_condition) = match loop_expression.unlocated() {
-        Expr::Loop { body } => (body.as_ref(), None),
-        Expr::While {
-            condition,
-            body,
-            post_test,
-        } => (
-            body.as_ref(),
-            Some(AsyncLoopConditionSource {
-                expression: (**condition).clone(),
-                post_test: *post_test,
-            }),
-        ),
-        _ => return None,
-    };
-    let Expr::Block(statements, tail) = loop_body.unlocated() else {
-        return None;
-    };
-    let (iteration_statements, decision) = match (statements.as_slice(), tail.as_deref()) {
-        (statements, Some(decision)) => (statements, Some(decision)),
-        ([prefix @ .., Stmt::Expr(decision)], None) => (prefix, Some(decision)),
-        (statements, None) if loop_condition.is_some() => (statements, None),
-        _ => return None,
-    };
-    let (await_statement, prefix) = iteration_statements.split_last()?;
-    let Stmt::Let(binding) = await_statement else {
-        return None;
-    };
-    let child = match binding.value.unlocated() {
-        Expr::Await(child) => (**child).clone(),
-        expression => hoist_control_await(expression)?,
-    };
-    let factory_body = if prefix.is_empty() {
-        child
-    } else {
-        Expr::Block(prefix.to_vec(), Some(Box::new(child)))
-    };
-    let (condition, then_control, else_control) = decision.map_or_else(
-        || {
-            Some((
-                Expr::Bool(false),
-                SimpleLoopControl::Break(Expr::Unit),
-                SimpleLoopControl::Continue,
-            ))
-        },
-        simple_loop_decision,
-    )?;
-    let break_value = match (&then_control, &else_control) {
-        (SimpleLoopControl::Break(value), control) if control.continues() => Some(value.clone()),
-        (control, SimpleLoopControl::Break(value)) if control.continues() => Some(value.clone()),
-        (then_control, else_control) if then_control.continues() && else_control.continues() => {
-            None
-        }
-        _ => return None,
-    };
-    let continue_constructor = format!("$async$loop$continue${id}");
-    let break_constructor = format!("$async$loop$break${id}");
-    let construct = |name: &str, value: Expr| {
-        Expr::Call(
-            Box::new(Expr::Name(name.to_owned())),
-            vec![crate::ast::CallArg { label: None, value }],
-        )
-    };
-    let continue_step = construct(&continue_constructor, Expr::Unit);
-    let break_step = break_value
-        .as_ref()
-        .map(|value| construct(&break_constructor, value.clone()));
-    let lower_control = |control: SimpleLoopControl| match control {
-        SimpleLoopControl::Break(_) => break_step
-            .clone()
-            .expect("a source break has an internal break constructor"),
-        SimpleLoopControl::Continue => continue_step.clone(),
-        SimpleLoopControl::Fallthrough(expression) => Expr::Block(
-            vec![Stmt::Expr(expression)],
-            Some(Box::new(continue_step.clone())),
-        ),
-    };
-    let then_branch = lower_control(then_control);
-    let else_branch = lower_control(else_control);
-    Some(AsyncSourcePlan {
-        factory_body,
-        has_await: true,
-        continuation: Some(AsyncContinuationSource {
-            name: binding.name.clone(),
-            mutable: binding.mutable,
-            body: Expr::If {
-                condition: Box::new(condition),
-                then_branch: Box::new(then_branch),
-                else_branch: Some(Box::new(else_branch)),
-            },
-        }),
-        retained: Vec::new(),
-        loop_step: Some(AsyncLoopStepSource {
-            binding: binding.name.clone(),
-            break_value: break_value.clone().unwrap_or(Expr::Unit),
-            output_hint: break_value.is_none().then_some(Ty::Never),
-            probe_awaits: Vec::new(),
-            carry_names: {
-                let mut names = decision.map(referenced_names).unwrap_or_default();
-                names.remove(&binding.name);
-                let mut names = names.into_iter().collect::<Vec<_>>();
-                names.sort();
-                names
-            },
-            continue_constructor,
-            break_constructor,
-        }),
-        loop_condition,
-    })
-}
-
-enum SimpleLoopControl {
-    Break(Expr),
-    Continue,
-    Fallthrough(Expr),
-}
-
-impl SimpleLoopControl {
-    fn continues(&self) -> bool {
-        matches!(self, Self::Continue | Self::Fallthrough(_))
-    }
-}
-
-fn simple_loop_decision(expression: &Expr) -> Option<(Expr, SimpleLoopControl, SimpleLoopControl)> {
-    match expression.unlocated() {
-        Expr::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => Some((
-            (**condition).clone(),
-            simple_loop_control(then_branch)?,
-            else_branch
-                .as_deref()
-                .map_or(Some(SimpleLoopControl::Continue), simple_loop_control)?,
-        )),
-        Expr::Match { scrutinee, arms } if arms.len() == 2 => {
-            let true_arm = arms
-                .iter()
-                .find(|arm| matches!(arm.pattern, crate::ast::Pattern::Bool(true)))?;
-            let false_arm = arms
-                .iter()
-                .find(|arm| matches!(arm.pattern, crate::ast::Pattern::Bool(false)))?;
-            if true_arm.guard.is_some() || false_arm.guard.is_some() {
-                return None;
-            }
-            Some((
-                (**scrutinee).clone(),
-                simple_loop_control(&true_arm.body)?,
-                simple_loop_control(&false_arm.body)?,
-            ))
-        }
-        _ => None,
-    }
-}
-
-fn simple_loop_control(expression: &Expr) -> Option<SimpleLoopControl> {
-    match expression.unlocated() {
-        Expr::Break(value) => Some(SimpleLoopControl::Break(
-            value.as_deref().cloned().unwrap_or(Expr::Unit),
-        )),
-        Expr::Continue => Some(SimpleLoopControl::Continue),
-        Expr::Unit => Some(SimpleLoopControl::Continue),
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => simple_loop_control(tail),
-        Expr::Block(statements, None) => {
-            if let [Stmt::Expr(statement)] = statements.as_slice() {
-                if let Some(control) = simple_loop_control(statement) {
-                    return Some(control);
-                }
-            }
-            is_simple_loop_fallthrough(expression)
-                .then(|| SimpleLoopControl::Fallthrough(expression.clone()))
-        }
-        _ if is_simple_loop_fallthrough(expression) => {
-            Some(SimpleLoopControl::Fallthrough(expression.clone()))
-        }
-        _ => None,
-    }
-}
-
-fn is_simple_loop_fallthrough(expression: &Expr) -> bool {
-    let mut expression = expression.clone();
-    let mut supported = true;
-    super::source_rewrite::visit_expr_mut(&mut expression, &mut |expression| {
-        if matches!(
-            expression.unlocated(),
-            Expr::Await(_)
-                | Expr::Break(_)
-                | Expr::Continue
-                | Expr::Return(_)
-                | Expr::Loop { .. }
-                | Expr::While { .. }
-        ) {
-            supported = false;
-        }
-    });
-    supported
-}
-
-fn rewrite_async_loop_continue_carry(expression: &mut Expr, constructor: &str, carry: &Expr) {
-    super::source_rewrite::visit_expr_mut(expression, &mut |expression| {
-        let Expr::Call(callee, arguments) = expression.unlocated_mut() else {
-            return;
-        };
-        if !matches!(callee.unlocated(), Expr::Name(name) if name == constructor) {
-            return;
-        }
-        let [argument] = arguments.as_mut_slice() else {
-            return;
-        };
-        argument.value = carry.clone();
-    });
-}
-
-fn split_async_source(body: &Expr) -> AsyncSourcePlan {
-    let mut body = body.clone();
-    match body.unlocated_mut() {
-        Expr::Await(operand) => {
-            return AsyncSourcePlan {
-                factory_body: (**operand).clone(),
-                has_await: true,
-                continuation: None,
-                retained: Vec::new(),
-                loop_step: None,
-                loop_condition: None,
-            };
-        }
-        expression if hoist_control_await(expression).is_some() => {
-            return AsyncSourcePlan {
-                factory_body: hoist_control_await(expression)
-                    .expect("checked control-flow await hoisting"),
-                has_await: true,
-                continuation: None,
-                retained: Vec::new(),
-                loop_step: None,
-                loop_condition: None,
-            };
-        }
-        Expr::Block(statements, Some(tail)) => {
-            if let Expr::Await(operand) = tail.unlocated() {
-                if !statements.is_empty() {
-                    let result = "$async$tail$result".to_owned();
-                    let mut rewritten = statements.clone();
-                    rewritten.push(Stmt::Let(crate::ast::Binding {
-                        mutable: false,
-                        name: result.clone(),
-                        annotation: None,
-                        value: Expr::Await(Box::new((**operand).clone())),
-                        value_source: None,
-                    }));
-                    rewritten.extend(
-                        non_borrow_binding_names(statements)
-                            .into_iter()
-                            .map(|name| Stmt::Expr(Expr::Name(name))),
-                    );
-                    return split_async_source(&Expr::Block(
-                        rewritten,
-                        Some(Box::new(Expr::Name(result))),
-                    ));
-                }
-                **tail = (**operand).clone();
-                return AsyncSourcePlan {
-                    factory_body: body,
-                    has_await: true,
-                    continuation: None,
-                    retained: Vec::new(),
-                    loop_step: None,
-                    loop_condition: None,
-                };
-            }
-            if let Some(hoisted) = hoist_control_await(tail) {
-                **tail = hoisted;
-                return AsyncSourcePlan {
-                    factory_body: body,
-                    has_await: true,
-                    continuation: None,
-                    retained: Vec::new(),
-                    loop_step: None,
-                    loop_condition: None,
-                };
-            }
-        }
-        _ => {}
-    }
-    let Expr::Block(statements, tail) = body.unlocated() else {
-        return AsyncSourcePlan {
-            factory_body: body,
-            has_await: false,
-            continuation: None,
-            retained: Vec::new(),
-            loop_step: None,
-            loop_condition: None,
-        };
-    };
-    let Some((position, binding, operand)) =
-        statements
-            .iter()
-            .enumerate()
-            .find_map(|(position, statement)| {
-                let Stmt::Let(binding) = statement else {
-                    return None;
-                };
-                let operand = match binding.value.unlocated() {
-                    Expr::Await(operand) => (**operand).clone(),
-                    expression => hoist_control_await(expression)?,
-                };
-                Some((position, binding, operand))
-            })
-    else {
-        return AsyncSourcePlan {
-            factory_body: body,
-            has_await: false,
-            continuation: None,
-            retained: Vec::new(),
-            loop_step: None,
-            loop_condition: None,
-        };
-    };
-    let continuation_body = Expr::Block(statements[position + 1..].to_vec(), tail.clone());
-    let mut referenced = referenced_names(&continuation_body);
-    let dependencies = statements[..position]
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            Some((
-                binding.name.clone(),
-                async_initializer_root(&binding.value)?,
-            ))
-        })
-        .collect::<Vec<_>>();
-    let borrowed_names = borrowed_binding_names(&statements[..position]);
-    loop {
-        let mut changed = false;
-        for (binding, referent) in &dependencies {
-            if referenced.contains(binding) {
-                changed |= referenced.insert(referent.clone());
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let mut retained = Vec::<AsyncRetainedSource>::new();
-    for statement in &statements[..position] {
-        let Stmt::Let(binding) = statement else {
-            continue;
-        };
-        if !referenced.contains(&binding.name) {
-            continue;
-        }
-        let referent = async_initializer_root(&binding.value)
-            .map(|referent| resolve_async_dependency(&referent, &dependencies));
-        if let Some(existing) = retained
-            .iter_mut()
-            .find(|retained| retained.name == binding.name)
-        {
-            *existing = AsyncRetainedSource {
-                name: binding.name.clone(),
-                referent,
-                borrowed: borrowed_names.contains(&binding.name),
-            };
-        } else {
-            retained.push(AsyncRetainedSource {
-                name: binding.name.clone(),
-                referent,
-                borrowed: borrowed_names.contains(&binding.name),
-            });
-        }
-    }
-    let factory_tail = if retained.is_empty() {
-        operand.clone()
-    } else {
-        Expr::Tuple(
-            std::iter::once(operand.clone())
-                .chain(
-                    retained
-                        .iter()
-                        .map(|retained| Expr::Name(retained.name.clone())),
-                )
-                .collect(),
-        )
-    };
-    AsyncSourcePlan {
-        factory_body: Expr::Block(
-            statements[..position].to_vec(),
-            Some(Box::new(factory_tail)),
-        ),
-        has_await: true,
-        continuation: Some(AsyncContinuationSource {
-            name: binding.name.clone(),
-            mutable: binding.mutable,
-            body: continuation_body,
-        }),
-        retained,
-        loop_step: None,
-        loop_condition: None,
-    }
-}
-
-fn hoist_control_await(expression: &Expr) -> Option<Expr> {
-    match expression.unlocated() {
-        Expr::If {
-            condition,
-            then_branch,
-            else_branch: Some(else_branch),
-        } => {
-            let then_future = branch_await_future(then_branch);
-            let else_future = branch_await_future(else_branch);
-            if then_future.is_none() && else_future.is_none() {
-                return None;
-            }
-            Some(Expr::If {
-                condition: condition.clone(),
-                then_branch: Box::new(then_future.unwrap_or_else(|| Expr::Async {
-                    body: then_branch.clone(),
-                })),
-                else_branch: Some(Box::new(else_future.unwrap_or_else(|| Expr::Async {
-                    body: else_branch.clone(),
-                }))),
-            })
-        }
-        Expr::Match { scrutinee, arms } if !arms.is_empty() => {
-            let futures = arms
-                .iter()
-                .map(|arm| branch_await_future(&arm.body))
-                .collect::<Vec<_>>();
-            if futures.iter().all(Option::is_none) {
-                return None;
-            }
-            let mut hoisted_arms = Vec::with_capacity(arms.len());
-            for (arm, future) in arms.iter().zip(futures) {
-                let mut arm = arm.clone();
-                arm.body = future.unwrap_or_else(|| Expr::Async {
-                    body: Box::new(arm.body.clone()),
-                });
-                hoisted_arms.push(arm);
-            }
-            Some(Expr::Match {
-                scrutinee: scrutinee.clone(),
-                arms: hoisted_arms,
-            })
-        }
-        Expr::Loop { body } => {
-            let (iteration, _) = terminating_loop_iteration(body)?;
-            branch_await_future(&iteration)
-        }
-        Expr::While {
-            condition,
-            body,
-            post_test,
-        } => {
-            let (iteration, break_value) = terminating_loop_iteration(body)?;
-            if break_value.is_some() {
-                return None;
-            }
-            if *post_test {
-                return branch_await_future(&iteration);
-            }
-            let condition_future = branch_await_future(condition);
-            let iteration_future = branch_await_future(&iteration);
-            match (condition_future, iteration_future) {
-                (None, Some(iteration)) => Some(Expr::If {
-                    condition: condition.clone(),
-                    then_branch: Box::new(iteration),
-                    else_branch: Some(Box::new(Expr::Async {
-                        body: Box::new(Expr::Unit),
-                    })),
-                }),
-                (Some(condition), None) => Some(Expr::Async {
-                    body: Box::new(Expr::Block(
-                        vec![Stmt::Let(crate::ast::Binding {
-                            mutable: false,
-                            name: "$async$while$condition".to_owned(),
-                            annotation: None,
-                            value: Expr::Await(Box::new(condition)),
-                            value_source: None,
-                        })],
-                        Some(Box::new(Expr::Unit)),
-                    )),
-                }),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-fn terminating_loop_iteration(body: &Expr) -> Option<(Expr, Option<Expr>)> {
-    match body.unlocated() {
-        Expr::Break(value) => Some((
-            value.as_deref().cloned().unwrap_or(Expr::Unit),
-            value.as_deref().cloned(),
-        )),
-        Expr::Block(statements, tail) => {
-            if let Some(Expr::Break(value)) = tail.as_deref().map(Expr::unlocated) {
-                return Some((
-                    Expr::Block(
-                        statements.clone(),
-                        Some(Box::new(value.as_deref().cloned().unwrap_or(Expr::Unit))),
-                    ),
-                    value.as_deref().cloned(),
-                ));
-            }
-            let (last, prefix) = statements.split_last()?;
-            let Stmt::Expr(last) = last else {
-                return None;
-            };
-            let Expr::Break(value) = last.unlocated() else {
-                return None;
-            };
-            Some((
-                Expr::Block(
-                    prefix.to_vec(),
-                    Some(Box::new(value.as_deref().cloned().unwrap_or(Expr::Unit))),
-                ),
-                value.as_deref().cloned(),
-            ))
-        }
-        _ => None,
-    }
-}
-
-fn branch_await_future(expression: &Expr) -> Option<Expr> {
-    if let Some(future) = tail_await_operand(expression) {
-        return Some(future);
-    }
-    let Expr::Block(statements, _) = expression.unlocated() else {
-        return None;
-    };
-    statements
-        .iter()
-        .any(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return false;
-            };
-            matches!(binding.value.unlocated(), Expr::Await(_))
-                || hoist_control_await(&binding.value).is_some()
-        })
-        .then(|| Expr::Async {
-            body: Box::new(expression.clone()),
-        })
-}
-
-fn heterogeneous_branch_factory(
-    expression: &Expr,
-    variants: usize,
-) -> Option<(Vec<Stmt>, Expr, Vec<Expr>)> {
-    match expression.unlocated() {
-        Expr::Match { arms, .. } if !arms.is_empty() && arms.len() == variants => {
-            Some((Vec::new(), expression.clone(), Vec::new()))
-        }
-        Expr::Block(statements, Some(tail)) => match tail.unlocated() {
-            Expr::Match { arms, .. } if !arms.is_empty() && arms.len() == variants => {
-                Some((statements.clone(), (**tail).clone(), Vec::new()))
-            }
-            Expr::Tuple(fields) if !fields.is_empty() => {
-                let selection = fields.first()?;
-                let Expr::Match { arms, .. } = selection.unlocated() else {
-                    return None;
-                };
-                if arms.is_empty() || arms.len() != variants {
-                    return None;
-                }
-                Some((statements.clone(), selection.clone(), fields[1..].to_vec()))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn wrap_heterogeneous_branch_factory(
-    prefix: Vec<Stmt>,
-    mut selection: Expr,
-    retained: &[Expr],
-    starts: &[String],
-) -> Expr {
-    match selection.unlocated_mut() {
-        Expr::Match { arms, .. } => {
-            debug_assert_eq!(arms.len(), starts.len());
-            for (variant, (arm, start)) in arms.iter_mut().zip(starts).enumerate() {
-                let binding = format!("$async$branch$value${variant}");
-                let arguments = std::iter::once(CallArg {
-                    label: None,
-                    value: Expr::Name(binding.clone()),
-                })
-                .chain(
-                    retained
-                        .iter()
-                        .cloned()
-                        .map(|value| CallArg { label: None, value }),
-                )
-                .chain(std::iter::once(CallArg {
-                    label: None,
-                    value: Expr::Name("self".to_owned()),
-                }))
-                .collect();
-                arm.body = Expr::Block(
-                    vec![Stmt::Let(crate::ast::Binding {
-                        mutable: false,
-                        name: binding.clone(),
-                        annotation: None,
-                        value: arm.body.clone(),
-                        value_source: None,
-                    })],
-                    Some(Box::new(Expr::Call(
-                        Box::new(Expr::Name(start.clone())),
-                        arguments,
-                    ))),
-                );
-            }
-        }
-        _ => unreachable!("validated heterogeneous async factory is a match"),
-    }
-    if prefix.is_empty() {
-        selection
-    } else {
-        Expr::Block(prefix, Some(Box::new(selection)))
-    }
-}
-
-fn tail_await_operand(expression: &Expr) -> Option<Expr> {
-    match expression.unlocated() {
-        Expr::Await(future) => Some((**future).clone()),
-        Expr::Block(statements, Some(tail)) => {
-            let Expr::Await(future) = tail.unlocated() else {
-                return None;
-            };
-            if statements.is_empty() {
-                Some((**future).clone())
-            } else {
-                Some(Expr::Async {
-                    body: Box::new(expression.clone()),
-                })
-            }
-        }
-        _ => None,
-    }
-}
-
-fn non_borrow_binding_names(statements: &[Stmt]) -> Vec<String> {
-    let borrowed = borrowed_binding_names(statements);
-    statements
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            (!borrowed.contains(&binding.name)).then(|| binding.name.clone())
-        })
-        .collect()
-}
-
-fn borrowed_binding_names(statements: &[Stmt]) -> std::collections::HashSet<String> {
-    let dependencies = statements
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            Some((
-                binding.name.clone(),
-                async_initializer_root(&binding.value)?,
-            ))
-        })
-        .collect::<Vec<_>>();
-    let mut borrowed = statements
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            (matches!(binding.annotation, Some(crate::ast::Type::Borrow { .. }))
-                || matches!(binding.value.unlocated(), Expr::Borrow { .. }))
-            .then(|| binding.name.clone())
-        })
-        .collect::<std::collections::HashSet<_>>();
-    loop {
-        let mut changed = false;
-        for (binding, referent) in &dependencies {
-            if borrowed.contains(referent) {
-                changed |= borrowed.insert(binding.clone());
-            }
-        }
-        if !changed {
-            return borrowed;
-        }
-    }
-}
-
-fn referenced_names(expression: &Expr) -> std::collections::HashSet<String> {
-    let mut expression = expression.clone();
-    let mut names = std::collections::HashSet::new();
-    super::source_rewrite::visit_expr_mut(&mut expression, &mut |expression| {
-        if let Expr::Name(name) = expression.unlocated() {
-            names.insert(name.clone());
-        }
-    });
-    names
-}
-
-fn async_place_root(expression: &Expr) -> Option<String> {
-    match expression.unlocated() {
-        Expr::Name(name) => Some(name.clone()),
-        Expr::Member(base, _) | Expr::Index { base, .. } => async_place_root(base),
-        _ => None,
-    }
-}
-
-fn async_initializer_root(expression: &Expr) -> Option<String> {
-    match expression.unlocated() {
-        Expr::Borrow { value, .. } => async_place_root(value),
-        expression => async_place_root(expression),
-    }
-}
-
-fn resolve_async_dependency(name: &str, dependencies: &[(String, String)]) -> String {
-    let mut resolved = name.to_owned();
-    let mut visited = std::collections::HashSet::new();
-    while visited.insert(resolved.clone()) {
-        let Some((_, referent)) = dependencies
-            .iter()
-            .rev()
-            .find(|(binding, _)| binding == &resolved)
-        else {
-            break;
-        };
-        resolved = referent.clone();
-    }
-    resolved
 }

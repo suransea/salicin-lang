@@ -336,7 +336,7 @@ impl Analyzer {
             context.guard_move_restricted = previous_guard_restrictions;
             let guard_flow = guard.as_ref().map(|_| context.flow.clone());
             let branch_expected = expected.or_else(|| {
-                if self.async_factory_depth > 0 {
+                if self.lowering.async_factory_depth > 0 {
                     return None;
                 }
                 result_ty
@@ -354,7 +354,7 @@ impl Analyzer {
                 }
             }
 
-            result_ty = Some(if self.async_factory_depth > 0 {
+            result_ty = Some(if self.lowering.async_factory_depth > 0 {
                 result_ty.unwrap_or_else(|| body.ty.clone())
             } else {
                 match result_ty {
@@ -394,7 +394,7 @@ impl Analyzer {
         if arms.is_empty() && !layout.variants.is_empty() {
             self.error("match must contain at least one arm");
         }
-        if self.async_factory_depth > 0 && !lowered_arms.is_empty() {
+        if self.lowering.async_factory_depth > 0 && !lowered_arms.is_empty() {
             let branch_types = lowered_arms
                 .iter()
                 .map(|arm| arm.body.ty.clone())
@@ -626,6 +626,7 @@ impl Analyzer {
                     return (HirMatcher::All, bindings, literal_conditions);
                 };
                 let source_name = self
+                    .collection
                     .nominal_instances
                     .get(&layout.name)
                     .map(|instance| instance.key.template.as_str())
@@ -804,6 +805,7 @@ impl Analyzer {
                     return;
                 };
                 let source_name = self
+                    .collection
                     .nominal_instances
                     .get(struct_name)
                     .map(|instance| instance.key.template.as_str())
