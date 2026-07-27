@@ -1,7 +1,7 @@
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 
 let increment(value: i32): i32 = { value + 1 }
-let dangerous(value: i32): i32 with(unsafe_effect) = { value + 1 }
+let dangerous(value: i32): i32 with(unsafety) = { value + 1 }
 
 let apply(comptime e: effects)
   (action: (i32): i32 with(e))

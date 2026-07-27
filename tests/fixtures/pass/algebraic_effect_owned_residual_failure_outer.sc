@@ -1,5 +1,5 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let step = effect {
   let delta(): i32
@@ -18,18 +18,18 @@ extend(state, droppable) {
   }
 }
 
-let accept(fail: bool): i32 with(throws(bool)) = {
+let accept(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) } else { 0 }
 }
 
-let update(state: borrow(mut)(state), fail: bool): i32 with(step, throws(bool)) = {
+let update(state: borrow(mut)(state), fail: bool): i32 with(step, throwing(bool)) = {
   let accepted = accept(fail)
   let delta = step.delta()
   state.value = state.value + delta
   state.value + accepted
 }
 
-let run(drops: ptr(mut)(i32), fail: bool): i32 with(throws(bool)) = {
+let run(drops: ptr(mut)(i32), fail: bool): i32 with(throwing(bool)) = {
   let mut state = state { value: 20, drops: drops }
   step.handle delta { (resume) ->
       resume(1)
@@ -54,6 +54,6 @@ let main(): i32 = {
   (success ?? 0) + (failure ?? 5) + drop_count + 14
 }
 
-test("algebraic_effect_owned_residual_throws_outer.sc") {
+test("algebraic_effect_owned_residual_failure_outer.sc") {
   main() == 42
 }

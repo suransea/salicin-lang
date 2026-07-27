@@ -1,7 +1,7 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let read(fail: bool): i32 with(throws(bool)) = {
+let read(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) } else { 40 }
 }
 

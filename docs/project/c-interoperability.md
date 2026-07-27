@@ -45,8 +45,8 @@ A foreign declaration:
 - has no compile-time parameter group;
 - uses only inferred parameter modes;
 - has an explicit result;
-- has no explicit `throws` or custom effect;
-- implicitly requires `unsafe_effect` at every call;
+- has no explicit `throwing` or custom effect;
+- implicitly requires `unsafety` at every call;
 - uses `foreign(c)` for the local declaration name or
   `foreign(c, "symbol")` for an explicit validated ASCII C symbol.
 

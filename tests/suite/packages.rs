@@ -1340,12 +1340,12 @@ fn prelude_never_coerces_through_diverging_calls() {
     let source = temporary.write(
         "never.sc",
         r#"use std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 let stop(): never = { loop {} }
 let absurd(move value: never): i32 = { value }
 let propagate(move value: never): result(())(i32) = { value }
-let raise_unit(): never with(throws(())) = { throw(error: ())(()) }
-let throw_never(): i32 with(throws(())) = { raise_unit() }
+let raise_unit(): never with(throwing(())) = { throw(error: ())(()) }
+let throw_never(): i32 with(throwing(())) = { raise_unit() }
 let empty = enum {}
 let holder = struct { value: empty }
 let project(move holder: holder): i32 = { holder.value }

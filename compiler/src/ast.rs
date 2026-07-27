@@ -284,9 +284,9 @@ pub enum ForeignAbi {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FunctionEffects {
-    pub unsafe_effect: bool,
+    pub unsafety: bool,
     /// Error type propagated automatically by calls and handled by `try { ... }`.
-    pub throws: Option<Box<Type>>,
+    pub failure: Option<Box<Type>>,
     /// Nominal user-defined marker effects, canonicalized by module lowering.
     pub custom: Vec<Type>,
     /// Compile-time effect-row parameters awaiting generic instantiation.
@@ -333,7 +333,7 @@ pub enum Sort {
     Region,
     /// An immutable UTF-8 metadata string erased before runtime lowering.
     String,
-    /// A single nominal effect identity such as `Unsafe` or `throws(Error)`.
+    /// A single nominal effect identity such as `Unsafe` or `throwing(Error)`.
     Effect,
     /// A normalized, order-insensitive row of zero or more effect identities.
     Effects,

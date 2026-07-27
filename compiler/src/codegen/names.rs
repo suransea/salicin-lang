@@ -168,8 +168,8 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
                     push_canonical_component(&mut encoded, &canonical_type_encoding(parameter));
                 }
             }
-            encoded.push_str(if function.unsafe_effect { "u:" } else { "p:" });
-            match &function.throws_error {
+            encoded.push_str(if function.unsafety { "u:" } else { "p:" });
+            match &function.failure_error {
                 Some(error) => {
                     encoded.push_str("t:");
                     push_canonical_component(&mut encoded, &canonical_type_encoding(error));
@@ -249,16 +249,16 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
             encoded
         }
         Ty::EffectRow {
-            unsafe_effect,
-            throws_error,
+            unsafety,
+            failure_error,
             custom_effects,
         } => {
-            let mut encoded = if *unsafe_effect {
+            let mut encoded = if *unsafety {
                 "effect-row-u".to_owned()
             } else {
                 "effect-row-p".to_owned()
             };
-            match throws_error {
+            match failure_error {
                 Some(error) => {
                     encoded.push_str("t:");
                     push_canonical_component(&mut encoded, &canonical_type_encoding(error));
@@ -377,20 +377,20 @@ fn function_abi_encoding(analyzer: &Analyzer, name: &str, function: &HirFunction
         &value_abi_encoding(&analyzer.stable_abi_type(&function.result)),
     );
     if let Some(signature) = analyzer.signatures.get(name) {
-        encoded.push_str(if signature.unsafe_effect {
+        encoded.push_str(if signature.unsafety {
             "unsafe:"
         } else {
             "pure:"
         });
-        match &signature.throws_error {
+        match &signature.failure_error {
             Some(error) => {
-                encoded.push_str("throws:");
+                encoded.push_str("failure:");
                 push_canonical_component(
                     &mut encoded,
                     &value_abi_encoding(&analyzer.stable_abi_type(error)),
                 );
             }
-            None => encoded.push_str("nothrows:"),
+            None => encoded.push_str("nofailure:"),
         }
         encoded.push_str(&format!("effects{}:", signature.custom_effects.len()));
         for effect in &signature.custom_effects {
@@ -433,8 +433,8 @@ impl Analyzer {
                         *parameter = self.stable_abi_type(parameter);
                     }
                 }
-                function.throws_error = function
-                    .throws_error
+                function.failure_error = function
+                    .failure_error
                     .map(|error| Box::new(self.stable_abi_type(&error)));
                 function.result = Box::new(self.stable_abi_type(&function.result));
                 Ty::Function(function)
@@ -449,9 +449,9 @@ impl Analyzer {
                         *parameter = self.stable_abi_type(parameter);
                     }
                 }
-                callable.signature.throws_error = callable
+                callable.signature.failure_error = callable
                     .signature
-                    .throws_error
+                    .failure_error
                     .map(|error| Box::new(self.stable_abi_type(&error)));
                 callable.signature.result =
                     Box::new(self.stable_abi_type(&callable.signature.result));
@@ -471,12 +471,12 @@ impl Analyzer {
                 answer: Box::new(self.stable_abi_type(answer)),
             },
             Ty::EffectRow {
-                unsafe_effect,
-                throws_error,
+                unsafety,
+                failure_error,
                 custom_effects,
             } => Ty::EffectRow {
-                unsafe_effect: *unsafe_effect,
-                throws_error: throws_error
+                unsafety: *unsafety,
+                failure_error: failure_error
                     .as_ref()
                     .map(|error| Box::new(self.stable_abi_type(error))),
                 custom_effects: custom_effects.clone(),

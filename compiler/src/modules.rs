@@ -499,10 +499,10 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
 const CORE_FLOW_EXPORTS: &[&str] = &["chain", "coalesce", "unwrap", "raise"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["continuation", "effect_callable", "handle"];
 const CORE_RESULT_EXPORTS: &[&str] = &["result"];
-const CORE_ERROR_EXPORTS: &[&str] = &["throws", "try", "throw"];
-const CORE_UNSAFE_EXPORTS: &[&str] = &["unsafe_effect", "unsafe"];
+const CORE_ERROR_EXPORTS: &[&str] = &["throwing", "try", "throw"];
+const CORE_UNSAFE_EXPORTS: &[&str] = &["unsafety", "unsafe"];
 const CORE_ASYNC_EXPORTS: &[&str] = &[
-    "async_effect",
+    "suspension",
     "poll",
     "future",
     "executor",
@@ -526,9 +526,9 @@ const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "mut", "shared", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["array", "slice", "ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "break_effect",
-    "continue_effect",
-    "return_effect",
+    "loop_exit",
+    "iteration_skip",
+    "function_exit",
     "attempt",
     "break",
     "continue",
@@ -3125,7 +3125,7 @@ impl Resolver {
         if let Some(return_type) = &mut function.return_type {
             self.rewrite_type(return_type, context, &type_scope);
         }
-        if let Some(error) = &mut function.effects.throws {
+        if let Some(error) = &mut function.effects.failure {
             self.rewrite_type(error, context, &type_scope);
         }
         for effect in &mut function.effects.custom {
@@ -3257,7 +3257,7 @@ impl Resolver {
                 for ty in groups.iter_mut().flatten() {
                     self.rewrite_type(ty, context, type_scope);
                 }
-                if let Some(error) = &mut effects.throws {
+                if let Some(error) = &mut effects.failure {
                     self.rewrite_type(error, context, type_scope);
                 }
                 for effect in &mut effects.custom {

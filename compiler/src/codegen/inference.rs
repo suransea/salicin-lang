@@ -68,7 +68,7 @@ impl Analyzer {
         if runtime_groups.len() == template.groups.len() {
             if let (Some(expected), Some(result)) = (expected, template.return_type.as_ref()) {
                 if *expected != Ty::Error {
-                    let logical_result = if template.effects.throws.is_some() {
+                    let logical_result = if template.effects.failure.is_some() {
                         match result {
                             Type::Named(_, arguments) if arguments.len() == 2 => &arguments[0],
                             _ => result,
@@ -607,9 +607,9 @@ impl Analyzer {
                 {
                     return Err(mismatch());
                 }
-                let (throws_changed, selected_throws) = match (
-                    effects.throws.as_deref(),
-                    actual_function.throws_error.as_deref(),
+                let (failure_changed, selected_failure) = match (
+                    effects.failure.as_deref(),
+                    actual_function.failure_error.as_deref(),
                 ) {
                     (None, None) => (false, None),
                     (None, Some(actual_error)) if !effects.parameters.is_empty() => {
@@ -631,7 +631,7 @@ impl Analyzer {
                 let template_unsafe = self.function_effects_unsafe(effects);
                 let fixed_custom = self.function_effects_custom_identities(effects);
                 if effects.parameters.is_empty()
-                    && ((actual_function.unsafe_effect && !template_unsafe)
+                    && ((actual_function.unsafety && !template_unsafe)
                         || actual_function
                             .custom_effects
                             .iter()
@@ -639,8 +639,8 @@ impl Analyzer {
                 {
                     return Err(mismatch());
                 }
-                let mut changed = throws_changed;
-                let selected_unsafe = actual_function.unsafe_effect && !template_unsafe;
+                let mut changed = failure_changed;
+                let selected_unsafe = actual_function.unsafety && !template_unsafe;
                 let selected_custom = actual_function
                     .custom_effects
                     .iter()
@@ -648,10 +648,10 @@ impl Analyzer {
                     .cloned()
                     .collect::<Vec<_>>();
                 for parameter in &effects.parameters {
-                    let source_error = selected_throws
+                    let source_error = selected_failure
                         .as_ref()
                         .and_then(|error| self.source_type_for_ty(error));
-                    if selected_throws.is_some() && source_error.is_none() {
+                    if selected_failure.is_some() && source_error.is_none() {
                         return Err(format!(
                             "cannot preserve the thrown error type while inferring effect parameter `{parameter}` from {origin}"
                         ));
@@ -659,8 +659,8 @@ impl Analyzer {
                     let source = effect_row_source(selected_unsafe, source_error, &selected_custom);
                     let selected = InferredTypeArgument {
                         ty: Ty::EffectRow {
-                            unsafe_effect: selected_unsafe,
-                            throws_error: selected_throws.clone().map(Box::new),
+                            unsafety: selected_unsafe,
+                            failure_error: selected_failure.clone().map(Box::new),
                             custom_effects: selected_custom.clone(),
                         },
                         source: Some(source),
@@ -706,14 +706,14 @@ impl Analyzer {
                         )?;
                     }
                 }
-                let actual_logical_result = if actual_function.throws_error.is_some() {
+                let actual_logical_result = if actual_function.failure_error.is_some() {
                     self.standard_fallible_info_for_ty(&actual_function.result)
                         .map(|info| info.payload)
                         .ok_or_else(mismatch)?
                 } else {
                     (*actual_function.result).clone()
                 };
-                let actual_logical_source = if actual_function.throws_error.is_some() {
+                let actual_logical_source = if actual_function.failure_error.is_some() {
                     actual_source_function.and_then(|(_, result)| match result {
                         Type::Named(_, arguments) if arguments.len() == 2 => arguments.first(),
                         _ => None,
@@ -1015,8 +1015,8 @@ impl Analyzer {
                 effects,
                 result,
             } => {
-                let mut unsafe_effect = self.function_effects_unsafe(effects);
-                let mut throws_error = match effects.throws.as_deref() {
+                let mut unsafety = self.function_effects_unsafe(effects);
+                let mut failure_error = match effects.failure.as_deref() {
                     Some(error) => Some(Box::new(self.resolved_template_ty(
                         error,
                         compile_parameters,
@@ -1027,21 +1027,21 @@ impl Analyzer {
                 let mut custom_effects = self.function_effects_custom_identities(effects);
                 for parameter in &effects.parameters {
                     let Ty::EffectRow {
-                        unsafe_effect: selected_unsafe,
-                        throws_error: selected_throws,
+                        unsafety: selected_unsafe,
+                        failure_error: selected_failure,
                         custom_effects: selected_custom,
                     } = &inferred.get(parameter)?.ty
                     else {
                         return None;
                     };
-                    if let Some(selected_throws) = selected_throws {
-                        if throws_error
+                    if let Some(selected_failure) = selected_failure {
+                        if failure_error
                             .as_ref()
-                            .is_some_and(|fixed| **fixed != **selected_throws)
+                            .is_some_and(|fixed| **fixed != **selected_failure)
                         {
                             return None;
                         }
-                        throws_error = Some(selected_throws.clone());
+                        failure_error = Some(selected_failure.clone());
                     }
                     if custom_effects
                         .iter()
@@ -1052,7 +1052,7 @@ impl Analyzer {
                     if selected_custom.iter().any(|effect| effect.is_empty()) {
                         return None;
                     }
-                    unsafe_effect |= *selected_unsafe;
+                    unsafety |= *selected_unsafe;
                     custom_effects.extend(selected_custom.clone());
                 }
                 custom_effects.sort();
@@ -1069,8 +1069,8 @@ impl Analyzer {
                                 .collect::<Option<Vec<_>>>()
                         })
                         .collect::<Option<Vec<_>>>()?,
-                    unsafe_effect,
-                    throws_error,
+                    unsafety,
+                    failure_error,
                     custom_effects,
                     result: Box::new(self.resolved_template_ty(
                         result,
@@ -1336,7 +1336,7 @@ impl Analyzer {
                                     )?);
                                 }
                                 let effect = Type::Named(name.clone(), source_arguments);
-                                if self.is_standard_unsafe_effect_source(&effect) {
+                                if self.is_standard_unsafety_source(&effect) {
                                     effect_row_source(true, None, &[])
                                 } else {
                                     effect_row_source(
@@ -1367,7 +1367,7 @@ impl Analyzer {
                             }
                             _ => {
                                 self.error(format!(
-                                "compile-time argument `{}` in `{owner}` expects sort {}; write `pure`, `Unsafe`, `throws(Error)`, or a declared custom effect",
+                                "compile-time argument `{}` in `{owner}` expects sort {}; write `pure`, `Unsafe`, `throwing(Error)`, or a declared custom effect",
                                 parameter.name,
                                 describe_compile_sort(parameter.kind.clone()),
                             ));
@@ -1558,8 +1558,8 @@ impl Analyzer {
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
                         ty: Ty::EffectRow {
-                            unsafe_effect: false,
-                            throws_error: None,
+                            unsafety: false,
+                            failure_error: None,
                             custom_effects: Vec::new(),
                         },
                         source: Some(effect_row_source(false, None, &[])),
@@ -1676,8 +1676,8 @@ impl Analyzer {
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
                         ty: Ty::EffectRow {
-                            unsafe_effect: false,
-                            throws_error: None,
+                            unsafety: false,
+                            failure_error: None,
                             custom_effects: Vec::new(),
                         },
                         source: Some(effect_row_source(false, None, &[])),

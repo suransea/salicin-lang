@@ -1,7 +1,7 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let choose(flag: bool): i32 with(throws(bool)) = {
+let choose(flag: bool): i32 with(throwing(bool)) = {
   if flag {
     throw(true)
   } else {

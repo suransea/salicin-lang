@@ -1,4 +1,4 @@
-pub let async_effect = core.async.async_effect
+pub let suspension = core.async.suspension
 pub let poll = core.async.poll
 pub let future = core.async.future
 pub let executor = core.async.executor

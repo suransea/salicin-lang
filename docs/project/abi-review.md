@@ -57,8 +57,8 @@ contract; exported definitions include their ownership modes in the linkage
 fingerprint.
 
 Effect rows have no standalone runtime argument in direct specialized calls.
-`unsafe_effect` is static authority. Algebraic effects are specialized into
-continuation-bearing control flow. `throws(error)` uses the corresponding
+`unsafety` is static authority. Algebraic effects are specialized into
+continuation-bearing control flow. `throwing(error)` uses the corresponding
 `result(error)(output)` enum as its runtime return boundary.
 
 ## Module And Symbol Boundaries
@@ -73,8 +73,8 @@ generic specialization ownership, and collision behavior.
 ## C Boundary
 
 `foreign(c)` and `foreign(c, "symbol")` declare one external C symbol and
-implicitly require `unsafe_effect` at calls. A declaration must have exactly one
-runtime parameter group, no compile-time runtime residue, no `throws` or
+implicitly require `unsafety` at calls. A declaration must have exactly one
+runtime parameter group, no compile-time runtime residue, no `throwing` or
 custom effect row, integer or raw-pointer parameters, and an integer,
 raw-pointer, or unit result. `bool`, borrows, slices, Salicin aggregates,
 callables, continuations, and effect callables are rejected at the source

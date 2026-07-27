@@ -55,10 +55,10 @@ extend(result(e)(t), core.flow.raise) {
   let output = t
   let error = e
 
-  let raise(move self): t with(core.error.throws(e)) = {
+  let raise(move self): t with(core.error.throwing(e)) = {
     match self
       { ok(value) -> value }
-      { err(error) -> core.error.throws(e).raise(error) }
+      { err(error) -> core.error.throwing(e).raise(error) }
   }
 }
 

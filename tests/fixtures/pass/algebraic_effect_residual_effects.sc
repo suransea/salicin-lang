@@ -1,21 +1,21 @@
 let result = std.result
 
-let throws = std.error.throws
-let unsafe_effect = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafety = std.unsafe.unsafety
 
 let supply = effect {
   let seed(): i32
 }
 
 let ask = effect {
-  let value(): i32 with(supply, throws(bool), unsafe_effect)
+  let value(): i32 with(supply, throwing(bool), unsafety)
 }
 
-let request(): i32 with(ask, supply, throws(bool), unsafe_effect) = {
+let request(): i32 with(ask, supply, throwing(bool), unsafety) = {
   ask.value()
 }
 
-let run(): i32 with(supply, throws(bool)) = {
+let run(): i32 with(supply, throwing(bool)) = {
   unsafe {
     ask.handle value { (resume) -> resume(42) } action {
         request()

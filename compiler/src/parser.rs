@@ -508,14 +508,14 @@ impl Parser {
         } else {
             None
         };
-        let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
-        if throws_error.is_some() && logical_result.is_none() {
+        let (effects, failure_error, has_effect_group) = self.function_effect_clause()?;
+        if failure_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
-            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
+            logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
         self.effect_parameters_in_scope.clear();
 
         if !compile_groups.is_empty() || !groups.is_empty() {
@@ -620,7 +620,7 @@ impl Parser {
                 groups,
                 return_type: annotation,
                 effects: FunctionEffects {
-                    unsafe_effect: true,
+                    unsafety: true,
                     ..FunctionEffects::default()
                 },
                 where_predicates: Vec::new(),
@@ -830,8 +830,8 @@ impl Parser {
             }
             self.expect(&TokenKind::Colon, "`:` before effect operation result type")?;
             let logical_result = self.function_result_type()?;
-            let (effects, throws_error, _) = self.function_effect_clause()?;
-            let return_type = Some(Self::apply_throws_effect(logical_result, throws_error));
+            let (effects, failure_error, _) = self.function_effect_clause()?;
+            let return_type = Some(Self::apply_failure_effect(logical_result, failure_error));
             self.effect_parameters_in_scope.clear();
             if self.at(&TokenKind::Where) {
                 return Err(
@@ -1135,14 +1135,14 @@ impl Parser {
         } else {
             None
         };
-        let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
-        if throws_error.is_some() && logical_result.is_none() {
+        let (effects, failure_error, has_effect_group) = self.function_effect_clause()?;
+        if failure_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
-            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
+            logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
         self.effect_parameters_in_scope.clear();
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -2438,14 +2438,14 @@ impl Parser {
         } else {
             None
         };
-        let (effects, throws_error, _has_effect_group) = self.function_effect_clause()?;
-        if throws_error.is_some() && logical_result.is_none() {
+        let (effects, failure_error, _has_effect_group) = self.function_effect_clause()?;
+        if failure_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let return_type =
-            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
+            logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
         self.effect_parameters_in_scope.clear();
 
         if compile_groups.is_empty() && groups.is_empty() {
@@ -2495,8 +2495,8 @@ impl Parser {
 
         self.advance();
         self.expect(&TokenKind::LParen, "`(` after `with`")?;
-        let unsafe_effect = false;
-        let throws_error: Option<Type> = None;
+        let unsafety = false;
+        let failure_error: Option<Type> = None;
         let mut effect_parameters = Vec::new();
         let mut custom = Vec::new();
         loop {
@@ -2572,7 +2572,7 @@ impl Parser {
                 }
             } else {
                 return Err(self.error_here(
-                    "expected `throws(Error)`, `Unsafe`, an effect parameter, or a custom effect name in `with(...)`",
+                    "expected `throwing(Error)`, `Unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -2589,18 +2589,18 @@ impl Parser {
         effect_parameters.sort();
         Ok((
             FunctionEffects {
-                unsafe_effect,
-                throws: throws_error.clone().map(Box::new),
+                unsafety,
+                failure: failure_error.clone().map(Box::new),
                 custom,
                 parameters: effect_parameters,
             },
-            throws_error,
+            failure_error,
             true,
         ))
     }
 
-    fn apply_throws_effect(output: Type, throws_error: Option<Type>) -> Type {
-        match throws_error {
+    fn apply_failure_effect(output: Type, failure_error: Option<Type>) -> Type {
+        match failure_error {
             None => output,
             Some(error) => Type::Named("result".to_owned(), vec![error, output]),
         }
@@ -3091,8 +3091,8 @@ impl Parser {
             return Err(self.error_here("function types require `:` before the result type"));
         }
         let logical_result = self.function_result_type()?;
-        let (effects, throws_error, _has_effect_clause) = self.function_effect_clause()?;
-        let result = Self::apply_throws_effect(logical_result, throws_error);
+        let (effects, failure_error, _has_effect_clause) = self.function_effect_clause()?;
+        let result = Self::apply_failure_effect(logical_result, failure_error);
         Ok(Type::Function {
             groups,
             effects,
@@ -5592,7 +5592,7 @@ fn normalize_function_effect_region_qualifiers(
     regions: &HashSet<String>,
     accesses: &HashSet<String>,
 ) -> Result<(), String> {
-    if let Some(error) = &mut effects.throws {
+    if let Some(error) = &mut effects.failure {
         normalize_type_region_qualifiers(error, regions, accesses)?;
     }
     for effect in &mut effects.custom {
@@ -5782,7 +5782,7 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
             for ty in groups.iter().flatten() {
                 validate_type_effects(ty, effects)?;
             }
-            if let Some(error) = &function_effects.throws {
+            if let Some(error) = &function_effects.failure {
                 validate_type_effects(error, effects)?;
             }
             validate_type_effects(result, effects)
@@ -5871,7 +5871,7 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             for ty in groups.iter().flatten() {
                 validate_type_accesses(ty, accesses)?;
             }
-            if let Some(error) = &effects.throws {
+            if let Some(error) = &effects.failure {
                 validate_type_accesses(error, accesses)?;
             }
             validate_type_accesses(result, accesses)
@@ -6094,7 +6094,7 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             for ty in groups.iter().flatten() {
                 validate_type_regions(ty, regions)?;
             }
-            if let Some(error) = &effects.throws {
+            if let Some(error) = &effects.failure {
                 validate_type_regions(error, regions)?;
             }
             validate_type_regions(result, regions)
@@ -6532,14 +6532,14 @@ mod tests {
     #[test]
     fn parses_function_effects_and_rejects_them_on_values() {
         let program =
-            parse("let read(pointer: ptr(i32)): i32 with(unsafe_effect) = { *pointer }\n").unwrap();
+            parse("let read(pointer: ptr(i32)): i32 with(unsafety) = { *pointer }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(!function.effects.unsafe_effect);
+        assert!(!function.effects.unsafety);
         assert_eq!(
             function.effects.custom,
-            vec![Type::Named("unsafe_effect".to_owned(), Vec::new())]
+            vec![Type::Named("unsafety".to_owned(), Vec::new())]
         );
 
         let program = parse(
@@ -6553,25 +6553,25 @@ mod tests {
         assert!(error.message.contains("expected a newline or `;`"));
 
         let program =
-            parse("let fallible(): i32 with(throws(bool), unsafe_effect) = { throw(true) }\n")
+            parse("let fallible(): i32 with(throwing(bool), unsafety) = { throw(true) }\n")
                 .unwrap();
         let Item::Function(fallible) = &program.items[0] else {
             panic!("expected fallible function");
         };
         assert_eq!(fallible.return_type, Some(Type::I32));
-        assert!(!fallible.effects.unsafe_effect);
-        assert_eq!(fallible.effects.throws, None);
+        assert!(!fallible.effects.unsafety);
+        assert_eq!(fallible.effects.failure, None);
         assert_eq!(
             fallible.effects.custom,
             vec![
-                Type::Named("throws".to_owned(), vec![Type::Bool]),
-                Type::Named("unsafe_effect".to_owned(), Vec::new())
+                Type::Named("throwing".to_owned(), vec![Type::Bool]),
+                Type::Named("unsafety".to_owned(), Vec::new())
             ]
         );
 
         for source in [
-            "let f(): i32 with(unsafe_effect, unsafe_effect) = { 0 }\n",
-            "let f(): i32 with(throws(bool), throws(bool)) = { 0 }\n",
+            "let f(): i32 with(unsafety, unsafety) = { 0 }\n",
+            "let f(): i32 with(throwing(bool), throwing(bool)) = { 0 }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
@@ -7381,7 +7381,7 @@ mod tests {
         let foreign = function.foreign.as_ref().expect("foreign metadata");
         assert_eq!(foreign.abi, ForeignAbi::C);
         assert_eq!(foreign.link_name, "abs");
-        assert!(function.effects.unsafe_effect);
+        assert!(function.effects.unsafety);
         assert!(function.body.is_none());
         assert_eq!(function.groups.len(), 1);
         assert_eq!(program.item_visibilities[0], Visibility::Public);
@@ -7415,7 +7415,7 @@ mod tests {
                 "require an explicit result type",
             ),
             (
-                "let abs(value: i32): i32 with(unsafe_effect) = foreign(c)\n",
+                "let abs(value: i32): i32 with(unsafety) = foreign(c)\n",
                 "cannot declare effects",
             ),
             (
@@ -7685,9 +7685,10 @@ mod tests {
         };
         assert!(matches!(function_tail(other), Expr::DoBlock { .. }));
 
-        let member =
-            parse("let unwrap(value: result(bool)(i32)): i32 with(throws(bool)) = { value.try }\n")
-                .unwrap();
+        let member = parse(
+            "let unwrap(value: result(bool)(i32)): i32 with(throwing(bool)) = { value.try }\n",
+        )
+        .unwrap();
         let Item::Function(member) = &member.items[0] else {
             panic!("expected function");
         };
@@ -7893,7 +7894,7 @@ mod tests {
     fn handler_action_ends_the_trailing_group_sequence() {
         let program = parse(
             "let run(): i32 = {\n\
-               let ignored = continue_effect.handle\n\
+               let ignored = iteration_skip.handle\n\
                  next { () }\n\
                  action { () }\n\
                if true { 42 } else { 0 }\n\
@@ -8610,7 +8611,7 @@ mod tests {
     fn parses_effect_parameters_in_with_clauses() {
         let program = parse(
             "let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }\n\
-             let combined(comptime e: effects)(value: i32): i32 with(unsafe_effect, e) = { value }\n",
+             let combined(comptime e: effects)(value: i32): i32 with(unsafety, e) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -8623,7 +8624,7 @@ mod tests {
         };
         assert_eq!(
             combined.effects.custom,
-            vec![Type::Named("unsafe_effect".to_owned(), Vec::new())]
+            vec![Type::Named("unsafety".to_owned(), Vec::new())]
         );
         assert_eq!(combined.effects.parameters, vec!["e"]);
 
@@ -8691,8 +8692,8 @@ mod tests {
     #[test]
     fn parses_compiler_provided_sort_and_control_contract_declarations() {
         let program = parse(
-            "pub let unsafe_effect = effect {}\n\
-             pub let throws(comptime error: type) = effect { let raise(move error: error): never }\n\
+            "pub let unsafety = effect {}\n\
+             pub let throwing(comptime error: type) = effect { let raise(move error: error): never }\n\
              pub let type: sort\n\
              pub let effect: sort\n\
              pub let effects: sort\n\

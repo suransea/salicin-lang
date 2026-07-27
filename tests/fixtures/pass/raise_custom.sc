@@ -1,5 +1,5 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 let raise = std.flow.raise
 
 let stored = enum {
@@ -11,22 +11,22 @@ extend(stored, raise) {
   let output = i32
   let error = bool
 
-  let raise(move self): i32 with(throws(bool)) = {
+  let raise(move self): i32 with(throwing(bool)) = {
     match self
       { value(value) -> value }
       { failure(error) -> throw(error) }
   }
 }
 
-let extract(move stored: stored): i32 with(throws(bool)) = {
+let extract(move stored: stored): i32 with(throwing(bool)) = {
   stored!
 }
 
-let extract_direct(move stored: stored): i32 with(throws(bool)) = {
+let extract_direct(move stored: stored): i32 with(throwing(bool)) = {
   stored.raise()
 }
 
-let extract_local(): i32 with(throws(bool)) = {
+let extract_local(): i32 with(throwing(bool)) = {
   let stored: stored = stored.value(42)
   stored.raise()
 }

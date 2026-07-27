@@ -92,14 +92,14 @@ fn borrowed_async_residual_effect_captures_specialize_under_handler() {
 }
 
 #[test]
-fn ready_tail_await_and_post_await_async_throws_specialize_under_try() {
+fn ready_tail_await_and_post_await_async_failure_specialize_under_try() {
     for (name, output) in batched_native_fixture_outputs(&[
-        "async_residual_throws.sc",
-        "async_residual_throws_tail_await.sc",
-        "async_residual_throws_await.sc",
-        "async_residual_later_throws.sc",
-        "async_residual_later_await_throws.sc",
-        "async_residual_loop_await_throws.sc",
+        "async_residual_failure.sc",
+        "async_residual_failure_tail_await.sc",
+        "async_residual_failure_await.sc",
+        "async_residual_later_failure.sc",
+        "async_residual_later_await_failure.sc",
+        "async_residual_loop_await_failure.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -111,7 +111,7 @@ fn ready_tail_await_and_post_await_async_throws_specialize_under_try() {
 }
 
 #[test]
-fn suspended_residual_async_effects_specialize_and_cancel() {
+fn suspended_residual_suspensions_specialize_and_cancel() {
     for (name, output) in batched_native_fixture_outputs(&[
         "async_residual_tail_await.sc",
         "async_residual_post_await.sc",
@@ -173,7 +173,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
     assert!(!multiple.status.success(), "{}", output_text(&multiple));
     assert!(
         String::from_utf8_lossy(&multiple.stderr).contains(
-            "await residual throws and algebraic effects require poll/resume handler specialization"
+            "await residual failure and algebraic effects require poll/resume handler specialization"
         ),
         "{}",
         output_text(&multiple)

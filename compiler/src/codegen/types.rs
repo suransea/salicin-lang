@@ -115,9 +115,9 @@ impl Analyzer {
                         .iter()
                         .map(|group| group.iter().map(|ty| self.lower_source_type(ty)).collect())
                         .collect(),
-                    unsafe_effect: self.function_effects_unsafe(effects),
-                    throws_error: effects
-                        .throws
+                    unsafety: self.function_effects_unsafe(effects),
+                    failure_error: effects
+                        .failure
                         .as_deref()
                         .map(|error| Box::new(self.lower_source_type(error))),
                     custom_effects: self.function_effects_custom_identities(effects),
@@ -235,15 +235,15 @@ impl Analyzer {
                 .expect("primitive lang-item guard matched")
             }
             Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
-                let Some((unsafe_effect, throws_error, custom_effects)) =
+                let Some((unsafety, failure_error, custom_effects)) =
                     effect_row_from_source(source)
                 else {
                     self.error("effect row carries more than one thrown error type");
                     return Ty::Error;
                 };
                 Ty::EffectRow {
-                    unsafe_effect,
-                    throws_error: throws_error
+                    unsafety,
+                    failure_error: failure_error
                         .as_ref()
                         .map(|error| Box::new(self.lower_source_type(error))),
                     custom_effects,
@@ -513,9 +513,9 @@ impl Analyzer {
                     })
                     .collect::<Option<Vec<_>>>()?,
                 effects: FunctionEffects {
-                    unsafe_effect: function.unsafe_effect,
-                    throws: function
-                        .throws_error
+                    unsafety: function.unsafety,
+                    failure: function
+                        .failure_error
                         .as_deref()
                         .and_then(|error| self.source_type_for_ty(error))
                         .map(Box::new),
@@ -547,12 +547,12 @@ impl Analyzer {
                 ],
             )),
             Ty::EffectRow {
-                unsafe_effect,
-                throws_error,
+                unsafety,
+                failure_error,
                 custom_effects,
             } => Some(effect_row_source(
-                *unsafe_effect,
-                throws_error
+                *unsafety,
+                failure_error
                     .as_deref()
                     .and_then(|error| self.source_type_for_ty(error)),
                 custom_effects,
@@ -653,8 +653,8 @@ impl Analyzer {
                 rendered.push_str(": ");
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
                 let mut effects = function.custom_effects.clone();
-                if function.unsafe_effect {
-                    effects.insert(0, "unsafe_effect".to_owned());
+                if function.unsafety {
+                    effects.insert(0, "unsafety".to_owned());
                 }
                 if !effects.is_empty() {
                     rendered.push_str(" with(");
@@ -1034,7 +1034,7 @@ impl Analyzer {
                             );
                         }
                         let effect = Type::Named(name.clone(), source_arguments);
-                        if self.is_standard_unsafe_effect_source(&effect) {
+                        if self.is_standard_unsafety_source(&effect) {
                             Some(effect_row_source(true, None, &[]))
                         } else {
                             Some(effect_row_source(
@@ -1063,8 +1063,8 @@ impl Analyzer {
                     _ => None,
                 }?;
                 if parameter.kind == Sort::Effect {
-                    let (unsafe_effect, throws, custom) = effect_row_from_source(&source)?;
-                    (usize::from(unsafe_effect) + usize::from(throws.is_some()) + custom.len() == 1)
+                    let (unsafety, failure, custom) = effect_row_from_source(&source)?;
+                    (usize::from(unsafety) + usize::from(failure.is_some()) + custom.len() == 1)
                         .then_some(source)
                 } else {
                     Some(source)
@@ -1617,8 +1617,8 @@ impl Analyzer {
                                 .collect::<Option<Vec<_>>>()
                         })
                         .collect::<Option<Vec<_>>>()?,
-                    unsafe_effect: self.function_effects_unsafe(effects),
-                    throws_error: match effects.throws.as_deref() {
+                    unsafety: self.function_effects_unsafe(effects),
+                    failure_error: match effects.failure.as_deref() {
                         Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
                         None => None,
                     },
@@ -1649,10 +1649,10 @@ impl Analyzer {
             Type::ArrayApplication { .. } | Type::CompileUSize(_) => None,
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
             Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
-                let (unsafe_effect, throws_error, custom_effects) = effect_row_from_source(source)?;
+                let (unsafety, failure_error, custom_effects) = effect_row_from_source(source)?;
                 Some(Ty::EffectRow {
-                    unsafe_effect,
-                    throws_error: match throws_error.as_ref() {
+                    unsafety,
+                    failure_error: match failure_error.as_ref() {
                         Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
                         None => None,
                     },

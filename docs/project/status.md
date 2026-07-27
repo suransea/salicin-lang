@@ -224,32 +224,32 @@ Implemented data and control features include:
   instances;
 - per-declaration `foreign(c)` and `foreign(c, "symbol")` definitions with
   default linker names, bounded scalar/raw-pointer C signatures, and implicit
-  `unsafe_effect` call requirements;
+  `unsafety` call requirements;
 - tuple, struct, enum, literal, binding, and wildcard patterns;
 - exhaustive `match` with guards;
 - `if`, `loop`, `while`, post-test loops, and `for`;
 - `break`, `continue`, and `return`;
 - lexical `defer` with LIFO execution on normal, loop, return, and error exits;
 - cold compiler-generated futures with a typed pure `future` implementation, one-shot
-  `poll.ready` transition, inferred residual `unsafe_effect`, state-aware capture transfer, cancellation
+  `poll.ready` transition, inferred residual `unsafety`, state-aware capture transfer, cancellation
   cleanup, completed-state repoll traps, and one tail-position child suspension;
 - a direct intrinsic `core.async.async` entry point for anonymous future state
   and a source-defined `core.async.await` over the ordinary
-  `poll`/`async_effect.suspend` protocol;
+  `poll`/`suspension.suspend` protocol;
 - the explicit allocation-free `core.async.spin` executor for one owned future;
 - handler specialization for non-suspending futures with a custom residual
-  effect, including standard `throws(error)`, and by-value `copyable`, move-only,
+  effect, including standard `throwing(error)`, and by-value `copyable`, move-only,
   shared-borrow, or mutable-borrow captures, including exact once-only
   move/drop behavior, retained borrow exclusion, `future(e)` where-predicate
   inference, and effectful trait-method inlining;
 - handler specialization for a suspended await with a finite sequence of pure
   linear continuation segments and a residual effect in the first segment,
-  including standard `throws(error)`, by-value `copyable`, move-only,
+  including standard `throwing(error)`, by-value `copyable`, move-only,
   shared-borrow, and mutable-borrow captures and retained locals, pending
   repoll without replaying earlier transitions, and exact completion, error,
   and cancellation cleanup;
 - handler specialization for a final non-suspending continuation that retains
-  a custom effect or `throws` after a pure child becomes ready, including
+  a custom effect or `throwing` after a pure child becomes ready, including
   atomic transfer of move-only retained state, no execution on pending or
   cancellation, and exact cleanup on resume, error, or abandonment;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
@@ -270,23 +270,23 @@ Implemented algebraic-effect support includes:
 - cleanup on resumption and abandonment;
 - captured effectful closures;
 - capturing callable arguments specialized after generic custom-effect rows become concrete;
-- source-backed `throws(error)`, `throw`, and `try`;
+- source-backed `throwing(error)`, `throw`, and `try`;
 - composition of standard error and unsafe effects.
 
-`unsafe_effect` is an authority effect used by raw memory and foreign operations. It does not disable
+`unsafety` is an authority effect used by raw memory and foreign operations. It does not disable
 typing, ownership, or cleanup checks.
 
 Cold `async` blocks without suspension materialize compiler-generated nominal state containing an
 explicit state word and their captured fields. The generated state satisfies structural `movable`;
 relocating or cancelling an unpolled future transfers or drops owned captures exactly once.
 The no-suspension polling transition returns `poll.ready` once, traps on repoll, and enforces an
-inferred residual `unsafe_effect` requirement. Standard residual `throws(error)` polling specializes
+inferred residual `unsafety` requirement. Standard residual `throwing(error)` polling specializes
 through `try` or its underlying handler; success, error, and move-capture cleanup paths run
 natively. An await may retain custom residual effects when the cold segment
 and its finite linear continuation segments capture by-value `copyable`,
 move-only, or region-checked shared or mutable references, retained state
 remains structural `movable`, and later child poll rows have no custom effect or
-`throws`. Its handler-specialized
+`throwing`. Its handler-specialized
 first poll transfers factory captures before evaluating the child factory. A
 distinct starting state retains move-only continuation captures if the
 factory aborts; factory locals still use ordinary lexical cleanup. pending
@@ -303,11 +303,11 @@ selected child before the existing atomic start transition. Selection runs
 once; ready and cancellation drop only the selected child and each
 initialized retained value once.
 When a pure child becomes ready, a final continuation may itself retain a
-custom effect or `throws` if it does not suspend again. A pure transition
+custom effect or `throwing` if it does not suspend again. A pure transition
 destroys the child and packages its output with continuation captures and
 retained locals; the source poll wrapper consumes that package under the
 handler. This prevents replay on pending and preserves exactly-once cleanup
-when the continuation resumes, throws, or is abandoned.
+when the continuation resumes, failure, or is abandoned.
 One tail-position `await` stores its child across pending,
 resumes from ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the ready output and run a linear continuation with state-owned captures.
@@ -325,7 +325,7 @@ its suspension into the same state machine; false pre-test conditions complete i
 pre-test condition may itself suspend. A child output may differ from the enclosing future output.
 Recurring suspension is classified by loop kind, condition/body location, `continue`, fallthrough,
 and value-producing `break`. A `loop` with one await followed by a boolean
-`break`/`continue()` decision now uses a private `continue_effect(next_child) | break_effect(output)` step enum.
+`break`/`continue()` decision now uses a private `iteration_skip(next_child) | loop_exit(output)` step enum.
 The break output is inferred from the source expression and may be move-only. Its poll transition
 reinitializes one child slot and consumes consecutive immediately-ready iterations in an HIR loop.
 Completed children are destroyed before reuse, while cancellation drops only the active suspended
@@ -334,11 +334,11 @@ the next child. Recurring pre-test and post-test `while` loops invoke a reusable
 the pre-test condition can finish without constructing a child, a pending child does not recheck
 the condition, and each completed backedge rechecks it before constructing the next child.
 Conditions are currently pure and `while` remains unit-valued. Move-only continuation captures are
-now packed into `continue_effect(carry)` and restored into their parent fields before the next iteration;
+now packed into `iteration_skip(carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
 iteration factory or condition still require a more general carry transform.
 Later sequential segments may construct and poll residual custom-effect or
-`throws` children. Ownership moves through the active segment only; pending,
+`throwing` children. Ownership moves through the active segment only; pending,
 ready, cancellation, error, and handler abandonment do not replay earlier
 segments and clean each initialized child once. Recurring `loop`, pre-test
 `while`, and post-test `while` support one residual child factory per
@@ -348,7 +348,7 @@ sequential awaits whose generated iteration future itself has a residual
 `poll`, effectful recurring conditions, and move-only factory or condition
 backedge state remain explicit diagnostics.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
-`break_effect(output)` may depend on any awaited binding, and cancellation follows its nested active-child
+`loop_exit(output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard
 uninhabited `never` as its output.
 For unit-valued general iteration bodies, the compiler rewrites control exits at the current loop
@@ -385,7 +385,7 @@ not implemented.
 The experimental native [ABI representation audit](abi-review.md) specifies
 the current 64-bit host-target mapping for every emitted first-class value.
 Unit parameters are erased, borrows are pointers, owned values and aggregates
-pass directly, effect rows are specialized out of direct calls, `throws` uses
+pass directly, effect rows are specialized out of direct calls, `throwing` uses
 its `result` return boundary, and compiler-owned continuation records contain
 entry, drop, environment, and active-flag pointers. Native calling agreement
 is implemented.
@@ -394,7 +394,7 @@ The experimental [native calling convention](native-calling-convention.md)
 defines flattened runtime groups, erased Unit and borrowed-Unit parameters,
 direct value or pointer passing, owned argument and return transfer, cleanup
 on every exit, static effect authority, algebraic continuation lowering, and
-`result`-based `throws` propagation. Unsized value parameters and returns are
+`result`-based `throwing` propagation. Unsized value parameters and returns are
 rejected at source declarations.
 
 The experimental [native linkage contract](native-linkage.md) exports concrete
@@ -422,6 +422,14 @@ language items or host authority, and ordinary source cannot reserve the
 `std`, `core`, or `alloc` namespaces. Host-library loading is accepted only on
 Linux/x86-64 and macOS/arm64; other host pairs receive a target-specific
 diagnostic.
+
+Public embedded-library declarations use strict ASCII `snake_case` and
+semantic category vocabulary: value types use entity or state nouns, traits
+use capability, role, or operation names, and effects use behavior or
+capability nouns. Category suffixes such as `_type`, `_trait`, and `_effect`
+are rejected. The standard effect identities are `throwing`, `suspension`,
+`unsafety`, `loop_exit`, `iteration_skip`, and `function_exit`; user packages
+are not subjected to this library-only naming gate.
 
 Implemented `core` facilities include:
 

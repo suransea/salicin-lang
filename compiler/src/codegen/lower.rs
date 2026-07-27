@@ -206,8 +206,8 @@ pub(super) fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
     Some(ClosureInfo {
         function: function.clone(),
         groups,
-        unsafe_effect: callable.signature.unsafe_effect,
-        throws_error: callable.signature.throws_error.as_deref().cloned(),
+        unsafety: callable.signature.unsafety,
+        failure_error: callable.signature.failure_error.as_deref().cloned(),
         custom_effects: callable.signature.custom_effects.clone(),
         result: (*callable.signature.result).clone(),
         captures,
@@ -401,7 +401,7 @@ pub(super) fn ty_contains_nominal(ty: &Ty, nominal: &str) -> bool {
                 || ty_contains_nominal(output, nominal)
                 || ty_contains_nominal(answer, nominal)
         }
-        Ty::EffectRow { throws_error, .. } => throws_error
+        Ty::EffectRow { failure_error, .. } => failure_error
             .as_deref()
             .is_some_and(|error| ty_contains_nominal(error, nominal)),
         Ty::I8
@@ -430,7 +430,7 @@ pub(super) fn function_ty_contains_nominal(function: &FunctionTy, nominal: &str)
         .flatten()
         .any(|parameter| ty_contains_nominal(parameter, nominal))
         || function
-            .throws_error
+            .failure_error
             .as_deref()
             .is_some_and(|error| ty_contains_nominal(error, nominal))
         || ty_contains_nominal(&function.result, nominal)

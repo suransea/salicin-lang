@@ -54,7 +54,7 @@ declaration.
 
 ## Effects And Errors
 
-`unsafe_effect` is compile-time authority and adds no runtime parameter.
+`unsafety` is compile-time authority and adds no runtime parameter.
 
 Direct calls with algebraic effects are specialized into compiler-generated
 continuation control flow. The source effect row is not passed as a dictionary
@@ -62,7 +62,7 @@ or hidden variadic argument. When a runtime action must be erased, it uses the
 audited owned `effect_callable(input, output, answer)` record; invoking it
 consumes the active flag exactly once.
 
-`throws(error)` requires the function's runtime result to be the matching
+`throwing(error)` requires the function's runtime result to be the matching
 `result(error)(output)` boundary. Ordinary completion constructs `ok(output)`;
 `throw` and propagated failure construct `err(error)`. Callers either forward
 that same boundary or destructure it under `try`. Error exits follow the same
@@ -97,7 +97,7 @@ guarantee.
 - Ownership transfer occurs exactly at call entry.
 - Return ownership transfers exactly at successful return construction.
 - Effects add no undocumented direct-call parameters.
-- `throws` uses one explicit `result` runtime return.
+- `throwing` uses one explicit `result` runtime return.
 - Unsupported unsized positions fail before LLVM emission.
 - Separate objects select this agreement through the ABI fingerprint defined
   by the native linkage contract.

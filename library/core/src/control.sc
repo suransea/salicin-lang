@@ -3,17 +3,17 @@
 // the compiler only keeps syntax-directed shortcuts and the few places that
 // need authority or primitive control-flow lowering.
 /// Dynamically exits the nearest loop whose result type is `T`.
-pub let break_effect(comptime t: type) = effect {
+pub let loop_exit(comptime t: type) = effect {
   let exit(move value: t): never
 }
 
 /// Dynamically starts the next iteration of the nearest loop.
-pub let continue_effect = effect {
+pub let iteration_skip = effect {
   let next(): never
 }
 
 /// Dynamically returns from the nearest function boundary returning `T`.
-pub let return_effect(comptime t: type) = effect {
+pub let function_exit(comptime t: type) = effect {
   let exit(move value: t): never
 }
 
@@ -24,25 +24,25 @@ pub let attempt(comptime input: type)(comptime output: type) = enum {
 }
 
 pub let break(comptime t: type)
-  (move value: t): never with(break_effect(t)) = {
-  break_effect(t).exit(value)
+  (move value: t): never with(loop_exit(t)) = {
+  loop_exit(t).exit(value)
 }
 
-pub let break(): never with(break_effect(())) = {
-  break_effect(()).exit(())
+pub let break(): never with(loop_exit(())) = {
+  loop_exit(()).exit(())
 }
 
-pub let continue(): never with(continue_effect) = {
-  continue_effect.next()
+pub let continue(): never with(iteration_skip) = {
+  iteration_skip.next()
 }
 
 pub let return(comptime t: type)
-  (move value: t): never with(return_effect(t)) = {
-  return_effect(t).exit(value)
+  (move value: t): never with(function_exit(t)) = {
+  function_exit(t).exit(value)
 }
 
-pub let return(): never with(return_effect(())) = {
-  return_effect(()).exit(())
+pub let return(): never with(function_exit(())) = {
+  function_exit(()).exit(())
 }
 
 /// Runs `action` and preserves its effect row.
@@ -57,10 +57,10 @@ pub let defer(comptime e: effects)
 
 /// Runs `action` once, then repeats it while the lazy condition remains true.
 pub let do(comptime e: effects)
-  (move action: (): () with(core.control.break_effect(()), core.control.continue_effect, e))
-  (move while: (): bool with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e) = {
+  (move action: (): () with(core.control.loop_exit(()), core.control.iteration_skip, e))
+  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = {
   loop {
-    core.control.continue_effect.handle
+    core.control.iteration_skip.handle
       next { () }
       action {
         action()
@@ -75,7 +75,7 @@ pub let do(comptime e: effects)
 
 /// Repeats `body` indefinitely until control exits through another construct.
 pub let loop(comptime e: effects, comptime t: type)
-  (move body: (): () with(core.control.break_effect(t), core.control.continue_effect, e)): t with(e) = builtin()
+  (move body: (): () with(core.control.loop_exit(t), core.control.iteration_skip, e)): t with(e) = builtin()
 
 /// Repeats `body` while the lazy condition remains true.
 pub let while(comptime e: effects)
@@ -113,7 +113,7 @@ pub let match(
 /// Iterates through `iterable`, passing each item to the lazy body.
 pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
   (move iterable: iterable)
-  (move body: (item): () with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)
+  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)
 where iterable: core.iter.into_iterator(iter = iter),
   iter: core.iter.iterator(item = item) = {
   let mut iterator = iterable.into_iter()

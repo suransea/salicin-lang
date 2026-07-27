@@ -7,7 +7,7 @@ use super::compile_time::{
     effect_identity_sources, source_effect_identities, source_effect_identity,
     source_type_mentions_any_name,
 };
-use super::effects::{handled_operation_call, standard_throws_error_source};
+use super::effects::{handled_operation_call, standard_failure_error_source};
 use super::fallible::StandardFallibleKind;
 use super::flow::{LocalInfo, LowerCtx};
 use super::hir::{
@@ -26,7 +26,7 @@ impl Analyzer {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) | TypeProbe::Defaultable(ty) => ty,
             TypeProbe::Unsupported => match body {
                 Expr::Block(statements, Some(tail)) if statements.is_empty() => {
-                    match self.call_throws_info(tail, context) {
+                    match self.call_failure_info(tail, context) {
                         Some((payload, _)) => payload,
                         None => {
                             self.error(
@@ -36,7 +36,7 @@ impl Analyzer {
                         }
                     }
                 }
-                Expr::Call(_, _) => match self.call_throws_info(body, context) {
+                Expr::Call(_, _) => match self.call_failure_info(body, context) {
                     Some((payload, _)) => payload,
                     None => {
                         self.error(
@@ -55,11 +55,11 @@ impl Analyzer {
             },
         };
         let mut errors = HashSet::new();
-        self.collect_escaping_throws(body, context, &mut errors);
+        self.collect_escaping_throwing(body, context, &mut errors);
         let error = match errors.len() {
             0 => {
                 self.error(
-                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `result(e)(t)` type",
+                    "cannot infer `try { ... }` because its body has no escaping failure source; add a contextual `result(e)(t)` type",
                 );
                 return None;
             }
@@ -81,25 +81,25 @@ impl Analyzer {
                 return None;
             }
         };
-        self.ensure_throws_result_type(payload, error)
+        self.ensure_failure_result_type(payload, error)
     }
 
-    fn throws_info_from_function(&self, function: &FunctionTy) -> Option<(Ty, Ty)> {
-        let error = function.throws_error.as_deref()?.clone();
+    fn failure_info_from_function(&self, function: &FunctionTy) -> Option<(Ty, Ty)> {
+        let error = function.failure_error.as_deref()?.clone();
         let payload = self
             .standard_fallible_info_for_ty(&function.result)?
             .payload;
         Some((payload, error))
     }
 
-    fn throws_info_from_signature(&self, signature: &FunctionSig) -> Option<(Ty, Ty)> {
-        let error = signature.throws_error.clone()?;
+    fn failure_info_from_signature(&self, signature: &FunctionSig) -> Option<(Ty, Ty)> {
+        let error = signature.failure_error.clone()?;
         let result = signature.result.as_ref()?;
         let payload = self.standard_fallible_info_for_ty(result)?.payload;
         Some((payload, error))
     }
 
-    pub(super) fn call_throws_info(
+    pub(super) fn call_failure_info(
         &self,
         expression: &Expr,
         context: &LowerCtx,
@@ -114,7 +114,7 @@ impl Analyzer {
                     _ => return None,
                 };
                 return (groups.len() == function.groups.len())
-                    .then(|| self.throws_info_from_function(function))
+                    .then(|| self.failure_info_from_function(function))
                     .flatten();
             }
             if let Some(candidates) = self.function_overloads.get(name) {
@@ -131,12 +131,12 @@ impl Analyzer {
                 };
                 let signature = self.signatures.get(selected)?;
                 return (groups.len() == signature.groups.len())
-                    .then(|| self.throws_info_from_signature(signature))
+                    .then(|| self.failure_info_from_signature(signature))
                     .flatten();
             }
             let signature = self.signatures.get(name)?;
             return (groups.len() == signature.groups.len())
-                .then(|| self.throws_info_from_signature(signature))
+                .then(|| self.failure_info_from_signature(signature))
                 .flatten();
         }
         let Expr::Member(base, member) = root else {
@@ -189,7 +189,7 @@ impl Analyzer {
             };
             let signature = self.signatures.get(&canonical)?;
             return (groups.len() == signature.groups.len())
-                .then(|| self.throws_info_from_signature(signature))
+                .then(|| self.failure_info_from_signature(signature))
                 .flatten();
         }
         let receiver = match self.probe_expr_ty(base, None, context) {
@@ -248,7 +248,7 @@ impl Analyzer {
         };
         let signature = self.signatures.get(&canonical)?;
         (groups.len() + 1 == signature.groups.len())
-            .then(|| self.throws_info_from_signature(signature))
+            .then(|| self.failure_info_from_signature(signature))
             .flatten()
     }
 
@@ -281,10 +281,10 @@ impl Analyzer {
             return error_expr();
         }
         let error = info.error.expect("Result has an error type");
-        if !self.try_body_uses_dedicated_throws_call(body, context)
-            && self.try_body_uses_standard_throws(body, &error, context)
+        if !self.try_body_uses_dedicated_failure_call(body, context)
+            && self.try_body_uses_standard_throwing(body, &error, context)
         {
-            return self.lower_standard_throws_try(body, expected, context);
+            return self.lower_standard_failure_try(body, expected, context);
         }
         let closure = self.lower_local_closure(
             &[],
@@ -292,7 +292,7 @@ impl Analyzer {
             Some(expected.clone()),
             ClosureEffectContext {
                 unsafe_depth: context.unsafe_depth,
-                throws_error: Some(error),
+                failure_error: Some(error),
                 custom_effects: context.active_custom_effects.clone(),
                 custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
@@ -341,14 +341,14 @@ impl Analyzer {
         }
     }
 
-    fn lower_standard_throws_try(
+    fn lower_standard_failure_try(
         &mut self,
         body: &Expr,
         expected: Ty,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
-            self.error("internal error: standard throws try requires a result expectation");
+            self.error("internal error: standard failure try requires a result expectation");
             return error_expr();
         };
         let Some(error_source) = info
@@ -356,19 +356,19 @@ impl Analyzer {
             .as_ref()
             .and_then(|error| self.source_type_for_ty(error))
         else {
-            self.error("standard throws try requires a source-level error type");
+            self.error("standard failure try requires a source-level error type");
             return error_expr();
         };
         let Some(payload_source) = info.payload_source.clone() else {
-            self.error("standard throws try requires a source-level success type");
+            self.error("standard failure try requires a source-level success type");
             return error_expr();
         };
-        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
-        let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
-            self.error("compiler core did not register its validated `throws` effect");
+        let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+        let Some(definition) = self.effect_defs.get(&failure_name).cloned() else {
+            self.error("compiler core did not register its validated `failure` effect");
             return error_expr();
         };
-        let instance = Type::Named(throws_name, vec![error_source]);
+        let instance = Type::Named(failure_name, vec![error_source]);
         let inferred = Type::Named("$context$infer".into(), Vec::new());
         let result_name = self.lang_item_name(LangItemKind::Result).to_owned();
         let done_value = "$try$value".to_owned();
@@ -429,7 +429,7 @@ impl Analyzer {
         self.lower_effect_handler(&definition, &instance, &groups, Some(&expected), context)
     }
 
-    fn try_body_uses_standard_throws(
+    fn try_body_uses_standard_throwing(
         &self,
         expression: &Expr,
         error: &Ty,
@@ -442,10 +442,10 @@ impl Analyzer {
             self.lang_item_name(LangItemKind::ThrowsEffect).to_owned(),
             vec![error_source],
         ));
-        self.expression_uses_standard_throws_identity(expression, &identity, context)
+        self.expression_uses_standard_failure_identity(expression, &identity, context)
     }
 
-    fn expression_uses_standard_throws_identity(
+    fn expression_uses_standard_failure_identity(
         &self,
         expression: &Expr,
         identity: &str,
@@ -453,24 +453,24 @@ impl Analyzer {
     ) -> bool {
         match expression {
             Expr::Located { value, .. } => {
-                self.expression_uses_standard_throws_identity(value, identity, context)
+                self.expression_uses_standard_failure_identity(value, identity, context)
             }
             Expr::Throw(_) => true,
             Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
             Expr::Async { body } => {
-                self.expression_uses_standard_throws_identity(body, identity, context)
+                self.expression_uses_standard_failure_identity(body, identity, context)
             }
             Expr::Call(callee, arguments) => {
                 handled_operation_call(expression, identity).is_some()
                     || self
                         .call_custom_effect_identities(expression, context)
                         .is_some_and(|effects| effects.iter().any(|effect| effect == identity))
-                    || self.effect_handler_call_uses_standard_throws_identity(
+                    || self.effect_handler_call_uses_standard_failure_identity(
                         expression, identity, context,
                     )
-                    || self.expression_uses_standard_throws_identity(callee, identity, context)
+                    || self.expression_uses_standard_failure_identity(callee, identity, context)
                     || arguments.iter().any(|argument| {
-                        self.expression_uses_standard_throws_identity(
+                        self.expression_uses_standard_failure_identity(
                             &argument.value,
                             identity,
                             context,
@@ -484,15 +484,15 @@ impl Analyzer {
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
             | Expr::Break(Some(value)) => {
-                self.expression_uses_standard_throws_identity(value, identity, context)
+                self.expression_uses_standard_failure_identity(value, identity, context)
             }
             Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
             | Expr::Assign(left, right)
             | Expr::CompoundAssign(left, _, right) => {
-                self.expression_uses_standard_throws_identity(left, identity, context)
-                    || self.expression_uses_standard_throws_identity(right, identity, context)
+                self.expression_uses_standard_failure_identity(left, identity, context)
+                    || self.expression_uses_standard_failure_identity(right, identity, context)
             }
             Expr::HandlerCoalesce {
                 scrutinee,
@@ -500,55 +500,54 @@ impl Analyzer {
                 fallback,
                 ..
             } => {
-                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
-                    || self.expression_uses_standard_throws_identity(success, identity, context)
-                    || self.expression_uses_standard_throws_identity(fallback, identity, context)
+                self.expression_uses_standard_failure_identity(scrutinee, identity, context)
+                    || self.expression_uses_standard_failure_identity(success, identity, context)
+                    || self.expression_uses_standard_failure_identity(fallback, identity, context)
             }
             Expr::HandlerChainCall(chain) => {
-                self.expression_uses_standard_throws_identity(&chain.scrutinee, identity, context)
+                self.expression_uses_standard_failure_identity(&chain.scrutinee, identity, context)
                     || chain.groups.iter().flatten().any(|argument| {
-                        self.expression_uses_standard_throws_identity(
+                        self.expression_uses_standard_failure_identity(
                             &argument.value,
                             identity,
                             context,
                         )
                     })
-                    || self.expression_uses_standard_throws_identity(
+                    || self.expression_uses_standard_failure_identity(
                         &chain.success,
                         identity,
                         context,
                     )
-                    || self.expression_uses_standard_throws_identity(
+                    || self.expression_uses_standard_failure_identity(
                         &chain.residual,
                         identity,
                         context,
                     )
             }
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-                self.expression_uses_standard_throws_identity(base, identity, context)
+                self.expression_uses_standard_failure_identity(base, identity, context)
             }
             Expr::Array(elements) | Expr::Tuple(elements) => elements.iter().any(|element| {
-                self.expression_uses_standard_throws_identity(element, identity, context)
+                self.expression_uses_standard_failure_identity(element, identity, context)
             }),
             Expr::StructLiteral { fields, .. } => fields.iter().any(|field| {
-                self.expression_uses_standard_throws_identity(&field.value, identity, context)
+                self.expression_uses_standard_failure_identity(&field.value, identity, context)
             }),
             Expr::Index { base, index } => {
-                self.expression_uses_standard_throws_identity(base, identity, context)
-                    || self.expression_uses_standard_throws_identity(index, identity, context)
+                self.expression_uses_standard_failure_identity(base, identity, context)
+                    || self.expression_uses_standard_failure_identity(index, identity, context)
             }
             Expr::Block(statements, tail) => {
                 statements.iter().any(|statement| match statement {
-                    Stmt::Let(binding) => self.expression_uses_standard_throws_identity(
+                    Stmt::Let(binding) => self.expression_uses_standard_failure_identity(
                         &binding.value,
                         identity,
                         context,
                     ),
-                    Stmt::Expr(expression) => {
-                        self.expression_uses_standard_throws_identity(expression, identity, context)
-                    }
+                    Stmt::Expr(expression) => self
+                        .expression_uses_standard_failure_identity(expression, identity, context),
                 }) || tail.as_ref().is_some_and(|tail| {
-                    self.expression_uses_standard_throws_identity(tail, identity, context)
+                    self.expression_uses_standard_failure_identity(tail, identity, context)
                 })
             }
             Expr::If {
@@ -556,10 +555,14 @@ impl Analyzer {
                 then_branch,
                 else_branch,
             } => {
-                self.expression_uses_standard_throws_identity(condition, identity, context)
-                    || self.expression_uses_standard_throws_identity(then_branch, identity, context)
+                self.expression_uses_standard_failure_identity(condition, identity, context)
+                    || self.expression_uses_standard_failure_identity(
+                        then_branch,
+                        identity,
+                        context,
+                    )
                     || else_branch.as_ref().is_some_and(|else_branch| {
-                        self.expression_uses_standard_throws_identity(
+                        self.expression_uses_standard_failure_identity(
                             else_branch,
                             identity,
                             context,
@@ -569,26 +572,26 @@ impl Analyzer {
             Expr::While {
                 condition, body, ..
             } => {
-                self.expression_uses_standard_throws_identity(condition, identity, context)
-                    || self.expression_uses_standard_throws_identity(body, identity, context)
+                self.expression_uses_standard_failure_identity(condition, identity, context)
+                    || self.expression_uses_standard_failure_identity(body, identity, context)
             }
             Expr::Loop { body } => {
-                self.expression_uses_standard_throws_identity(body, identity, context)
+                self.expression_uses_standard_failure_identity(body, identity, context)
             }
             Expr::Match { scrutinee, arms } => {
-                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
+                self.expression_uses_standard_failure_identity(scrutinee, identity, context)
                     || arms.iter().any(|arm| {
                         arm.guard.as_ref().is_some_and(|guard| {
-                            self.expression_uses_standard_throws_identity(guard, identity, context)
+                            self.expression_uses_standard_failure_identity(guard, identity, context)
                         }) || self
-                            .expression_uses_standard_throws_identity(&arm.body, identity, context)
+                            .expression_uses_standard_failure_identity(&arm.body, identity, context)
                     })
             }
             Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
         }
     }
 
-    fn effect_handler_call_uses_standard_throws_identity(
+    fn effect_handler_call_uses_standard_failure_identity(
         &self,
         expression: &Expr,
         identity: &str,
@@ -625,23 +628,25 @@ impl Analyzer {
             matches!(
                 &argument.value,
                 Expr::Closure(_, body)
-                    if self.expression_uses_standard_throws_identity(body, identity, context)
+                    if self.expression_uses_standard_failure_identity(body, identity, context)
             )
-        }) || self.expression_uses_standard_throws_identity(action_body, identity, context)
+        }) || self.expression_uses_standard_failure_identity(action_body, identity, context)
     }
 
-    fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
+    fn try_body_uses_dedicated_failure_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
         match expression {
-            Expr::Located { value, .. } => self.try_body_uses_dedicated_throws_call(value, context),
+            Expr::Located { value, .. } => {
+                self.try_body_uses_dedicated_failure_call(value, context)
+            }
             Expr::Try(_)
             | Expr::Closure(_, _)
             | Expr::PatternClosure { .. }
             | Expr::Async { .. } => false,
             Expr::Call(callee, arguments) => {
-                self.call_throws_info(expression, context).is_some()
-                    || self.try_body_uses_dedicated_throws_call(callee, context)
+                self.call_failure_info(expression, context).is_some()
+                    || self.try_body_uses_dedicated_failure_call(callee, context)
                     || arguments.iter().any(|argument| {
-                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                        self.try_body_uses_dedicated_failure_call(&argument.value, context)
                     })
             }
             Expr::Unary(_, value)
@@ -651,14 +656,14 @@ impl Analyzer {
             | Expr::Throw(value)
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
-            | Expr::Break(Some(value)) => self.try_body_uses_dedicated_throws_call(value, context),
+            | Expr::Break(Some(value)) => self.try_body_uses_dedicated_failure_call(value, context),
             Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
             | Expr::Assign(left, right)
             | Expr::CompoundAssign(left, _, right) => {
-                self.try_body_uses_dedicated_throws_call(left, context)
-                    || self.try_body_uses_dedicated_throws_call(right, context)
+                self.try_body_uses_dedicated_failure_call(left, context)
+                    || self.try_body_uses_dedicated_failure_call(right, context)
             }
             Expr::HandlerCoalesce {
                 scrutinee,
@@ -666,67 +671,67 @@ impl Analyzer {
                 fallback,
                 ..
             } => {
-                self.try_body_uses_dedicated_throws_call(scrutinee, context)
-                    || self.try_body_uses_dedicated_throws_call(success, context)
-                    || self.try_body_uses_dedicated_throws_call(fallback, context)
+                self.try_body_uses_dedicated_failure_call(scrutinee, context)
+                    || self.try_body_uses_dedicated_failure_call(success, context)
+                    || self.try_body_uses_dedicated_failure_call(fallback, context)
             }
             Expr::HandlerChainCall(chain) => {
-                self.try_body_uses_dedicated_throws_call(&chain.scrutinee, context)
+                self.try_body_uses_dedicated_failure_call(&chain.scrutinee, context)
                     || chain.groups.iter().flatten().any(|argument| {
-                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                        self.try_body_uses_dedicated_failure_call(&argument.value, context)
                     })
-                    || self.try_body_uses_dedicated_throws_call(&chain.success, context)
-                    || self.try_body_uses_dedicated_throws_call(&chain.residual, context)
+                    || self.try_body_uses_dedicated_failure_call(&chain.success, context)
+                    || self.try_body_uses_dedicated_failure_call(&chain.residual, context)
             }
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-                self.try_body_uses_dedicated_throws_call(base, context)
+                self.try_body_uses_dedicated_failure_call(base, context)
             }
             Expr::Array(elements) | Expr::Tuple(elements) => elements
                 .iter()
-                .any(|element| self.try_body_uses_dedicated_throws_call(element, context)),
+                .any(|element| self.try_body_uses_dedicated_failure_call(element, context)),
             Expr::StructLiteral { fields, .. } => fields
                 .iter()
-                .any(|field| self.try_body_uses_dedicated_throws_call(&field.value, context)),
+                .any(|field| self.try_body_uses_dedicated_failure_call(&field.value, context)),
             Expr::Index { base, index } => {
-                self.try_body_uses_dedicated_throws_call(base, context)
-                    || self.try_body_uses_dedicated_throws_call(index, context)
+                self.try_body_uses_dedicated_failure_call(base, context)
+                    || self.try_body_uses_dedicated_failure_call(index, context)
             }
             Expr::Block(statements, tail) => {
                 statements.iter().any(|statement| match statement {
                     Stmt::Let(binding) => {
-                        self.try_body_uses_dedicated_throws_call(&binding.value, context)
+                        self.try_body_uses_dedicated_failure_call(&binding.value, context)
                     }
                     Stmt::Expr(expression) => {
-                        self.try_body_uses_dedicated_throws_call(expression, context)
+                        self.try_body_uses_dedicated_failure_call(expression, context)
                     }
                 }) || tail
                     .as_ref()
-                    .is_some_and(|tail| self.try_body_uses_dedicated_throws_call(tail, context))
+                    .is_some_and(|tail| self.try_body_uses_dedicated_failure_call(tail, context))
             }
             Expr::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                self.try_body_uses_dedicated_throws_call(condition, context)
-                    || self.try_body_uses_dedicated_throws_call(then_branch, context)
+                self.try_body_uses_dedicated_failure_call(condition, context)
+                    || self.try_body_uses_dedicated_failure_call(then_branch, context)
                     || else_branch.as_ref().is_some_and(|else_branch| {
-                        self.try_body_uses_dedicated_throws_call(else_branch, context)
+                        self.try_body_uses_dedicated_failure_call(else_branch, context)
                     })
             }
             Expr::While {
                 condition, body, ..
             } => {
-                self.try_body_uses_dedicated_throws_call(condition, context)
-                    || self.try_body_uses_dedicated_throws_call(body, context)
+                self.try_body_uses_dedicated_failure_call(condition, context)
+                    || self.try_body_uses_dedicated_failure_call(body, context)
             }
-            Expr::Loop { body } => self.try_body_uses_dedicated_throws_call(body, context),
+            Expr::Loop { body } => self.try_body_uses_dedicated_failure_call(body, context),
             Expr::Match { scrutinee, arms } => {
-                self.try_body_uses_dedicated_throws_call(scrutinee, context)
+                self.try_body_uses_dedicated_failure_call(scrutinee, context)
                     || arms.iter().any(|arm| {
                         arm.guard.as_ref().is_some_and(|guard| {
-                            self.try_body_uses_dedicated_throws_call(guard, context)
-                        }) || self.try_body_uses_dedicated_throws_call(&arm.body, context)
+                            self.try_body_uses_dedicated_failure_call(guard, context)
+                        }) || self.try_body_uses_dedicated_failure_call(&arm.body, context)
                     })
             }
             Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
@@ -1026,39 +1031,39 @@ impl Analyzer {
         Some(effects)
     }
 
-    pub(super) fn lower_automatic_throws(
+    pub(super) fn lower_automatic_throwing(
         &mut self,
         operand: HirExpr,
         thrown_error: &Ty,
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some(active_error) = context.active_throws_error.clone() else {
+        let Some(active_error) = context.active_failure_error.clone() else {
             self.error(format!(
-                "call requires `throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
+                "call requires `throwing({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
             ));
             return error_expr();
         };
         if active_error != *thrown_error {
             self.error(format!(
-                "call throws `{thrown_error}`, but the active error type is `{active_error}`; convert errors explicitly"
+                "call failure `{thrown_error}`, but the active error type is `{active_error}`; convert errors explicitly"
             ));
             return error_expr();
         }
         if context.return_boundary.is_none() {
-            self.error("internal error: active throws effect has no Result return boundary");
+            self.error("internal error: active failure effect has no Result return boundary");
             return error_expr();
         }
         let Some(info) = self.standard_fallible_info_for_ty(&operand.ty) else {
-            self.error("internal error: throws call does not use a result ABI");
+            self.error("internal error: failure call does not use a result ABI");
             return error_expr();
         };
         if info.kind != StandardFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
-            self.error("internal error: throws call result ABI does not match its error effect");
+            self.error("internal error: failure call result ABI does not match its error effect");
             return error_expr();
         }
-        const OUTPUT_BINDING: &str = "$throws$output";
-        const ERROR_BINDING: &str = "$throws$error";
+        const OUTPUT_BINDING: &str = "$failure$output";
+        const ERROR_BINDING: &str = "$failure$error";
         let arms = vec![
             MatchArm {
                 pattern: Pattern::Constructor {
@@ -1085,26 +1090,26 @@ impl Analyzer {
     }
 
     pub(super) fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
-        let Some(error_ty) = context.active_throws_error.clone() else {
-            if let Some(lowered) = self.lower_standard_throws_raise(value, context) {
+        let Some(error_ty) = context.active_failure_error.clone() else {
+            if let Some(lowered) = self.lower_standard_failure_raise(value, context) {
                 return lowered;
             }
             let _ = self.lower_expr(value, None, context);
             self.error(
-                "`throw` requires an enclosing `with(throws(Error))` function or `try { ... }` handler",
+                "`throw` requires an enclosing `with(throwing(Error))` function or `try { ... }` handler",
             );
             return error_expr();
         };
         let Some(boundary) = context.return_boundary.clone() else {
             let _ = self.lower_expr(value, Some(&error_ty), context);
-            self.error("internal error: throws effect has no Result return boundary");
+            self.error("internal error: failure effect has no Result return boundary");
             return error_expr();
         };
         if boundary.kind != Some(StandardFallibleKind::Result)
             || boundary.error.as_ref() != Some(&error_ty)
         {
             let _ = self.lower_expr(value, Some(&error_ty), context);
-            self.error("internal error: throws effect does not match its result ABI");
+            self.error("internal error: failure effect does not match its result ABI");
             return error_expr();
         }
         let error = self.lower_expr(value, Some(&error_ty), context);
@@ -1120,13 +1125,13 @@ impl Analyzer {
         }
     }
 
-    fn lower_standard_throws_raise(
+    fn lower_standard_failure_raise(
         &mut self,
         value: &Expr,
         context: &mut LowerCtx,
     ) -> Option<HirExpr> {
         let mut candidates = self
-            .active_standard_throws_error_sources(context)
+            .active_standard_failure_error_sources(context)
             .into_iter()
             .collect::<Vec<_>>();
         match candidates.len() {
@@ -1139,15 +1144,15 @@ impl Analyzer {
                     );
                     return Some(error_expr());
                 };
-                let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
-                if standard_throws_error_source(&instance, &throws_name).is_none() {
+                let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+                if standard_failure_error_source(&instance, &failure_name).is_none() {
                     self.error(
-                        "compiler core `throw` contract does not target its validated `throws` effect",
+                        "compiler core `throw` contract does not target its validated `failure` effect",
                     );
                     return Some(error_expr());
                 }
-                let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
-                    self.error("compiler core did not register its validated `throws` effect");
+                let Some(definition) = self.effect_defs.get(&failure_name).cloned() else {
+                    self.error("compiler core did not register its validated `failure` effect");
                     return Some(error_expr());
                 };
                 let arguments = vec![CallArg {
@@ -1172,7 +1177,7 @@ impl Analyzer {
                     .collect::<Vec<_>>();
                 rendered.sort();
                 self.error(format!(
-                    "`throw` under ordinary `throws` effects requires exactly one active `throws(Error)` row; found {}: {}",
+                    "`throw` under ordinary `failure` effects requires exactly one active `throwing(Error)` row; found {}: {}",
                     rendered.len(),
                     rendered
                         .iter()
@@ -1191,8 +1196,8 @@ impl Analyzer {
         let substitutions = HashMap::from([("error".to_owned(), error_source)]);
         substitute_function_types(&mut function, &substitutions);
         if !function.effects.parameters.is_empty()
-            || function.effects.unsafe_effect
-            || function.effects.throws.is_some()
+            || function.effects.unsafety
+            || function.effects.failure.is_some()
         {
             return None;
         }
@@ -1202,12 +1207,12 @@ impl Analyzer {
         Some(effect.clone())
     }
 
-    fn active_standard_throws_error_sources(&self, context: &LowerCtx) -> Vec<Type> {
-        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+    fn active_standard_failure_error_sources(&self, context: &LowerCtx) -> Vec<Type> {
+        let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect);
         let mut sources = context
             .active_custom_effect_sources
             .values()
-            .filter_map(|source| standard_throws_error_source(source, throws_name))
+            .filter_map(|source| standard_failure_error_source(source, failure_name))
             .map(|source| (source_effect_identity(&source), source))
             .collect::<Vec<_>>();
         sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1215,14 +1220,14 @@ impl Analyzer {
         sources.into_iter().map(|(_, source)| source).collect()
     }
 
-    fn collect_escaping_throws(
+    fn collect_escaping_throwing(
         &self,
         expression: &Expr,
         context: &LowerCtx,
         errors: &mut HashSet<Ty>,
     ) {
         match expression {
-            Expr::Located { value, .. } => self.collect_escaping_throws(value, context, errors),
+            Expr::Located { value, .. } => self.collect_escaping_throwing(value, context, errors),
             Expr::Type(_)
             | Expr::Unit
             | Expr::Integer(_)
@@ -1241,7 +1246,7 @@ impl Analyzer {
                     }
                     TypeProbe::Unsupported => {}
                 }
-                self.collect_escaping_throws(value, context, errors);
+                self.collect_escaping_throwing(value, context, errors);
             }
             Expr::Unary(_, value)
             | Expr::Borrow { value, .. }
@@ -1249,14 +1254,14 @@ impl Analyzer {
             | Expr::Await(value)
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
-            | Expr::Break(Some(value)) => self.collect_escaping_throws(value, context, errors),
+            | Expr::Break(Some(value)) => self.collect_escaping_throwing(value, context, errors),
             Expr::Return(None) | Expr::Break(None) | Expr::Continue => {}
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
             | Expr::Assign(left, right)
             | Expr::CompoundAssign(left, _, right) => {
-                self.collect_escaping_throws(left, context, errors);
-                self.collect_escaping_throws(right, context, errors);
+                self.collect_escaping_throwing(left, context, errors);
+                self.collect_escaping_throwing(right, context, errors);
             }
             Expr::HandlerCoalesce {
                 scrutinee,
@@ -1264,55 +1269,55 @@ impl Analyzer {
                 fallback,
                 ..
             } => {
-                self.collect_escaping_throws(scrutinee, context, errors);
-                self.collect_escaping_throws(success, context, errors);
-                self.collect_escaping_throws(fallback, context, errors);
+                self.collect_escaping_throwing(scrutinee, context, errors);
+                self.collect_escaping_throwing(success, context, errors);
+                self.collect_escaping_throwing(fallback, context, errors);
             }
             Expr::HandlerChainCall(chain) => {
-                self.collect_escaping_throws(&chain.scrutinee, context, errors);
+                self.collect_escaping_throwing(&chain.scrutinee, context, errors);
                 for argument in chain.groups.iter().flatten() {
-                    self.collect_escaping_throws(&argument.value, context, errors);
+                    self.collect_escaping_throwing(&argument.value, context, errors);
                 }
-                self.collect_escaping_throws(&chain.success, context, errors);
-                self.collect_escaping_throws(&chain.residual, context, errors);
+                self.collect_escaping_throwing(&chain.success, context, errors);
+                self.collect_escaping_throwing(&chain.residual, context, errors);
             }
             Expr::Call(_, _) => {
-                if let Some((_, error)) = self.call_throws_info(expression, context) {
+                if let Some((_, error)) = self.call_failure_info(expression, context) {
                     errors.insert(error);
                 }
-                self.collect_standard_throws_errors_from_call(expression, context, errors);
-                self.collect_standard_throws_errors_from_effect_handler_call(
+                self.collect_standard_failure_errors_from_call(expression, context, errors);
+                self.collect_standard_failure_errors_from_effect_handler_call(
                     expression, context, errors,
                 );
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
                 match root {
                     Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-                        self.collect_escaping_throws(base, context, errors)
+                        self.collect_escaping_throwing(base, context, errors)
                     }
                     Expr::Name(_) => {}
-                    root => self.collect_escaping_throws(root, context, errors),
+                    root => self.collect_escaping_throwing(root, context, errors),
                 }
                 for argument in groups.iter().flat_map(|group| group.iter()) {
-                    self.collect_escaping_throws(&argument.value, context, errors);
+                    self.collect_escaping_throwing(&argument.value, context, errors);
                 }
             }
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-                self.collect_escaping_throws(base, context, errors)
+                self.collect_escaping_throwing(base, context, errors)
             }
             Expr::Array(elements) | Expr::Tuple(elements) => {
                 for element in elements {
-                    self.collect_escaping_throws(element, context, errors);
+                    self.collect_escaping_throwing(element, context, errors);
                 }
             }
             Expr::StructLiteral { fields, .. } => {
                 for field in fields {
-                    self.collect_escaping_throws(&field.value, context, errors);
+                    self.collect_escaping_throwing(&field.value, context, errors);
                 }
             }
             Expr::Index { base, index } => {
-                self.collect_escaping_throws(base, context, errors);
-                self.collect_escaping_throws(index, context, errors);
+                self.collect_escaping_throwing(base, context, errors);
+                self.collect_escaping_throwing(index, context, errors);
             }
             Expr::Block(statements, tail) => {
                 let mut block_context = context.clone();
@@ -1322,7 +1327,7 @@ impl Analyzer {
                         Stmt::Let(binding) => &binding.value,
                         Stmt::Expr(value) => value,
                     };
-                    self.collect_escaping_throws(value, &block_context, errors);
+                    self.collect_escaping_throwing(value, &block_context, errors);
                     let Stmt::Let(binding) = statement else {
                         continue;
                     };
@@ -1357,7 +1362,7 @@ impl Analyzer {
                     }
                 }
                 if let Some(tail) = tail {
-                    self.collect_escaping_throws(tail, &block_context, errors);
+                    self.collect_escaping_throwing(tail, &block_context, errors);
                 }
             }
             Expr::If {
@@ -1365,42 +1370,42 @@ impl Analyzer {
                 then_branch,
                 else_branch,
             } => {
-                self.collect_escaping_throws(condition, context, errors);
-                self.collect_escaping_throws(then_branch, context, errors);
+                self.collect_escaping_throwing(condition, context, errors);
+                self.collect_escaping_throwing(then_branch, context, errors);
                 if let Some(else_branch) = else_branch {
-                    self.collect_escaping_throws(else_branch, context, errors);
+                    self.collect_escaping_throwing(else_branch, context, errors);
                 }
             }
             Expr::While {
                 condition, body, ..
             } => {
-                self.collect_escaping_throws(condition, context, errors);
-                self.collect_escaping_throws(body, context, errors);
+                self.collect_escaping_throwing(condition, context, errors);
+                self.collect_escaping_throwing(body, context, errors);
             }
-            Expr::Loop { body } => self.collect_escaping_throws(body, context, errors),
+            Expr::Loop { body } => self.collect_escaping_throwing(body, context, errors),
             Expr::Match { scrutinee, arms } => {
-                self.collect_escaping_throws(scrutinee, context, errors);
+                self.collect_escaping_throwing(scrutinee, context, errors);
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
-                        self.collect_escaping_throws(guard, context, errors);
+                        self.collect_escaping_throwing(guard, context, errors);
                     }
-                    self.collect_escaping_throws(&arm.body, context, errors);
+                    self.collect_escaping_throwing(&arm.body, context, errors);
                 }
             }
         }
     }
 
-    fn collect_standard_throws_errors_from_call(
+    fn collect_standard_failure_errors_from_call(
         &self,
         expression: &Expr,
         context: &LowerCtx,
         errors: &mut HashSet<Ty>,
     ) {
-        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect);
         if let Some(sources) = self.call_custom_effect_sources(expression, context) {
             for source in sources
                 .iter()
-                .filter_map(|effect| standard_throws_error_source(effect, throws_name))
+                .filter_map(|effect| standard_failure_error_source(effect, failure_name))
             {
                 if let Some(error) = self.probe_source_ty(&source) {
                     errors.insert(error);
@@ -1409,7 +1414,7 @@ impl Analyzer {
         }
     }
 
-    fn collect_standard_throws_errors_from_effect_handler_call(
+    fn collect_standard_failure_errors_from_effect_handler_call(
         &self,
         expression: &Expr,
         context: &LowerCtx,
@@ -1444,9 +1449,9 @@ impl Analyzer {
         }
         for argument in groups[0] {
             if let Expr::Closure(_, body) = &argument.value {
-                self.collect_escaping_throws(body, context, errors);
+                self.collect_escaping_throwing(body, context, errors);
             }
         }
-        self.collect_escaping_throws(action_body, context, errors);
+        self.collect_escaping_throwing(action_body, context, errors);
     }
 }

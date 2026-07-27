@@ -1,11 +1,11 @@
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 
-let dangerous(): i32 with(unsafe_effect) = {
+let dangerous(): i32 with(unsafety) = {
   42
 }
 
 let main(): i32 = {
-  let choose: (bool): core.control.attempt(bool)(i32) with(unsafe_effect) = {
+  let choose: (bool): core.control.attempt(bool)(i32) with(unsafety) = {
     true -> dangerous()
   }
   let attempted = unsafe {

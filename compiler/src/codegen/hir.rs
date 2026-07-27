@@ -48,8 +48,8 @@ pub(super) enum Ty {
         answer: Box<Ty>,
     },
     EffectRow {
-        unsafe_effect: bool,
-        throws_error: Option<Box<Ty>>,
+        unsafety: bool,
+        failure_error: Option<Box<Ty>>,
         custom_effects: Vec<String>,
     },
     Error,
@@ -58,8 +58,8 @@ pub(super) enum Ty {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct FunctionTy {
     pub(super) groups: Vec<Vec<Ty>>,
-    pub(super) unsafe_effect: bool,
-    pub(super) throws_error: Option<Box<Ty>>,
+    pub(super) unsafety: bool,
+    pub(super) failure_error: Option<Box<Ty>>,
     pub(super) custom_effects: Vec<String>,
     pub(super) result: Box<Ty>,
 }
@@ -146,8 +146,8 @@ pub(super) fn function_type_is_assignable(actual: &FunctionTy, expected: &Functi
                     )
             })
         && type_is_assignable(&actual.result, &expected.result)
-        && (!actual.unsafe_effect || expected.unsafe_effect)
-        && match (&actual.throws_error, &expected.throws_error) {
+        && (!actual.unsafety || expected.unsafety)
+        && match (&actual.failure_error, &expected.failure_error) {
             (None, _) => true,
             (Some(actual), Some(expected)) => type_is_assignable(actual, expected),
             (Some(_), None) => false,
@@ -230,11 +230,11 @@ impl fmt::Display for Ty {
                 f.write_str(": ")?;
                 write!(f, "{}", function.result)?;
                 let mut effects = function.custom_effects.clone();
-                if function.unsafe_effect {
-                    effects.insert(0, "unsafe_effect".to_owned());
+                if function.unsafety {
+                    effects.insert(0, "unsafety".to_owned());
                 }
-                if let Some(error) = &function.throws_error {
-                    effects.push(format!("throws({error})"));
+                if let Some(error) = &function.failure_error {
+                    effects.push(format!("throwing({error})"));
                 }
                 if !effects.is_empty() {
                     write!(f, " with({})", effects.join(", "))?;
@@ -251,16 +251,16 @@ impl fmt::Display for Ty {
                 answer,
             } => write!(f, "EffectCallable({input}, {output}, {answer})"),
             Self::EffectRow {
-                unsafe_effect,
-                throws_error,
+                unsafety,
+                failure_error,
                 custom_effects,
             } => {
                 let mut effects = custom_effects.clone();
-                if *unsafe_effect {
-                    effects.insert(0, "unsafe_effect".to_owned());
+                if *unsafety {
+                    effects.insert(0, "unsafety".to_owned());
                 }
-                if let Some(error) = throws_error {
-                    effects.push(format!("throws({error})"));
+                if let Some(error) = failure_error {
+                    effects.push(format!("throwing({error})"));
                 }
                 if effects.is_empty() {
                     f.write_str("pure")
@@ -817,8 +817,8 @@ pub(super) struct ParamSig {
 #[derive(Debug, Clone)]
 pub(super) struct FunctionSig {
     pub(super) groups: Vec<Vec<ParamSig>>,
-    pub(super) unsafe_effect: bool,
-    pub(super) throws_error: Option<Ty>,
+    pub(super) unsafety: bool,
+    pub(super) failure_error: Option<Ty>,
     pub(super) custom_effects: Vec<String>,
     pub(super) result: Option<Ty>,
 }
@@ -831,8 +831,8 @@ impl FunctionSig {
                 .iter()
                 .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                 .collect(),
-            unsafe_effect: self.unsafe_effect,
-            throws_error: self.throws_error.clone().map(Box::new),
+            unsafety: self.unsafety,
+            failure_error: self.failure_error.clone().map(Box::new),
             custom_effects: self.custom_effects.clone(),
             result: Box::new(self.result.clone()?),
         }))
@@ -861,8 +861,8 @@ pub(super) struct PartialInfo {
 pub(super) struct ClosureInfo {
     pub(super) function: String,
     pub(super) groups: Vec<Vec<ParamSig>>,
-    pub(super) unsafe_effect: bool,
-    pub(super) throws_error: Option<Ty>,
+    pub(super) unsafety: bool,
+    pub(super) failure_error: Option<Ty>,
     pub(super) custom_effects: Vec<String>,
     pub(super) result: Ty,
     pub(super) captures: Vec<ClosureCapture>,
@@ -874,7 +874,7 @@ pub(super) struct ClosureInfo {
 #[derive(Clone, Default)]
 pub(super) struct ClosureEffectContext {
     pub(super) unsafe_depth: usize,
-    pub(super) throws_error: Option<Ty>,
+    pub(super) failure_error: Option<Ty>,
     pub(super) custom_effects: HashSet<String>,
     pub(super) custom_effect_sources: HashMap<String, Type>,
     pub(super) lexical_handler_effects: HashSet<String>,

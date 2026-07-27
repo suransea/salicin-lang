@@ -1072,8 +1072,8 @@ impl Analyzer {
                     + self.nominal_type_complexity_with_seen(output, seen)
                     + self.nominal_type_complexity_with_seen(answer, seen)
             }
-            Ty::EffectRow { throws_error, .. } => {
-                1 + throws_error
+            Ty::EffectRow { failure_error, .. } => {
+                1 + failure_error
                     .as_deref()
                     .map(|error| self.nominal_type_complexity_with_seen(error, seen))
                     .unwrap_or(0)
@@ -1105,7 +1105,7 @@ impl Analyzer {
             .map(|parameter| self.nominal_type_complexity_with_seen(parameter, seen))
             .sum::<usize>()
             + function
-                .throws_error
+                .failure_error
                 .as_deref()
                 .map(|error| self.nominal_type_complexity_with_seen(error, seen))
                 .unwrap_or(0)

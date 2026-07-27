@@ -19,7 +19,7 @@ The surface follows six rules.
 3. `core` needs neither allocation nor a host. `alloc` may allocate but may
    not access a host. `std` is the only layer that may expose host services.
 4. Safe APIs preserve ownership, initialization, UTF-8, and borrow
-   invariants. An unchecked operation requires `unsafe_effect`; it is not
+   invariants. An unchecked operation requires `unsafety`; it is not
    made safe merely by living in the standard library.
 5. `io` is visible host authority, not an error-transport mechanism. Host
    failures are values returned in `result(io_error)(t)`.
@@ -31,6 +31,39 @@ Names prioritize clarity at the call site. Boolean queries use `is_` or
 `has_`; mutating operations use imperative verbs; consuming transformations
 use `into_`; borrowed projections use `as_`; checked conversions use
 `to_` or `try_`; unchecked operations end in `_unchecked`.
+
+### Naming by semantic category
+
+The standard library does not encode declaration kinds in suffixes. Source
+context already distinguishes a trait bound, a value type, an effect row, and
+a callable. Public embedded-library names therefore follow this vocabulary:
+
+| Declaration | Naming form | Examples |
+| --- | --- | --- |
+| struct, enum, or type form | entity, value, or state noun | `string`, `option`, `poll` |
+| trait | capability adjective, role noun, or operation protocol | `copyable`, `iterator`, `add` |
+| effect | abstract behavior, event, or capability noun; a gerund when it is clearer | `throwing`, `suspension`, `unsafety`, `io` |
+| function or method | action verb, with `is_`/`has_` for predicates | `write_all`, `is_empty` |
+| value or variant | state or value noun/adjective | `pending`, `ready`, `none` |
+| sort | the classified concept | `type`, `effect`, `effects`, `parameters` |
+
+The standard effects are named `throwing(error)`, `suspension`, `unsafety`,
+`loop_exit(t)`, `iteration_skip`, and `function_exit(t)`. The enclosing module
+and use position provide any further qualification, for example
+`with(core.error.throwing(e))`. Names such as `async_effect`,
+`iterator_trait`, and `message_type` are rejected in embedded public library
+source. This restriction is a standard-library quality gate, not a restriction
+on ordinary user declarations.
+
+This choice follows the practice of naming effect constants for the behavior
+they document. The current Koka language guide uses semantic labels such as
+`console`, `io`, and `ndet`; Flix describes effects as compiler-checked
+documentation; recent higher-order-effect work uses domain labels such as
+`Output` rather than category suffixes. Salicin keeps its universal
+`snake_case` convention, so declaration context replaces capitalization as
+the category signal. [Koka language guide](https://koka-lang.github.io/koka/doc/book.html),
+[Flix effect system](https://doc.flix.dev/effect-system.html),
+[Hefty Algebras (JFP 2025)](https://doi.org/10.1017/S0956796825100142).
 
 ## Library layers and modules
 
@@ -60,7 +93,7 @@ allocator or host symbol.
 | `core.effect` | effect-handler machinery |
 | `core.error` | typed failure effect machinery |
 | `core.control` | compiler-lowered structured control contracts |
-| `core.unsafe` | `unsafe_effect` and its handler boundary |
+| `core.unsafe` | `unsafety` and its handler boundary |
 | `core.async` | the accepted cold-future surface |
 | `core.foreign` | `abi` and the `foreign` initializer contract |
 | `core.algebra` | algebraic protocols |
@@ -189,9 +222,9 @@ write, flush, seek, and explicit close do not trap for input or host errors.
 library does not add a general catchable panic mechanism in this milestone.
 
 Callback-taking operations forward the callback's effect row exactly and
-evaluate each input once. `io` and `unsafe_effect` are distinct: safe host
-operations require `io` but do not silently acquire `unsafe_effect`; raw
-pointer or unchecked representation operations require `unsafe_effect`
+evaluate each input once. `io` and `unsafety` are distinct: safe host
+operations require `io` but do not silently acquire `unsafety`; raw
+pointer or unchecked representation operations require `unsafety`
 whether or not they also perform I/O.
 
 ## Error families

@@ -222,7 +222,7 @@ fn normalize_function_labeled_type_arguments(
     if let Some(result) = &mut function.return_type {
         normalize_type_labeled_arguments(result, constructor_parameters, diagnostics);
     }
-    if let Some(error) = &mut function.effects.throws {
+    if let Some(error) = &mut function.effects.failure {
         normalize_type_labeled_arguments(error, constructor_parameters, diagnostics);
     }
     for effect in &mut function.effects.custom {
@@ -276,7 +276,7 @@ fn normalize_type_labeled_arguments(
             for ty in groups.iter_mut().flatten() {
                 normalize_type_labeled_arguments(ty, constructor_parameters, diagnostics);
             }
-            if let Some(error) = &mut effects.throws {
+            if let Some(error) = &mut effects.failure {
                 normalize_type_labeled_arguments(error, constructor_parameters, diagnostics);
             }
             for effect in &mut effects.custom {
@@ -866,7 +866,7 @@ pub(super) fn expand_function_aliases(
     if let Some(result) = &mut function.return_type {
         expand_alias_type(result, aliases, &mut Vec::new(), diagnostics);
     }
-    if let Some(error) = &mut function.effects.throws {
+    if let Some(error) = &mut function.effects.failure {
         expand_alias_type(error, aliases, &mut Vec::new(), diagnostics);
     }
     for effect in &mut function.effects.custom {
@@ -1241,7 +1241,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
             if let Some(result) = &mut function.return_type {
                 alpha_rename_method_type(result, &region_names);
             }
-            if let Some(error) = &mut function.effects.throws {
+            if let Some(error) = &mut function.effects.failure {
                 alpha_rename_method_type(error, &region_names);
             }
             for effect in &mut function.effects.custom {
@@ -1321,7 +1321,7 @@ pub(super) fn substitute_function_types(
     function: &mut Function,
     substitutions: &HashMap<String, Type>,
 ) {
-    let had_throws = function.effects.throws.is_some();
+    let had_failure = function.effects.failure.is_some();
     for group in &mut function.groups {
         for parameter in group {
             substitute_parameter_types(parameter, substitutions);
@@ -1330,7 +1330,7 @@ pub(super) fn substitute_function_types(
     if let Some(result) = &mut function.return_type {
         substitute_type_parameters(result, substitutions);
     }
-    if let Some(error) = &mut function.effects.throws {
+    if let Some(error) = &mut function.effects.failure {
         substitute_type_parameters(error, substitutions);
     }
     for effect in &mut function.effects.custom {
@@ -1339,18 +1339,18 @@ pub(super) fn substitute_function_types(
     let mut remaining_effect_parameters = Vec::new();
     for parameter in function.effects.parameters.drain(..) {
         match substituted_effect_row(&parameter, substitutions) {
-            Some((unsafe_effect, throws_error, custom))
-                if throws_error.as_ref().is_none_or(|selected| {
+            Some((unsafety, failure_error, custom))
+                if failure_error.as_ref().is_none_or(|selected| {
                     function
                         .effects
-                        .throws
+                        .failure
                         .as_deref()
                         .is_none_or(|fixed| fixed == selected)
                 }) =>
             {
-                function.effects.unsafe_effect |= unsafe_effect;
-                if function.effects.throws.is_none() {
-                    function.effects.throws = throws_error.map(Box::new);
+                function.effects.unsafety |= unsafety;
+                if function.effects.failure.is_none() {
+                    function.effects.failure = failure_error.map(Box::new);
                 }
                 function
                     .effects
@@ -1366,8 +1366,8 @@ pub(super) fn substitute_function_types(
         .custom
         .retain(|effect| seen_custom.insert(effect.clone()));
     function.effects.parameters = remaining_effect_parameters;
-    if !had_throws {
-        if let Some(error) = function.effects.throws.as_deref() {
+    if !had_failure {
+        if let Some(error) = function.effects.failure.as_deref() {
             let Some(result) = function.return_type.take() else {
                 return;
             };
@@ -1441,7 +1441,7 @@ pub(super) fn alpha_normalize_method_compile_binders(function: &mut Function) {
     if let Some(result) = &mut function.return_type {
         alpha_rename_method_type(result, &names);
     }
-    if let Some(error) = &mut function.effects.throws {
+    if let Some(error) = &mut function.effects.failure {
         alpha_rename_method_type(error, &names);
     }
     for effect in &mut function.effects.custom {
@@ -1524,7 +1524,7 @@ fn alpha_rename_method_type(ty: &mut Type, names: &HashMap<String, String>) {
             for parameter in groups.iter_mut().flatten() {
                 alpha_rename_method_type(parameter, names);
             }
-            if let Some(error) = &mut effects.throws {
+            if let Some(error) = &mut effects.failure {
                 alpha_rename_method_type(error, names);
             }
             for effect in &mut effects.custom {
@@ -1592,7 +1592,7 @@ pub(super) fn substitute_associated_type_equations(
     if let Some(result) = &mut function.return_type {
         rewrite_associated_equation_type(result, equations, 0)?;
     }
-    if let Some(error) = &mut function.effects.throws {
+    if let Some(error) = &mut function.effects.failure {
         rewrite_associated_equation_type(error, equations, 0)?;
     }
     for effect in &mut function.effects.custom {
@@ -1671,7 +1671,7 @@ fn rewrite_associated_equation_type(
             for parameter in groups.iter_mut().flatten() {
                 rewrite_associated_equation_type(parameter, equations, depth)?;
             }
-            if let Some(error) = &mut effects.throws {
+            if let Some(error) = &mut effects.failure {
                 rewrite_associated_equation_type(error, equations, depth)?;
             }
             for effect in &mut effects.custom {
@@ -2396,11 +2396,11 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
             effects,
             result,
         } => {
-            let had_throws = effects.throws.is_some();
+            let had_failure = effects.failure.is_some();
             for ty in groups.iter_mut().flatten() {
                 substitute_type_parameters(ty, substitutions);
             }
-            if let Some(error) = &mut effects.throws {
+            if let Some(error) = &mut effects.failure {
                 substitute_type_parameters(error, substitutions);
             }
             for effect in &mut effects.custom {
@@ -2410,17 +2410,17 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
             let mut remaining = Vec::new();
             for parameter in effects.parameters.drain(..) {
                 match substituted_effect_row(&parameter, substitutions) {
-                    Some((unsafe_effect, throws_error, custom))
-                        if throws_error.as_ref().is_none_or(|selected| {
+                    Some((unsafety, failure_error, custom))
+                        if failure_error.as_ref().is_none_or(|selected| {
                             effects
-                                .throws
+                                .failure
                                 .as_deref()
                                 .is_none_or(|fixed| fixed == selected)
                         }) =>
                     {
-                        effects.unsafe_effect |= unsafe_effect;
-                        if effects.throws.is_none() {
-                            effects.throws = throws_error.map(Box::new);
+                        effects.unsafety |= unsafety;
+                        if effects.failure.is_none() {
+                            effects.failure = failure_error.map(Box::new);
                         }
                         effects.custom.extend(effect_identity_sources(&custom));
                     }
@@ -2432,8 +2432,8 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
             effects
                 .custom
                 .retain(|effect| seen_custom.insert(effect.clone()));
-            if !had_throws {
-                if let Some(error) = effects.throws.as_deref() {
+            if !had_failure {
+                if let Some(error) = effects.failure.as_deref() {
                     let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
                     **result = Type::Named(
                         "core::result::result".to_owned(),

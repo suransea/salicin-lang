@@ -85,12 +85,12 @@ current state and returns `pending` from the outer future.
 closure, handler clause, or nested async boundary.
 
 The type and residual effects of the body determine `future(e).output` and `e`. Handling an effect
-inside the body removes it normally. Unhandled `throws(error)`, `unsafe_effect`, and custom effects remain
+inside the body removes it normally. Unhandled `throwing(error)`, `unsafety`, and custom effects remain
 requirements of `poll`.
 
 The implemented suspended residual slice accepts a first segment ending in
 one `await`, optionally followed by a finite linear sequence of pure await
-segments. The first segment may retain custom effects or `throws`; later
+segments. The first segment may retain custom effects or `throwing`; later
 child poll rows may not. Every segment may capture by-value `copyable` or
 move-only values, or retain a region-checked shared or mutable reference to
 external storage. Pre-await locals used by a continuation may likewise be
@@ -119,7 +119,7 @@ and retained fields enter the suspended state atomically. Selection and the
 chosen factory execute once; pending, ready, and cancellation touch only the
 selected child, while every initialized retained value is cleaned exactly
 once. After a pure child becomes ready, a final continuation that does not
-suspend again may retain custom effects or `throws`. The pure state-machine
+suspend again may retain custom effects or `throwing`. The pure state-machine
 transition first destroys the completed child and transfers the await output,
 continuation captures, and retained locals into one private tuple. The source
 poll wrapper then executes that continuation under the enclosing handler.
@@ -155,23 +155,23 @@ compiler-internal outcomes:
 
 ```sc future
 let async_loop_step(comptime carry: type, comptime output: type) = enum {
-  continue_effect(carry)
-  break_effect(output)
+  iteration_skip(carry)
+  loop_exit(output)
 }
 ```
 
 This is a lowering model, not a public standard-library declaration. `carry` contains exactly the
 values live across the loop backedge. Each iteration takes those values by value. A `continue` or
-fallthrough transfers them to `continue_effect`; a value-producing `break` transfers its value to
-`break_effect`. A `while` condition that becomes false is the unit-valued break path.
+fallthrough transfers them to `iteration_skip`; a value-producing `break` transfers its value to
+`loop_exit`. A `while` condition that becomes false is the unit-valued break path.
 
 The parent future stores one active iteration child and reuses that storage after the child
 completes:
 
 1. `pending` leaves the active child and carried values initialized and returns `pending`;
-2. `ready(continue_effect(carry))` destroys the completed child, constructs the next iteration in the same
+2. `ready(iteration_skip(carry))` destroys the completed child, constructs the next iteration in the same
    child slot from `carry`, and polls it immediately;
-3. `ready(break_effect(output))` destroys the completed child, marks the parent completed, and returns
+3. `ready(loop_exit(output))` destroys the completed child, marks the parent completed, and returns
    `ready(output)`.
 
 Immediate iterations are consumed in an ordinary poll-local loop. They do not add observable
@@ -180,14 +180,14 @@ may impose a documented fairness budget later, but the initial allocation-free c
 a child returns `pending` or the source loop exits.
 
 A pre-test `while` evaluates its condition before constructing the first iteration and after each
-`continue_effect`; a post-test loop skips only the first condition check. A false condition is
-`break_effect(())`, and no condition is evaluated while an active iteration is pending. The current
+`iteration_skip`; a post-test loop skips only the first condition check. A false condition is
+`loop_exit(())`, and no condition is evaluated while an active iteration is pending. The current
 implementation requires a recurring condition to be pure. Effectful conditions
 require a distinct resumable condition state and are rejected before lowering.
 
 When one source iteration contains multiple sequential suspension points, it is lowered to a
 finite, non-recursive iteration future. That child owns only the currently active nested segment
-and eventually produces the same step outcome. Its `break_effect(output)` type is inferred after binding
+and eventually produces the same step outcome. Its `loop_exit(output)` type is inferred after binding
 each awaited `future.output` in source order. Cancelling the parent delegates cleanup through this
 finite child chain. If that iteration child's own `poll` retains a residual
 effect row, recurring handler specialization is not yet composed through the
@@ -195,15 +195,15 @@ nested poll and the source program is rejected.
 
 A recurring loop with one residual child factory per iteration is specialized
 under the enclosing handler. The child is constructed cold after a true
-pre-test condition, and never before it. Each completed `continue_effect` yields
+pre-test condition, and never before it. Each completed `iteration_skip` yields
 `pending` at the source wrapper boundary, then constructs the next effectful
 child on the following external poll. `ready`, child `pending`, cancellation,
-`throws`, and handler abandonment preserve one-shot construction and cleanup.
+`throwing`, and handler abandonment preserve one-shot construction and cleanup.
 Post-test loops skip only the first condition check.
 
 For a general unit-valued iteration body, `break` and `continue` at the current loop depth become
 early returns from that iteration future. Normal exits from nested `if` and `match` branches receive
-the fallthrough `continue_effect(())` outcome. Rewriting does not cross a nested loop, closure, or async
+the fallthrough `iteration_skip(())` outcome. Rewriting does not cross a nested loop, closure, or async
 boundary.
 
 Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
@@ -214,9 +214,9 @@ the same `movable` rule as every other value stored across `await`; in particula
 return a borrow into its own storage as `carry`.
 
 Move-only parent values referenced by the post-await continuation are explicit fields of `carry`.
-The continuation moves them into every reachable `continue_effect`, and the parent reinitializes their
-state fields before constructing the next child. A `break_effect` path instead consumes or drops them in
-that continuation. A source loop with no reachable `break_effect` uses the standard uninhabited `never`
+The continuation moves them into every reachable `iteration_skip`, and the parent reinitializes their
+state fields before constructing the next child. A `loop_exit` path instead consumes or drops them in
+that continuation. A source loop with no reachable `loop_exit` uses the standard uninhabited `never`
 type as `output`; the internal break variant cannot be constructed.
 
 ## Ownership And Cancellation
@@ -301,7 +301,7 @@ Implementation tasks must cover:
 
 - cold creation and first poll;
 - immediate `ready` and one or more `pending` transitions;
-- nested await and residual `throws`, `unsafe_effect`, and custom effects;
+- nested await and residual `throwing`, `unsafety`, and custom effects;
 - move captures and locals live across suspension;
 - suspended `while` and `loop` iterations, including `continue`, fallthrough, false conditions, and
   value-producing `break`;

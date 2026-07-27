@@ -87,7 +87,7 @@ extend(string) {
   }
 
   /// Consumes bytes known by the caller to contain well-formed UTF-8.
-  let from_utf8_unchecked(move bytes: vec(u8)): string with(core.unsafe.unsafe_effect) = {
+  let from_utf8_unchecked(move bytes: vec(u8)): string with(core.unsafe.unsafety) = {
     string { bytes: bytes }
   }
 

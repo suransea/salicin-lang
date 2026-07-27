@@ -41,6 +41,7 @@ mod ctfe_value;
 mod defer;
 mod effects;
 mod emitter;
+mod failure;
 mod fallible;
 mod flow;
 mod functions;
@@ -63,7 +64,6 @@ mod registry;
 mod source_rewrite;
 mod static_eval;
 mod target;
-mod throws;
 mod types;
 
 use compile_time::*;
@@ -1001,17 +1001,17 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
-            let throws_error = function
+            let failure_error = function
                 .effects
-                .throws
+                .failure
                 .as_deref()
                 .map(|error| self.lower_source_type(error));
             self.signatures.insert(
                 name,
                 FunctionSig {
                     groups,
-                    unsafe_effect: self.function_effects_unsafe(&function.effects),
-                    throws_error,
+                    unsafety: self.function_effects_unsafe(&function.effects),
+                    failure_error,
                     custom_effects: self.function_effects_custom_identities(&function.effects),
                     result,
                 },
@@ -2236,7 +2236,7 @@ impl Analyzer {
         compile_parameters: &HashMap<String, Sort>,
     ) -> bool {
         let mut valid = true;
-        if let Some(error) = &effects.throws {
+        if let Some(error) = &effects.failure {
             valid &=
                 self.validate_trait_source_type(trait_name, member_name, error, compile_parameters);
         }
@@ -2518,14 +2518,14 @@ impl Analyzer {
         }
         if effect_row_from_source(source).is_some() {
             return if parameter.kind == Sort::Effect {
-                let (unsafe_effect, throws, custom) = effect_row_from_source(source)?;
-                (usize::from(unsafe_effect) + usize::from(throws.is_some()) + custom.len() == 1)
+                let (unsafety, failure, custom) = effect_row_from_source(source)?;
+                (usize::from(unsafety) + usize::from(failure.is_some()) + custom.len() == 1)
                     .then(|| source.clone())
             } else {
                 Some(source.clone())
             };
         }
-        if self.is_standard_unsafe_effect_source(source) {
+        if self.is_standard_unsafety_source(source) {
             return Some(effect_row_source(true, None, &[]));
         }
         let Type::Named(name, arguments) = source else {
@@ -3733,17 +3733,17 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
-                let throws_error = function
+                let failure_error = function
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error));
                 self.signatures.insert(
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: self.function_effects_unsafe(&function.effects),
-                        throws_error,
+                        unsafety: self.function_effects_unsafe(&function.effects),
+                        failure_error,
                         custom_effects: self.function_effects_custom_identities(&function.effects),
                         result,
                     },
@@ -4013,17 +4013,17 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
-                let throws_error = function
+                let failure_error = function
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error));
                 self.signatures.insert(
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: self.function_effects_unsafe(&function.effects),
-                        throws_error,
+                        unsafety: self.function_effects_unsafe(&function.effects),
+                        failure_error,
                         custom_effects: self.function_effects_custom_identities(&function.effects),
                         result,
                     },
@@ -4242,17 +4242,17 @@ impl Analyzer {
                             .return_type
                             .as_ref()
                             .map(|result| self.lower_source_type(result));
-                        let throws_error = function
+                        let failure_error = function
                             .effects
-                            .throws
+                            .failure
                             .as_deref()
                             .map(|error| self.lower_source_type(error));
                         self.signatures.insert(
                             canonical.clone(),
                             FunctionSig {
                                 groups,
-                                unsafe_effect: self.function_effects_unsafe(&function.effects),
-                                throws_error,
+                                unsafety: self.function_effects_unsafe(&function.effects),
+                                failure_error,
                                 custom_effects: self
                                     .function_effects_custom_identities(&function.effects),
                                 result,
@@ -6329,17 +6329,17 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
-                let throws_error = function
+                let failure_error = function
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error));
                 self.signatures.insert(
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: self.function_effects_unsafe(&function.effects),
-                        throws_error,
+                        unsafety: self.function_effects_unsafe(&function.effects),
+                        failure_error,
                         custom_effects: self.function_effects_custom_identities(&function.effects),
                         result,
                     },
@@ -6904,10 +6904,10 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
-            let unsafe_effect = self.function_effects_unsafe(&function.effects);
-            let throws_error = function
+            let unsafety = self.function_effects_unsafe(&function.effects);
+            let failure_error = function
                 .effects
-                .throws
+                .failure
                 .as_deref()
                 .map(|error| self.lower_source_type(error));
             let custom_effects = self.function_effects_custom_identities(&function.effects);
@@ -6920,8 +6920,8 @@ impl Analyzer {
                 validation_name.clone(),
                 FunctionSig {
                     groups,
-                    unsafe_effect,
-                    throws_error,
+                    unsafety,
+                    failure_error,
                     custom_effects,
                     result,
                 },
@@ -7100,17 +7100,17 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
-                let throws_error = method
+                let failure_error = method
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error));
                 self.signatures.insert(
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: self.function_effects_unsafe(&method.effects),
-                        throws_error,
+                        unsafety: self.function_effects_unsafe(&method.effects),
+                        failure_error,
                         custom_effects: self.function_effects_custom_identities(&method.effects),
                         result,
                     },
@@ -8143,7 +8143,7 @@ impl Analyzer {
                 let Some(result) = signature.result.clone() else {
                     return TypeProbe::Unsupported;
                 };
-                if signature.throws_error.is_some() {
+                if signature.failure_error.is_some() {
                     return self
                         .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
@@ -8160,8 +8160,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: signature.unsafe_effect,
-                throws_error: signature.throws_error.clone().map(Box::new),
+                unsafety: signature.unsafety,
+                failure_error: signature.failure_error.clone().map(Box::new),
                 custom_effects: signature.custom_effects.clone(),
                 result: Box::new(result),
             }));
@@ -8209,7 +8209,7 @@ impl Analyzer {
             return TypeProbe::Unsupported;
         };
         if runtime_groups.len() == function.groups.len() {
-            if function.effects.throws.is_some() {
+            if function.effects.failure.is_some() {
                 let Some(info) = self.standard_fallible_info_for_ty(&result) else {
                     return TypeProbe::Unsupported;
                 };
@@ -8228,7 +8228,7 @@ impl Analyzer {
             })
             .collect::<Option<Vec<_>>>();
         if let Some(groups) = remaining {
-            let throws_error = match function.effects.throws.as_deref() {
+            let failure_error = match function.effects.failure.as_deref() {
                 Some(error) => {
                     let Some(error) = self.probe_source_ty(error) else {
                         return TypeProbe::Unsupported;
@@ -8239,8 +8239,8 @@ impl Analyzer {
             };
             return TypeProbe::Known(Ty::Function(FunctionTy {
                 groups,
-                unsafe_effect: self.function_effects_unsafe(&function.effects),
-                throws_error,
+                unsafety: self.function_effects_unsafe(&function.effects),
+                failure_error,
                 custom_effects: self.function_effects_custom_identities(&function.effects),
                 result: Box::new(result),
             }));
@@ -8345,7 +8345,7 @@ impl Analyzer {
                 return TypeProbe::Unsupported;
             }
             if groups.len() == function.groups.len() {
-                if function.throws_error.is_some() {
+                if function.failure_error.is_some() {
                     return self
                         .standard_fallible_info_for_ty(&function.result)
                         .map_or(TypeProbe::Unsupported, |info| {
@@ -8356,8 +8356,8 @@ impl Analyzer {
             }
             return TypeProbe::Known(Ty::Function(FunctionTy {
                 groups: function.groups[groups.len()..].to_vec(),
-                unsafe_effect: function.unsafe_effect,
-                throws_error: function.throws_error.clone(),
+                unsafety: function.unsafety,
+                failure_error: function.failure_error.clone(),
                 custom_effects: function.custom_effects.clone(),
                 result: function.result.clone(),
             }));
@@ -8386,7 +8386,7 @@ impl Analyzer {
                 let Some(result) = signature.result.clone() else {
                     return TypeProbe::Unsupported;
                 };
-                if signature.throws_error.is_some() {
+                if signature.failure_error.is_some() {
                     return self
                         .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
@@ -8403,8 +8403,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: signature.unsafe_effect,
-                throws_error: signature.throws_error.clone().map(Box::new),
+                unsafety: signature.unsafety,
+                failure_error: signature.failure_error.clone().map(Box::new),
                 custom_effects: signature.custom_effects.clone(),
                 result: Box::new(result),
             }));
@@ -8485,7 +8485,7 @@ impl Analyzer {
                         return TypeProbe::Unsupported;
                     };
                     if runtime_groups.len() == template.groups.len() {
-                        if template.effects.throws.is_some() {
+                        if template.effects.failure.is_some() {
                             let Some(info) = self.standard_fallible_info_for_ty(&result) else {
                                 return TypeProbe::Unsupported;
                             };
@@ -8507,7 +8507,7 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>();
                     if let Some(groups) = remaining {
-                        let throws_error = match template.effects.throws.as_deref() {
+                        let failure_error = match template.effects.failure.as_deref() {
                             Some(error) => {
                                 let Some(error) = self.probe_source_ty(error) else {
                                     return TypeProbe::Unsupported;
@@ -8518,8 +8518,8 @@ impl Analyzer {
                         };
                         return TypeProbe::Known(Ty::Function(FunctionTy {
                             groups,
-                            unsafe_effect: self.function_effects_unsafe(&template.effects),
-                            throws_error,
+                            unsafety: self.function_effects_unsafe(&template.effects),
+                            failure_error,
                             custom_effects: self
                                 .function_effects_custom_identities(&template.effects),
                             result: Box::new(result),
@@ -8541,7 +8541,7 @@ impl Analyzer {
                 let Some(result) = signature.result.clone() else {
                     return TypeProbe::Unsupported;
                 };
-                if signature.throws_error.is_some() {
+                if signature.failure_error.is_some() {
                     return self
                         .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
@@ -8558,8 +8558,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: signature.unsafe_effect,
-                throws_error: signature.throws_error.clone().map(Box::new),
+                unsafety: signature.unsafety,
+                failure_error: signature.failure_error.clone().map(Box::new),
                 custom_effects: signature.custom_effects.clone(),
                 result: Box::new(result),
             }));
@@ -9245,9 +9245,9 @@ impl Analyzer {
                                         Some(Ty::Function(function)) => (
                                             Some((*function.result).clone()),
                                             ClosureEffectContext {
-                                                unsafe_depth: usize::from(function.unsafe_effect),
-                                                throws_error: function
-                                                    .throws_error
+                                                unsafe_depth: usize::from(function.unsafety),
+                                                failure_error: function
+                                                    .failure_error
                                                     .as_deref()
                                                     .cloned(),
                                                 custom_effects: function
@@ -9835,7 +9835,7 @@ impl Analyzer {
         let mut context =
             LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
         context.unsafe_depth = effects.unsafe_depth;
-        context.active_throws_error = effects.throws_error.clone();
+        context.active_failure_error = effects.failure_error.clone();
         context.active_custom_effects = effects.custom_effects.clone();
         context.active_custom_effect_sources = effects.custom_effect_sources.clone();
         context
@@ -9848,10 +9848,10 @@ impl Analyzer {
         context.lexical_handler_effect_sources = effects.lexical_handler_effect_sources.clone();
         context.infer_effects = effects.infer_effects;
         context.recursive_frame_calls = outer.recursive_frame_calls.clone();
-        context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
+        context.return_boundary = effects.failure_error.as_ref().and_then(|error| {
             declared_result
                 .as_ref()
-                .and_then(|result| self.throws_boundary_for_ty(result, error))
+                .and_then(|result| self.failure_boundary_for_ty(result, error))
         });
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
@@ -10187,7 +10187,7 @@ impl Analyzer {
             self.lower_expr(body, declared_result.as_ref(), &mut context)
         };
         if effects.infer_effects {
-            if context.inferred_unsafe_effect {
+            if context.inferred_unsafety {
                 effects.unsafe_depth = 1;
             }
             effects
@@ -10230,8 +10230,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: effects.unsafe_depth > 0,
-                throws_error: effects.throws_error.clone().map(Box::new),
+                unsafety: effects.unsafe_depth > 0,
+                failure_error: effects.failure_error.clone().map(Box::new),
                 custom_effects: custom_effects.clone(),
                 result: Box::new(result.clone()),
             },
@@ -10255,8 +10255,8 @@ impl Analyzer {
         let info = ClosureInfo {
             function,
             groups: groups.clone(),
-            unsafe_effect: effects.unsafe_depth > 0,
-            throws_error: effects.throws_error,
+            unsafety: effects.unsafe_depth > 0,
+            failure_error: effects.failure_error,
             custom_effects,
             result: result.clone(),
             captures,
@@ -10361,8 +10361,8 @@ impl Analyzer {
             &match_body,
             Some((*function.result).clone()),
             ClosureEffectContext {
-                unsafe_depth: usize::from(function.unsafe_effect),
-                throws_error: function.throws_error.as_deref().cloned(),
+                unsafe_depth: usize::from(function.unsafety),
+                failure_error: function.failure_error.as_deref().cloned(),
                 custom_effects: function.custom_effects.iter().cloned().collect(),
                 custom_effect_sources,
                 lexical_handler_effects: HashSet::new(),
@@ -11910,7 +11910,7 @@ impl Analyzer {
         self.release_loans(&temporary_loans, context);
         let call = if complete {
             let call = HirExpr {
-                ty: if function_ty.throws_error.is_some() {
+                ty: if function_ty.failure_error.is_some() {
                     (*function_ty.result).clone()
                 } else {
                     contextual_reference_result(&function_ty.result, expected)
@@ -11922,8 +11922,8 @@ impl Analyzer {
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             };
-            if let Some(error) = function_ty.throws_error.as_deref() {
-                self.lower_automatic_throws(call, error, expected, context)
+            if let Some(error) = function_ty.failure_error.as_deref() {
+                self.lower_automatic_throwing(call, error, expected, context)
             } else {
                 call
             }
@@ -11933,8 +11933,8 @@ impl Analyzer {
                 consumed_groups,
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
-                    unsafe_effect: function_ty.unsafe_effect,
-                    throws_error: function_ty.throws_error.clone(),
+                    unsafety: function_ty.unsafety,
+                    failure_error: function_ty.failure_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -11987,12 +11987,12 @@ impl Analyzer {
             let sources =
                 source_effect_source_map(&effect_identity_sources(&closure.custom_effects));
             self.require_callable_effects(
-                if closure.unsafe_effect {
+                if closure.unsafety {
                     format!("call to unsafe closure `{local_name}`")
                 } else {
                     format!("call to closure `{local_name}`")
                 },
-                closure.unsafe_effect,
+                closure.unsafety,
                 &closure.custom_effects,
                 &sources,
                 context,
@@ -12135,8 +12135,8 @@ impl Analyzer {
                         .iter()
                         .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                         .collect(),
-                    unsafe_effect: closure.unsafe_effect,
-                    throws_error: closure.throws_error.clone().map(Box::new),
+                    unsafety: closure.unsafety,
+                    failure_error: closure.failure_error.clone().map(Box::new),
                     custom_effects: closure.custom_effects.clone(),
                     result: Box::new(closure.result.clone()),
                 },
@@ -12152,8 +12152,8 @@ impl Analyzer {
             }
         };
         let call = if complete {
-            if let Some(error) = closure.throws_error.as_ref() {
-                self.lower_automatic_throws(call, error, expected, context)
+            if let Some(error) = closure.failure_error.as_ref() {
+                self.lower_automatic_throwing(call, error, expected, context)
             } else {
                 call
             }
@@ -12201,12 +12201,12 @@ impl Analyzer {
         let sources =
             source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
         self.require_callable_effects(
-            if function_ty.unsafe_effect {
+            if function_ty.unsafety {
                 format!("indirect call to unsafe callable `{local_name}`")
             } else {
                 format!("indirect call `{local_name}`")
             },
-            function_ty.unsafe_effect,
+            function_ty.unsafety,
             &function_ty.custom_effects,
             &sources,
             context,
@@ -12264,8 +12264,8 @@ impl Analyzer {
                 diverges: self.is_uninhabited_type(&function_ty.result),
             },
         };
-        let call = if let Some(error) = function_ty.throws_error.as_deref() {
-            self.lower_automatic_throws(call, error, expected, context)
+        let call = if let Some(error) = function_ty.failure_error.as_deref() {
+            self.lower_automatic_throwing(call, error, expected, context)
         } else {
             call
         };
@@ -12441,7 +12441,7 @@ impl Analyzer {
 
         let call = if complete {
             let call = HirExpr {
-                ty: if function_ty.throws_error.is_some() {
+                ty: if function_ty.failure_error.is_some() {
                     (*function_ty.result).clone()
                 } else {
                     contextual_reference_result(&function_ty.result, expected)
@@ -12453,8 +12453,8 @@ impl Analyzer {
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             };
-            if let Some(error) = function_ty.throws_error.as_deref() {
-                self.lower_automatic_throws(call, error, expected, context)
+            if let Some(error) = function_ty.failure_error.as_deref() {
+                self.lower_automatic_throwing(call, error, expected, context)
             } else {
                 call
             }
@@ -12465,8 +12465,8 @@ impl Analyzer {
                 groups.len(),
                 FunctionTy {
                     groups: remaining,
-                    unsafe_effect: function_ty.unsafe_effect,
-                    throws_error: function_ty.throws_error.clone(),
+                    unsafety: function_ty.unsafety,
+                    failure_error: function_ty.failure_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -12616,10 +12616,10 @@ impl Analyzer {
                                 .collect()
                         })
                         .collect(),
-                    unsafe_effect: self.function_effects_unsafe(&specialized.effects),
-                    throws_error: specialized
+                    unsafety: self.function_effects_unsafe(&specialized.effects),
+                    failure_error: specialized
                         .effects
-                        .throws
+                        .failure
                         .as_deref()
                         .map(|error| self.lower_source_type(error)),
                     custom_effects: self.function_effects_custom_identities(&specialized.effects),
@@ -12791,10 +12791,10 @@ impl Analyzer {
                             .collect()
                     })
                     .collect(),
-                unsafe_effect: self.function_effects_unsafe(&function.effects),
-                throws_error: function
+                unsafety: self.function_effects_unsafe(&function.effects),
+                failure_error: function
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error)),
                 custom_effects: self.function_effects_custom_identities(&function.effects),
@@ -12962,10 +12962,10 @@ impl Analyzer {
                         .collect()
                 })
                 .collect(),
-            unsafe_effect: self.function_effects_unsafe(&specialized.effects),
-            throws_error: specialized
+            unsafety: self.function_effects_unsafe(&specialized.effects),
+            failure_error: specialized
                 .effects
-                .throws
+                .failure
                 .as_deref()
                 .map(|error| self.lower_source_type(error)),
             custom_effects: self.function_effects_custom_identities(&specialized.effects),
@@ -13201,12 +13201,12 @@ impl Analyzer {
             let sources =
                 source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
             self.require_callable_effects(
-                if function_ty.unsafe_effect {
+                if function_ty.unsafety {
                     format!("call to unsafe partial `{local_name}`")
                 } else {
                     format!("call to partial `{local_name}`")
                 },
-                function_ty.unsafe_effect,
+                function_ty.unsafety,
                 &function_ty.custom_effects,
                 &sources,
                 context,
@@ -13235,8 +13235,8 @@ impl Analyzer {
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             };
-            if let Some(error) = function_ty.throws_error.as_deref() {
-                self.lower_automatic_throws(call, error, expected, context)
+            if let Some(error) = function_ty.failure_error.as_deref() {
+                self.lower_automatic_throwing(call, error, expected, context)
             } else {
                 call
             }
@@ -13250,8 +13250,8 @@ impl Analyzer {
                 consumed_groups,
                 FunctionTy {
                     groups: function_ty.groups[groups.len()..].to_vec(),
-                    unsafe_effect: function_ty.unsafe_effect,
-                    throws_error: function_ty.throws_error.clone(),
+                    unsafety: function_ty.unsafety,
+                    failure_error: function_ty.failure_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -13472,8 +13472,8 @@ impl Analyzer {
             body,
             Some((*function_ty.result).clone()),
             ClosureEffectContext {
-                unsafe_depth: usize::from(function_ty.unsafe_effect),
-                throws_error: function_ty.throws_error.as_deref().cloned(),
+                unsafe_depth: usize::from(function_ty.unsafety),
+                failure_error: function_ty.failure_error.as_deref().cloned(),
                 custom_effects: function_ty.custom_effects.iter().cloned().collect(),
                 custom_effect_sources,
                 lexical_handler_effects: HashSet::new(),
@@ -13499,8 +13499,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: closure.unsafe_effect,
-                throws_error: closure.throws_error.clone().map(Box::new),
+                unsafety: closure.unsafety,
+                failure_error: closure.failure_error.clone().map(Box::new),
                 custom_effects: closure.custom_effects.clone(),
                 result: Box::new(closure.result.clone()),
             }),
@@ -13543,8 +13543,8 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: closure.unsafe_effect,
-                throws_error: closure.throws_error.clone().map(Box::new),
+                unsafety: closure.unsafety,
+                failure_error: closure.failure_error.clone().map(Box::new),
                 custom_effects: closure.custom_effects.clone(),
                 result: Box::new(closure.result.clone()),
             }),

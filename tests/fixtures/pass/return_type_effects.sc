@@ -1,9 +1,9 @@
 let result = std.result
 
-let throws = std.error.throws
-let unsafe_effect = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafety = std.unsafe.unsafety
 
-let read(fail: bool): i32 with(throws(bool), unsafe_effect) = {
+let read(fail: bool): i32 with(throwing(bool), unsafety) = {
   if fail { throw(true) }
   42
 }

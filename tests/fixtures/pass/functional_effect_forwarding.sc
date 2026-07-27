@@ -1,14 +1,14 @@
 let option = std.option
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 let applicative = std.functional.applicative
 let functor = std.functional.functor
 let monad = std.functional.monad
 
-let unsafe_add_one(value: i32): i32 with(unsafe_effect) = {
+let unsafe_add_one(value: i32): i32 with(unsafety) = {
   value + 1
 }
 
-let unsafe_next(value: i32): option(i32) with(unsafe_effect) = {
+let unsafe_next(value: i32): option(i32) with(unsafety) = {
   option(i32).some(value + 2)
 }
 
@@ -23,7 +23,7 @@ let main(): i32 = {
     option(i32).some(40).map(unsafe_add_one)
   }
   let applied = unsafe {
-    let transform: option((i32): i32 with(unsafe_effect)) = option.some(unsafe_add_one)
+    let transform: option((i32): i32 with(unsafety)) = option.some(unsafe_add_one)
     transform.apply(option(i32).some(1))
   }
   let chained = unsafe {

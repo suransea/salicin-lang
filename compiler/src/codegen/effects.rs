@@ -29,12 +29,12 @@ impl Analyzer {
             let sources =
                 source_effect_source_map(&effect_identity_sources(&signature.custom_effects));
             self.require_callable_effects(
-                if signature.unsafe_effect {
+                if signature.unsafety {
                     format!("call to unsafe function `{display_name}`")
                 } else {
                     format!("call to `{display_name}`")
                 },
-                signature.unsafe_effect,
+                signature.unsafety,
                 &signature.custom_effects,
                 &sources,
                 context,
@@ -48,16 +48,16 @@ impl Analyzer {
         else {
             return;
         };
-        let unsafe_effect = self.function_effects_unsafe(&effects);
+        let unsafety = self.function_effects_unsafe(&effects);
         let required = self.function_effects_custom_identities(&effects);
         let sources = self.function_effects_custom_source_map(&effects);
         self.require_callable_effects(
-            if unsafe_effect {
+            if unsafety {
                 format!("call to unsafe function `{display_name}`")
             } else {
                 format!("call to `{display_name}`")
             },
-            unsafe_effect,
+            unsafety,
             &required,
             &sources,
             context,
@@ -67,14 +67,14 @@ impl Analyzer {
     pub(super) fn require_callable_effects(
         &mut self,
         prefix: String,
-        unsafe_effect: bool,
+        unsafety: bool,
         custom_effects: &[String],
         custom_effect_sources: &HashMap<String, Type>,
         context: &mut LowerCtx,
     ) {
-        if unsafe_effect && context.unsafe_depth == 0 {
+        if unsafety && context.unsafe_depth == 0 {
             if context.infer_effects {
-                context.inferred_unsafe_effect = true;
+                context.inferred_unsafety = true;
             } else {
                 self.error(format!("{prefix} requires an `unsafe` handler"));
             }
@@ -107,7 +107,7 @@ impl Analyzer {
 
     pub(super) fn report_missing_custom_effects(&mut self, prefix: String, missing: Vec<String>) {
         if missing.len() == 1 {
-            if let Some(display) = self.standard_throws_diagnostic_name(&missing[0]) {
+            if let Some(display) = self.standard_failure_diagnostic_name(&missing[0]) {
                 self.error(format!(
                     "{prefix} requires `{display}`; handle it with `try {{ ... }}` or propagate it from the current function"
                 ));
@@ -121,10 +121,12 @@ impl Analyzer {
         ));
     }
 
-    fn standard_throws_diagnostic_name(&self, identity: &str) -> Option<String> {
+    fn standard_failure_diagnostic_name(&self, identity: &str) -> Option<String> {
         let source = source_type_from_identity(identity)?;
-        let error =
-            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))?;
+        let error = standard_failure_error_source(
+            &source,
+            self.lang_item_name(LangItemKind::ThrowsEffect),
+        )?;
         let error = self
             .probe_source_ty(&error)
             .map(|error| self.diagnostic_type_name(&error))
@@ -133,10 +135,10 @@ impl Analyzer {
                     &super::source_rewrite::source_type_expression(&error),
                 )
             })?;
-        Some(format!("throws({error})"))
+        Some(format!("throwing({error})"))
     }
 
-    pub(super) fn is_standard_unsafe_effect_source(&self, effect: &Type) -> bool {
+    pub(super) fn is_standard_unsafety_source(&self, effect: &Type) -> bool {
         matches!(
             effect,
             Type::Named(name, arguments)
@@ -148,7 +150,7 @@ impl Analyzer {
     pub(super) fn source_effects_include_standard_unsafe(&self, effects: &[Type]) -> bool {
         effects
             .iter()
-            .any(|effect| self.is_standard_unsafe_effect_source(effect))
+            .any(|effect| self.is_standard_unsafety_source(effect))
     }
 
     pub(super) fn custom_effect_sources_without_standard_unsafe(
@@ -157,7 +159,7 @@ impl Analyzer {
     ) -> Vec<Type> {
         effects
             .iter()
-            .filter(|effect| !self.is_standard_unsafe_effect_source(effect))
+            .filter(|effect| !self.is_standard_unsafety_source(effect))
             .cloned()
             .collect()
     }
@@ -177,14 +179,14 @@ impl Analyzer {
     }
 
     pub(super) fn function_effects_unsafe(&self, effects: &FunctionEffects) -> bool {
-        effects.unsafe_effect || self.source_effects_include_standard_unsafe(&effects.custom)
+        effects.unsafety || self.source_effects_include_standard_unsafe(&effects.custom)
     }
 
-    pub(super) fn strip_authorized_unsafe_effects(&self, effects: &mut FunctionEffects) {
-        effects.unsafe_effect = false;
+    pub(super) fn strip_authorized_unsafetys(&self, effects: &mut FunctionEffects) {
+        effects.unsafety = false;
         effects
             .custom
-            .retain(|effect| !self.is_standard_unsafe_effect_source(effect));
+            .retain(|effect| !self.is_standard_unsafety_source(effect));
     }
 
     pub(super) fn effect_abi_result_source(
@@ -192,7 +194,7 @@ impl Analyzer {
         logical: Type,
         effects: &FunctionEffects,
     ) -> Type {
-        match effects.throws.as_deref() {
+        match effects.failure.as_deref() {
             Some(error) => Type::Named(
                 self.lang_item_name(LangItemKind::Result).to_owned(),
                 vec![error.clone(), logical],
@@ -210,7 +212,7 @@ impl Analyzer {
         if !do_block_requires_function_boundary(body) {
             return self.lower_expr(body, expected, context);
         }
-        let active_throws_error = context.active_throws_error.clone();
+        let active_failure_error = context.active_failure_error.clone();
         let logical_result =
             expected
                 .filter(|ty| **ty != Ty::Error)
@@ -221,9 +223,9 @@ impl Analyzer {
                     | TypeProbe::Defaultable(ty) => Some(ty),
                     TypeProbe::Unsupported => None,
                 });
-        let declared_result = match (&logical_result, &active_throws_error) {
+        let declared_result = match (&logical_result, &active_failure_error) {
             (Some(logical), Some(error)) => {
-                self.ensure_throws_result_type(logical.clone(), error.clone())
+                self.ensure_failure_result_type(logical.clone(), error.clone())
             }
             (Some(logical), None) => Some(logical.clone()),
             (None, Some(_)) => {
@@ -240,7 +242,7 @@ impl Analyzer {
             declared_result,
             ClosureEffectContext {
                 unsafe_depth: context.unsafe_depth,
-                throws_error: active_throws_error.clone(),
+                failure_error: active_failure_error.clone(),
                 custom_effects: context.active_custom_effects.clone(),
                 custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
@@ -288,8 +290,13 @@ impl Analyzer {
                 diverges: false,
             },
         };
-        if let Some(error) = active_throws_error.as_ref() {
-            self.lower_automatic_throws(call, error, expected.or(logical_result.as_ref()), context)
+        if let Some(error) = active_failure_error.as_ref() {
+            self.lower_automatic_throwing(
+                call,
+                error,
+                expected.or(logical_result.as_ref()),
+                context,
+            )
         } else {
             call
         }
@@ -354,7 +361,7 @@ impl Analyzer {
         expression: &Expr,
         context: &LowerCtx,
     ) -> Option<Ty> {
-        if let Some((payload, _)) = self.call_throws_info(expression, context) {
+        if let Some((payload, _)) = self.call_failure_info(expression, context) {
             return Some(payload);
         }
         match expression {
@@ -840,10 +847,10 @@ impl Analyzer {
                             .collect()
                     })
                     .collect(),
-                unsafe_effect: self.function_effects_unsafe(&function.effects),
-                throws_error: function
+                unsafety: self.function_effects_unsafe(&function.effects),
+                failure_error: function
                     .effects
-                    .throws
+                    .failure
                     .as_deref()
                     .map(|error| self.lower_source_type(error)),
                 custom_effects: self.function_effects_custom_identities(&function.effects),
@@ -1014,7 +1021,7 @@ pub(super) fn call_argument_labels(arguments: &[CallArg]) -> Option<Vec<String>>
 }
 
 pub(super) fn logical_effect_result_source(result: &Type, effects: &FunctionEffects) -> Type {
-    let Some(error) = effects.throws.as_deref() else {
+    let Some(error) = effects.failure.as_deref() else {
         return result.clone();
     };
     match result {
@@ -1044,9 +1051,9 @@ pub(super) fn operation_resume_input_source(function: &Function) -> Option<Type>
     logical_function_result_source(function).filter(|source| !source_type_is_never(source))
 }
 
-pub(super) fn standard_throws_error_source(effect: &Type, throws_name: &str) -> Option<Type> {
+pub(super) fn standard_failure_error_source(effect: &Type, failure_name: &str) -> Option<Type> {
     match effect {
-        Type::Named(name, arguments) if name == throws_name && arguments.len() == 1 => {
+        Type::Named(name, arguments) if name == failure_name && arguments.len() == 1 => {
             Some(arguments[0].clone())
         }
         _ => None,

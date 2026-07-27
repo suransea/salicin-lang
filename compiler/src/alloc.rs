@@ -148,7 +148,7 @@ impl fmt::Display for AllocBundleError {
 impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = crate::standard::naming_diagnostics(program, "alloc");
     if program.items.len() != 50
         || program.item_visibilities.len() != 50
         || program.item_origins.len() != 50
@@ -656,10 +656,7 @@ fn valid_box_from_raw_method(function: &Function) -> bool {
         && function.return_type == Some(applied("box", named("t")))
         && function.effects
             == crate::ast::FunctionEffects {
-                custom: vec![Type::Named(
-                    "core.unsafe.unsafe_effect".to_owned(),
-                    Vec::new(),
-                )],
+                custom: vec![Type::Named("core.unsafe.unsafety".to_owned(), Vec::new())],
                 ..crate::ast::FunctionEffects::default()
             }
         && function.where_predicates.is_empty()
@@ -1403,9 +1400,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_box_from_raw_without_unsafe_effect() {
+    fn rejects_box_from_raw_without_unsafety() {
         let source = alloc_source().replacen(
-            "let from_raw(pointer: ptr(mut)(t)): box(t) with(core.unsafe.unsafe_effect) = {",
+            "let from_raw(pointer: ptr(mut)(t)): box(t) with(core.unsafe.unsafety) = {",
             "let from_raw(pointer: ptr(mut)(t)): box(t) = {",
             1,
         );

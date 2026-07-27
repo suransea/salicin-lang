@@ -52,7 +52,7 @@ before 1.0.
 A function fingerprint records the flattened runtime parameters in source
 order, their resolved copy, move, shared-borrow, or mutable-borrow modes, the
 normalized type identity of every parameter and result, and the source
-`unsafe_effect`, `throws`, and custom-effect contract. Unit positions remain in the
+`unsafety`, `throwing`, and custom-effect contract. Unit positions remain in the
 fingerprint even though native lowering erases them. Borrow regions do not:
 they constrain source checking but have no runtime representation.
 

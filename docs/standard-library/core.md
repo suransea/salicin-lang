@@ -174,29 +174,29 @@ facade `core.option`/`core.result` paths remain available as standard-library sp
 should alias these identities through `std.effect`:
 
 ```sc fragment
-pub let unsafe_effect = effect {}
+pub let unsafety = effect {}
 
-pub let throws(comptime error: type) = effect {
+pub let throwing(comptime error: type) = effect {
   let raise(move error: error): never
 }
 
-pub let async_effect = effect {
+pub let suspension = effect {
   let suspend(): ()
 }
 ```
 
-`unsafe_effect`, `throws(error)`, and `async_effect` are validated lang-item identities, but their declarations use
-the same source-level effect forms as user code. `throws.raise` is an ordinary `never`-returning
+`unsafety`, `throwing(error)`, and `suspension` are validated lang-item identities, but their declarations use
+the same source-level effect forms as user code. `failure.raise` is an ordinary `never`-returning
 effect operation and can be handled with a normal abort clause such as `raise: { (error) -> ... }`.
 Standard and user effect identities follow the universal `snake_case` naming rule, including the
 final segment of a `with(...)` effect path. Effect
 row parameters such as `comptime e: effects` are resolved as parameters rather than nominal effects.
 Source `throw(error)` targets this ordinary operation when the current effect row has exactly one
-active `throws(error)`. Contextual `try { ... }` with an expected `result(error)(t)` handles
-ordinary `throws(error)` through the same algebraic handler path, using `done -> ok` and
+active `throwing(error)`. Contextual `try { ... }` with an expected `result(error)(t)` handles
+ordinary `throwing(error)` through the same algebraic handler path, using `done -> ok` and
 `raise -> err`. Without an explicit `result` context, direct calls and local function-value calls
-to ordinary `throws(error)` functions infer the same handler result when the success type is
-probeable and the escaping error type is unique. `async_effect` currently exposes only a minimal
+to ordinary `throwing(error)` functions infer the same handler result when the success type is
+probeable and the escaping error type is unique. `suspension` currently exposes only a minimal
 `suspend(): ()` operation; executable
 async/future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
@@ -250,7 +250,7 @@ initialized prefix without transferring ownership.
 The source-backed slice extension provides `len()` and bounds-checked `at(index)`. Shared access is
 the default; `at(mut)(index)` returns a mutable element borrow when the slice borrow is mutable.
 Out-of-bounds access traps. The pointer extension provides `offset(index)` for either access and
-`init(value)` / `take()` only for `ptr(mut)(t)`. Pointer methods retain the `unsafe_effect` requirement of
+`init(value)` / `take()` only for `ptr(mut)(t)`. Pointer methods retain the `unsafety` requirement of
 their underlying raw intrinsics; `init` expects uninitialized storage and `take` leaves storage
 uninitialized.
 
@@ -262,14 +262,14 @@ core intrinsic; slice implements `index(u64)` in source by forwarding to `at`.
 Capability modules are separated by semantics:
 
 - `core.effect` owns generic handler infrastructure.
-- `core.error` owns `throws`, `throw`, and the `try` interpreter into `result`.
-- `core.async` owns `async_effect`, `poll`, `future`, `executor`, `async`, and `await`.
-- `core.unsafe` owns the `unsafe_effect` authority effect and its lexical interpreter.
+- `core.error` owns `throwing`, `throw`, and the `try` interpreter into `result`.
+- `core.async` owns `suspension`, `poll`, `future`, `executor`, `async`, and `await`.
+- `core.unsafe` owns the `unsafety` authority effect and its lexical interpreter.
 - `core.result` owns only the `result` data type and its ordinary protocols.
 - `core.control` owns structural control flow: `break`, `continue`, `return`, `do`, `loop`,
   `while`, `if`, `match`, `for`, and lexical `defer`.
 
-`throw` and `throws` are not result-specific. `throws(error)` is an independent effect, while
+`throw` and `throwing` are not result-specific. `throwing(error)` is an independent effect, while
 `try` is one interpreter that chooses `result(error)(t)` as its output. Other handlers may
 interpret the same effect differently.
 
@@ -313,14 +313,14 @@ until `ready` without allocation. Constructing a cold future does not select or 
 state selected for its action, while `await` is source-defined. Their
 signatures expose their effect rows and `future(e, output = t)` relationship.
 `await` repeatedly calls `poll`; `pending` invokes
-`async_effect.suspend()`, and `ready(value)` exits the source loop. The compiler may
+`suspension.suspend()`, and `ready(value)` exits the source loop. The compiler may
 take an equivalent syntax-directed state-machine path for `await`.
 Compiler-generated futures without suspension already
 implement the inferred `future(e)` instance and transition from cold state to `poll.ready` exactly
-once. `e` may be empty, `unsafe_effect`, or a custom residual effect. A body without suspension can poll
+once. `e` may be empty, `unsafety`, or a custom residual effect. A body without suspension can poll
 under the corresponding algebraic handler through generated poll/resume source specialization
 when its captures are by-value `copyable` or move-only values. Move-only fields transfer exactly once
-and are not dropped again with completed future state. Borrowed, suspended, and `throws`-residual
+and are not dropped again with completed future state. Borrowed, suspended, and `throwing`-residual
 bodies remain compiler work. Polling
 enforces `e` while construction remains pure. A single tail-position `await` creates its child on the first parent poll,
 stores it across `pending`, and completes the parent from `ready`; cancellation drops a stored child
@@ -340,23 +340,23 @@ is an immediate ready future. Loop suspension remains compiler work.
 pub let do(comptime e: effects, comptime t: type)
   (move action: (): t with(e)): t with(e)
 pub let do(comptime e: effects)
-  (move action: (): () with(core.control.break_effect(()), core.control.continue_effect, e))
-  (move while: (): bool with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e) = {
+  (move action: (): () with(core.control.loop_exit(()), core.control.iteration_skip, e))
+  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = {
   loop {
-    core.control.continue_effect.handle
+    core.control.iteration_skip.handle
       next { () }
       action { action() }
     if while() { continue() } else { break() }
   }
 }
 pub let try(comptime f: effects, comptime t: type, comptime e: type)
-  (move action: (): t with(core.error.throws(e), f)): core.result(e)(t) with(f)
+  (move action: (): t with(core.error.throwing(e), f)): core.result(e)(t) with(f)
 pub let throw(comptime error: type)
-  (move error: error): never with(core.error.throws(error))
+  (move error: error): never with(core.error.throwing(error))
 pub let unsafe(comptime e: effects, comptime t: type)
-  (move action: (): t with(core.unsafe.unsafe_effect, e)): t with(e)
+  (move action: (): t with(core.unsafe.unsafety, e)): t with(e)
 pub let loop(comptime e: effects, comptime t: type)
-  (move body: (): () with(core.control.break_effect(t), core.control.continue_effect, e)): t with(e)
+  (move body: (): () with(core.control.loop_exit(t), core.control.iteration_skip, e)): t with(e)
 pub let while(comptime e: effects)
   (move condition: (): bool with(e))
   (move do: (): () with(e)): () with(e)
@@ -373,14 +373,14 @@ pub let match(comptime input: type, comptime output: type, comptime e: effects, 
   ...cases: output with(e)
 pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
   (move iterable: iterable)
-  (move body: (item): () with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)
+  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)
 where iterable: core.iter.into_iterator(into_iter = iter),
   iter: core.iter.iterator(item = item)
 ```
 
-Here `try` removes only `throws(e)`, `unsafe` removes only the `unsafe_effect` requirement, and both forward
-the remainder row. `throw` introduces the standard `throws(error)` requirement. `loop` and `for`
-handle their declared `break_effect`/`continue_effect` effects while forwarding `e`; `if` and `match` evaluate
+Here `try` removes only `throwing(e)`, `unsafe` removes only the `unsafety` requirement, and both forward
+the remainder row. `throw` introduces the standard `throwing(error)` requirement. `loop` and `for`
+handle their declared `loop_exit`/`iteration_skip` effects while forwarding `e`; `if` and `match` evaluate
 only the selected lazy branch or case. The source definitions that do not require intrinsic
 lowering remain intentionally simple:
 
@@ -391,15 +391,15 @@ pub let do(comptime e: effects, comptime t: type)
 }
 
 pub let try(comptime f: effects, comptime t: type, comptime e: type)
-  (move action: (): t with(core.error.throws(e), f)): core.result(e)(t) with(f) = {
-  core.error.throws(e).handle raise { (error) -> core.result.err(error) } done { (value) -> core.result.ok(value) } action {
+  (move action: (): t with(core.error.throwing(e), f)): core.result(e)(t) with(f) = {
+  core.error.throwing(e).handle raise { (error) -> core.result.err(error) } done { (value) -> core.result.ok(value) } action {
     action()
   }
 }
 
 pub let throw(comptime error: type)
-  (move error: error): never with(core.error.throws(error)) = {
-  core.error.throws(error).raise(error)
+  (move error: error): never with(core.error.throwing(error)) = {
+  core.error.throwing(error).raise(error)
 }
 ```
 
@@ -445,7 +445,7 @@ iteration for all element types. Its iterator transfers the allocation, moves va
 order, and on early exit drops exactly the unyielded suffix before releasing storage.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
-effect identities such as `throws` remain normal `std.effect` exports when named in source, backed
+effect identities such as `throwing` remain normal `std.effect` exports when named in source, backed
 by `core.effect` identities. An ordinary same-named declaration cannot acquire lang-item lowering
 behavior. future control features
 follow the same rule: for example, async lowering must add `future`, `async`, and handler contracts
@@ -524,7 +524,7 @@ let value = result(bool)(i32).ok(41).flat_map(next)
 Curried constructors may be used as constructor trait implementation targets, which is how
 `result(error): monad` is expressed without making `result` special. `option` and `result` are
 ordinary enum values and require explicit constructors. Language error propagation is defined by
-the standard `throws(e)` effect, `throw`, and `try { ... }`; `do` has no error-specific semantics.
+the standard `throwing(e)` effect, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
 Primitive implementations remain compiler-defined. The unit type has the single spelling `()`. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

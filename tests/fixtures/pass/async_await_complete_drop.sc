@@ -1,6 +1,6 @@
 let poll = std.async.poll
 let future = std.async.future
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 
 let step = struct { counter: ptr(mut)(i32) }
 let resource = struct { counter: ptr(mut)(i32) }
@@ -33,13 +33,13 @@ extend(step, future(())) {
   }
 }
 
-let allocate(): ptr(mut)(i32) with(unsafe_effect) = {
+let allocate(): ptr(mut)(i32) with(unsafety) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: ptr(mut)(i32)): () with(unsafe_effect) = {
+let release(counter: ptr(mut)(i32)): () with(unsafety) = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }

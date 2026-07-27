@@ -1,7 +1,7 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let fail(): i32 with(throws(())) = {
+let fail(): i32 with(throwing(())) = {
   throw(())
 }
 

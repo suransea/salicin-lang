@@ -1,4 +1,4 @@
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 
 let ask = effect {
   let value(): i32
@@ -58,14 +58,14 @@ let main(): i32 = {
       })
     }
 
-  let unsafe_effect = unsafe {
-    effect_once(unsafe_effect)({ *counter - *counter })
+  let unsafety = unsafe {
+    effect_once(unsafety)({ *counter - *counter })
   }
   let drops = unsafe { *counter }
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
-  ignored + invoked + calls + effectful + unsafe_effect + drops
+  ignored + invoked + calls + effectful + unsafety + drops
 }
 
 test("capturing_callable_bridge.sc") {

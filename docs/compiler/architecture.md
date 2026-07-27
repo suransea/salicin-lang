@@ -58,7 +58,7 @@ The implementation lives under `compiler/src`:
     requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
     and handler entry lowering.
   - `fallible.rs` defines standard `option`/`result` short-circuit container metadata, inference
-    helpers, and throws-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
+    helpers, and failure-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
   - `functions.rs` lowers function and global bodies, materializes generic function instances,
@@ -106,9 +106,9 @@ The implementation lives under `compiler/src`:
     recursion budgets.
   - `target.rs` defines the explicit native target width used by CTFE, literal validation,
     runtime guards, and LLVM scalar lowering instead of inheriting Rust host integer widths.
-  - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
+  - `failure.rs` probes custom-effect call rows to identify dedicated and standard failure sources,
     infers context-free `try { ... }` `result(e)(t)` types, and lowers `try { ... }`, `throw`, and
-    automatic throws propagation return-boundary wrappers.
+    automatic failure propagation return-boundary wrappers.
   - `types.rs` lowers and renders source-level type syntax, enforces type compatibility and
     unification, recognizes uninhabited types, and owns compile-time type arguments plus
     source/nominal type probes used by inference and expression lowering.

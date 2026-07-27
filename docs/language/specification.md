@@ -660,7 +660,7 @@ pub let while(comptime e: effects)
 The surface forms supply their branch, condition, and body blocks as lazy callable groups. The
 canonical declarations for `do`, `loop`, `match`, and `for` are validated in the same way.
 `break`, `continue`, and `return` resolve to the canonical `core.control` functions, which introduce
-the corresponding `break_effect(t)`, `continue_effect`, or `return_effect(t)` effect before the enclosing construct
+the corresponding `loop_exit(t)`, `iteration_skip`, or `function_exit(t)` effect before the enclosing construct
 handles it. A same-named user declaration cannot redirect any of these forms. The complete
 contracts and their lowering obligations are specified in [Control-flow contracts](control-flow.md).
 
@@ -703,11 +703,11 @@ An operation transfers control to the nearest matching handler. A resumable clau
 single-use continuation. Resuming supplies the operation result and eventually returns the
 handler's answer type. Abandoning the continuation cleans its captured state exactly once.
 
-`throws(error)` is the standard abortive error effect. `throw(error)` invokes its `raise`
+`throwing(error)` is the standard abortive error effect. `throw(error)` invokes its `raise`
 operation. `try { ... }` handles that effect and materializes `core.result(error)(value)`.
 
 ```sc fragment
-let parse(): i32 with(throws(parse_error)) = { ... }
+let parse(): i32 with(throwing(parse_error)) = { ... }
 
 let result = try {
   parse()
@@ -715,7 +715,7 @@ let result = try {
 ```
 
 `effect` and `effects` are deliberately distinct sorts. A value of `effect` is exactly one nominal
-identity, such as `counter` or `throws(parse_error)`; this is the sort used by
+identity, such as `counter` or `throwing(parse_error)`; this is the sort used by
 `handle(comptime self: effect)`. A value of `effects` is a normalized zero-or-more row: `pure` is the empty
 row, and `with(...)` combines identities and row variables without order or duplicates.
 
@@ -730,32 +730,32 @@ materializes private nominal state containing a state word and captured fields. 
 structurally `movable`; relocation transfers its initialized captures, and cancellation drops them
 exactly once. `core.async.async` is the intrinsic that materializes this
 anonymous state. `core.async.await` is a source polling loop: `pending`
-performs `async_effect.suspend()`, while `ready(value)` returns the value.
+performs `suspension.suspend()`, while `ready(value)` returns the value.
 Syntax-directed lowering may specialize `await` into the generated state
 machine without changing its source contract.
 A compiler-generated future implements `future((), output = t)`. Polling a body with
 no suspension point transfers its captures, executes the body once, and returns `poll.ready(t)`;
 polling that completed future again traps. The completed state no longer drops transferred
-captures. An unhandled `unsafe_effect` requirement is inferred from the body and attached to the
+captures. An unhandled `unsafety` requirement is inferred from the body and attached to the
 generated future's `poll` contract; creating the future remains pure, while polling requires an
 unsafe handler. A body without suspension may retain a custom residual effect,
-including standard `throws(error)`, with by-value `copyable`, move-only,
+including standard `throwing(error)`, with by-value `copyable`, move-only,
 shared-borrow, or mutable-borrow captures.
 Borrow captures store the reference value in future state and retain their
 ordinary loan until that state is consumed or dropped. Polling inside the
 corresponding handler specializes the generated poll and resume source before
 runtime lowering. Move-only capture fields transfer once and completed future
-cleanup does not drop them again. A residual `throws(error)` poll may be
+cleanup does not drop them again. A residual `throwing(error)` poll may be
 handled by `try { future.poll() }`; both successful ready and thrown paths
 preserve capture cleanup. A suspended body may also retain a custom residual
-effect, including `throws(error)`, when its first segment ends in one `await`.
+effect, including `throwing(error)`, when its first segment ends in one `await`.
 It may either return that value directly or run a finite linear sequence of
 continuations and awaits after ready. Every segment may capture by-value
 `copyable` or move-only values, or retain a region-checked shared or mutable
 reference to external storage. Pre-await locals used by a continuation may be
 retained when the resulting state remains structural `movable`. Only the first
-segment may retain a custom effect or `throws`; each later child poll row must
-be pure apart from `unsafe_effect`.
+segment may retain a custom effect or `throwing`; each later child poll row must
+be pure apart from `unsafety`.
 Polling through the enclosing handler specializes the cold transition before
 runtime lowering. That transition marks transferred captures unavailable
 before evaluating the await operand, so an abort cannot drop them twice. A
@@ -788,7 +788,7 @@ only the selected child. Direct `if` and `match` selection may also choose
 heterogeneous concrete child types through a private active-variant future,
 including pattern payload bindings, a move-only selector, and retained
 continuation locals. After a pure child becomes ready, a final continuation
-that does not suspend again may retain a custom effect or `throws`; it executes
+that does not suspend again may retain a custom effect or `throwing`; it executes
 once under the poll caller's handler after the completed child and its output
 have been transferred. Residual construction or polling of a later child and
 residual recurring loops are not implemented yet.
@@ -809,11 +809,11 @@ Postfix `value!` invokes the validated source trait `core.flow.raise`:
 pub let raise = trait {
   let output: type
   let error: type
-  let raise(move self): output with(core.error.throws(error))
+  let raise(move self): output with(core.error.throwing(error))
 }
 ```
 
-It propagates the stored error through the active `throws(error)` effect. Postfix `value!!` invokes
+It propagates the stored error through the active `throwing(error)` effect. Postfix `value!!` invokes
 the separately validated `core.flow.unwrap` contract:
 
 ```sc fragment
@@ -882,7 +882,7 @@ Salicin guarantees left-to-right evaluation for:
 An expression is evaluated at most once unless its source construct explicitly repeats it, such as
 a loop condition.
 
-Recoverable failures use `throws(error)` or another declared effect. Contract violations without a
+Recoverable failures use `throwing(error)` or another declared effect. Contract violations without a
 recoverable API, including bounds failures and forced unwrap failures, trap and terminate the
 process. Cleanup is deterministic for ordinary and handled exits; a process trap is not a
 recoverable unwind mechanism.
@@ -890,7 +890,7 @@ recoverable unwind mechanism.
 ## 14. Unsafe and Foreign Calls
 
 `foreign(c)` is a complete declaration initializer for a C-owned function.
-Calling the declaration implicitly requires `unsafe_effect`; the declaration does
+Calling the declaration implicitly requires `unsafety`; the declaration does
 not spell an explicit effect row. The optional second argument is a validated
 ASCII linker symbol. When omitted, it defaults to the Salicin declaration
 name. The foreign subset accepts every signed, unsigned, pointer-sized, and

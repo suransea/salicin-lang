@@ -1,12 +1,12 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let make_error(count: borrow(mut)(i32)): bool = {
   count = count + 1
   true
 }
 
-let fail(): i32 with(throws(bool)) = {
+let fail(): i32 with(throwing(bool)) = {
   let mut count = 0
   throw(make_error(count))
 }

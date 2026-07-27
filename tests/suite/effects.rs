@@ -2,7 +2,7 @@ use crate::support::*;
 
 #[test]
 fn effectful_for_preserves_iterator_state_and_cleanup() {
-    let fixtures = ["for_throws.sc", "for_throws_cleanup.sc"];
+    let fixtures = ["for_failure.sc", "for_failure_cleanup.sc"];
     for (_fixture_name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
     }
@@ -47,8 +47,8 @@ fn disjoint_owned_projections_cross_repeated_effectful_calls() {
 #[test]
 fn owned_roots_cross_concrete_residual_effect_rows() {
     for (name, output) in batched_native_fixture_outputs(&[
-        "algebraic_effect_owned_residual_throws_outer.sc",
-        "algebraic_effect_owned_residual_throws_inner.sc",
+        "algebraic_effect_owned_residual_failure_outer.sc",
+        "algebraic_effect_owned_residual_failure_inner.sc",
         "algebraic_effect_owned_residual_nominal.sc",
         "algebraic_effect_owned_residual_unsafe.sc",
     ]) {

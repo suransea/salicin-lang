@@ -1,7 +1,7 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let extract(move result: result(bool)(i32)): i32 with(throws(bool)) = {
+let extract(move result: result(bool)(i32)): i32 with(throwing(bool)) = {
   result!
 }
 

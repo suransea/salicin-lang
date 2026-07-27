@@ -7,7 +7,7 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::source_type_from_identity;
-use super::effects::standard_throws_error_source;
+use super::effects::standard_failure_error_source;
 use super::hir::{
     AccessBoundary, AssignmentKind, ClosureCapture, ClosureCaptureMode, ClosureCapturePolicy,
     ClosureEffectContext, EnumLayout, FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind,
@@ -205,7 +205,7 @@ impl Analyzer {
         let HirExprKind::LocalClosure(mut closure) = lowered.kind else {
             return lowered;
         };
-        let async_effect = self.lang_item_name(LangItemKind::AsyncEffect).to_owned();
+        let suspension = self.lang_item_name(LangItemKind::AsyncEffect).to_owned();
         let (awaited_ty, retained_types) = if source_plan.retained.is_empty() {
             (closure.result.clone(), Vec::new())
         } else {
@@ -357,8 +357,8 @@ impl Analyzer {
                 );
                 return super::lower::error_expr();
             }
-            if closure.unsafe_effect
-                || closure.throws_error.is_some()
+            if closure.unsafety
+                || closure.failure_error.is_some()
                 || !closure.custom_effects.is_empty()
             {
                 self.error(
@@ -377,7 +377,7 @@ impl Analyzer {
         }
         let mut continuation_captures = Vec::new();
         let mut loop_carry_capture_indices = Vec::new();
-        let mut continuation_residual_throws = None;
+        let mut continuation_residual_failure = None;
         let mut continuation_residual_custom = Vec::new();
         if let (Some(awaited), Some(continuation)) = (awaited.as_mut(), source_plan.continuation) {
             if continuation.mutable {
@@ -470,25 +470,25 @@ impl Analyzer {
                     loop_carry_capture_indices.push(index);
                 }
             }
-            let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
-            let has_residual_continuation = closure.throws_error.is_some()
+            let suspension = self.lang_item_name(LangItemKind::AsyncEffect);
+            let has_residual_continuation = closure.failure_error.is_some()
                 || closure
                     .custom_effects
                     .iter()
-                    .any(|effect| effect != async_effect);
+                    .any(|effect| effect != suspension);
             if has_residual_continuation && continuation_has_await {
                 self.error(
-                    "an async continuation that both suspends and retains residual throws or algebraic effects requires later-child poll specialization, which is not implemented yet",
+                    "an async continuation that both suspends and retains residual failure or algebraic effects requires later-child poll specialization, which is not implemented yet",
                 );
                 return super::lower::error_expr();
             }
             if has_residual_continuation {
-                continuation_residual_throws = closure.throws_error.clone();
+                continuation_residual_failure = closure.failure_error.clone();
                 continuation_residual_custom.extend(
                     closure
                         .custom_effects
                         .iter()
-                        .filter(|effect| effect.as_str() != async_effect)
+                        .filter(|effect| effect.as_str() != suspension)
                         .cloned(),
                 );
                 let mut source_parameters = closure
@@ -536,16 +536,16 @@ impl Analyzer {
                     parameters: source_parameters,
                     result,
                     effects: FunctionEffects {
-                        unsafe_effect: closure.unsafe_effect,
-                        throws: closure
-                            .throws_error
+                        unsafety: closure.unsafety,
+                        failure: closure
+                            .failure_error
                             .as_ref()
                             .and_then(|error| self.source_type_for_ty(error))
                             .map(Box::new),
                         custom: closure
                             .custom_effects
                             .iter()
-                            .filter(|effect| effect.as_str() != async_effect)
+                            .filter(|effect| effect.as_str() != suspension)
                             .filter_map(|effect| source_type_from_identity(effect))
                             .collect(),
                         parameters: Vec::new(),
@@ -554,31 +554,33 @@ impl Analyzer {
             }
             awaited.continuation = Some(closure.function);
             awaited.continuation_output = Some(closure.result.clone());
-            awaited.continuation_unsafe_effect = closure.unsafe_effect;
+            awaited.continuation_unsafety = closure.unsafety;
             if continuation_has_await {
                 let Some(mut next) = self.resolve_awaited_future_with_residual(&closure.result)
                 else {
                     return super::lower::error_expr();
                 };
-                if let Some(error) = next.throws_error.clone() {
-                    continuation_residual_throws = Some(error);
+                if let Some(error) = next.failure_error.clone() {
+                    continuation_residual_failure = Some(error);
                 }
                 continuation_residual_custom.extend(next.custom_effects.iter().cloned());
-                next.source_poll = next.throws_error.is_some() || !next.custom_effects.is_empty();
+                next.source_poll = next.failure_error.is_some() || !next.custom_effects.is_empty();
                 awaited.next = Some(Box::new(next));
             }
             continuation_captures = closure.captures;
         }
-        if let Some(error) = continuation_residual_throws {
+        if let Some(error) = continuation_residual_failure {
             if closure
-                .throws_error
+                .failure_error
                 .as_ref()
                 .is_some_and(|existing| existing != &error)
             {
-                self.error("async segments retain incompatible `throws` error types in one future");
+                self.error(
+                    "async segments retain incompatible `failure` error types in one future",
+                );
                 return super::lower::error_expr();
             }
-            closure.throws_error = Some(error);
+            closure.failure_error = Some(error);
         }
         for effect in continuation_residual_custom {
             if !closure.custom_effects.contains(&effect) {
@@ -588,27 +590,27 @@ impl Analyzer {
         let unsupported_effects = closure
             .custom_effects
             .iter()
-            .filter(|effect| *effect != &async_effect)
+            .filter(|effect| *effect != &suspension)
             .cloned()
             .collect::<Vec<_>>();
-        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
-        let residual_throws = unsupported_effects
+        let failure_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let residual_failure = unsupported_effects
             .iter()
             .filter_map(|effect| source_type_from_identity(effect))
-            .filter_map(|effect| standard_throws_error_source(&effect, throws_name))
+            .filter_map(|effect| standard_failure_error_source(&effect, failure_name))
             .filter_map(|error| self.probe_source_ty(&error))
             .collect::<Vec<_>>();
         let algebraic_effects = unsupported_effects
             .iter()
             .filter(|effect| {
                 source_type_from_identity(effect).is_none_or(|source| {
-                    standard_throws_error_source(&source, throws_name).is_none()
+                    standard_failure_error_source(&source, failure_name).is_none()
                 })
             })
             .cloned()
             .collect::<Vec<_>>();
         let has_residual_effects =
-            closure.throws_error.is_some() || !unsupported_effects.is_empty();
+            closure.failure_error.is_some() || !unsupported_effects.is_empty();
         if let Some(awaited) = awaited.as_mut() {
             awaited.source_loop_factory = has_residual_effects && awaited.loop_step.is_some();
         }
@@ -642,15 +644,15 @@ impl Analyzer {
                     .all(|mode| mode != PassMode::Inferred)
         });
         if has_residual_effects && source_plan.has_await && !supports_suspended_residual {
-            if closure.throws_error.is_some() || !residual_throws.is_empty() {
+            if closure.failure_error.is_some() || !residual_failure.is_empty() {
                 let errors = closure
-                    .throws_error
+                    .failure_error
                     .iter()
-                    .chain(&residual_throws)
+                    .chain(&residual_failure)
                     .map(|error| self.diagnostic_type_name(error))
                     .collect::<Vec<_>>();
                 self.error(format!(
-                    "async residual `throws({})` requires poll/resume handler specialization for this suspension shape, which is not implemented yet",
+                    "async residual `throwing({})` requires poll/resume handler specialization for this suspension shape, which is not implemented yet",
                     errors.join(" | ")
                 ));
             }
@@ -806,11 +808,11 @@ impl Analyzer {
                 )
             })
             .unwrap_or_else(|| closure.result.clone());
-        let unsafe_effect = closure.unsafe_effect
+        let unsafety = closure.unsafety
             || awaited.as_ref().is_some_and(|awaited| {
-                awaited.unsafe_effect
-                    || awaited.continuation_unsafe_effect
-                    || awaited.next.as_ref().is_some_and(|next| next.unsafe_effect)
+                awaited.unsafety
+                    || awaited.continuation_unsafety
+                    || awaited.next.as_ref().is_some_and(|next| next.unsafety)
             });
         let resume_function = closure.function.clone();
         let resume_captures = closure
@@ -823,8 +825,8 @@ impl Analyzer {
         let metadata = AsyncFutureInfo {
             resume: closure.function,
             output,
-            unsafe_effect,
-            throws_error: closure.throws_error,
+            unsafety,
+            failure_error: closure.failure_error,
             custom_effects: closure.custom_effects,
             capture_modes: closure.captures.iter().map(capture_pass_mode).collect(),
             awaited: awaited.map(|mut awaited| {
@@ -915,10 +917,10 @@ impl Analyzer {
             .cloned()
             .expect("registered Future poll has a signature");
         if !allow_residual
-            && (signature.throws_error.is_some() || !signature.custom_effects.is_empty())
+            && (signature.failure_error.is_some() || !signature.custom_effects.is_empty())
         {
             self.error(
-                "await residual throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
+                "await residual failure and algebraic effects require poll/resume handler specialization, which is not implemented yet",
             );
             return None;
         }
@@ -932,15 +934,15 @@ impl Analyzer {
             output,
             poll_ty,
             poll_function,
-            unsafe_effect: signature.unsafe_effect,
-            throws_error: signature.throws_error,
+            unsafety: signature.unsafety,
+            failure_error: signature.failure_error,
             custom_effects: signature.custom_effects,
             source_poll: false,
             source_loop_factory: false,
             field: 0,
             continuation: None,
             continuation_output: None,
-            continuation_unsafe_effect: false,
+            continuation_unsafety: false,
             continuation_capture_modes: Vec::new(),
             continuation_fields: Vec::new(),
             continuation_capture_types: Vec::new(),
@@ -1031,10 +1033,10 @@ impl Analyzer {
             mutable: true,
             region: None,
         };
-        let unsafe_effect = futures.iter().any(|future| future.unsafe_effect);
+        let unsafety = futures.iter().any(|future| future.unsafety);
         let effect_row = Ty::EffectRow {
-            unsafe_effect,
-            throws_error: None,
+            unsafety,
+            failure_error: None,
             custom_effects: Vec::new(),
         };
         let trait_key = TraitImplKey {
@@ -1056,8 +1058,8 @@ impl Analyzer {
                     }],
                     Vec::new(),
                 ],
-                unsafe_effect,
-                throws_error: None,
+                unsafety,
+                failure_error: None,
                 custom_effects: Vec::new(),
                 result: Some(poll_ty.clone()),
             },
@@ -1188,7 +1190,7 @@ impl Analyzer {
                 name: name.clone(),
                 variants: vec![
                     VariantLayout {
-                        name: "continue_effect".to_owned(),
+                        name: "iteration_skip".to_owned(),
                         fields: vec![FieldLayout {
                             name: "carry".to_owned(),
                             ty: carry.clone(),
@@ -1198,7 +1200,7 @@ impl Analyzer {
                         named: false,
                     },
                     VariantLayout {
-                        name: "break_effect".to_owned(),
+                        name: "loop_exit".to_owned(),
                         fields: vec![FieldLayout {
                             name: "output".to_owned(),
                             ty: output.clone(),
@@ -1295,16 +1297,16 @@ impl Analyzer {
             mutable: true,
             region: None,
         };
-        let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
+        let suspension = self.lang_item_name(LangItemKind::AsyncEffect);
         let residual_custom_effects = future
             .custom_effects
             .iter()
-            .filter(|effect| effect.as_str() != async_effect)
+            .filter(|effect| effect.as_str() != suspension)
             .cloned()
             .collect::<Vec<_>>();
         let effect_row = Ty::EffectRow {
-            unsafe_effect: future.unsafe_effect,
-            throws_error: future.throws_error.clone().map(Box::new),
+            unsafety: future.unsafety,
+            failure_error: future.failure_error.clone().map(Box::new),
             custom_effects: residual_custom_effects.clone(),
         };
         let trait_key = TraitImplKey {
@@ -1324,8 +1326,8 @@ impl Analyzer {
             poll_function.clone(),
             FunctionSig {
                 groups: vec![vec![receiver], Vec::new()],
-                unsafe_effect: future.unsafe_effect,
-                throws_error: future.throws_error.clone(),
+                unsafety: future.unsafety,
+                failure_error: future.failure_error.clone(),
                 custom_effects: residual_custom_effects,
                 result: Some(poll_ty.clone()),
             },
@@ -1526,8 +1528,8 @@ impl Analyzer {
             .insert(resume_function.to_owned(), origin.clone());
 
         let effect_row = Ty::EffectRow {
-            unsafe_effect: future.unsafe_effect,
-            throws_error: future.throws_error.clone().map(Box::new),
+            unsafety: future.unsafety,
+            failure_error: future.failure_error.clone().map(Box::new),
             custom_effects: future
                 .custom_effects
                 .iter()
@@ -1748,8 +1750,8 @@ impl Analyzer {
         }
 
         let effect_row = Ty::EffectRow {
-            unsafe_effect: future.unsafe_effect,
-            throws_error: future.throws_error.clone().map(Box::new),
+            unsafety: future.unsafety,
+            failure_error: future.failure_error.clone().map(Box::new),
             custom_effects: future
                 .custom_effects
                 .iter()
@@ -1818,8 +1820,8 @@ impl Analyzer {
                 pack_function.clone(),
                 FunctionSig {
                     groups: vec![parameters],
-                    unsafe_effect: false,
-                    throws_error: None,
+                    unsafety: false,
+                    failure_error: None,
                     custom_effects: Vec::new(),
                     result: Some(input_ty.clone()),
                 },
@@ -1979,8 +1981,8 @@ impl Analyzer {
                     },
                     self_parameter.clone(),
                 ]],
-                unsafe_effect: false,
-                throws_error: None,
+                unsafety: false,
+                failure_error: None,
                 custom_effects: Vec::new(),
                 result: Some(machine_poll_ty.clone()),
             },
@@ -1989,8 +1991,8 @@ impl Analyzer {
             wait_helper.clone(),
             FunctionSig {
                 groups: vec![vec![self_parameter.clone()]],
-                unsafe_effect: false,
-                throws_error: None,
+                unsafety: false,
+                failure_error: None,
                 custom_effects: Vec::new(),
                 result: Some(machine_poll_ty.clone()),
             },
@@ -2003,8 +2005,8 @@ impl Analyzer {
             pointee: Box::new(self_source.clone()),
         };
         let pure_effects = FunctionEffects {
-            unsafe_effect: false,
-            throws: None,
+            unsafety: false,
+            failure: None,
             custom: Vec::new(),
             parameters: Vec::new(),
         };
@@ -2130,8 +2132,8 @@ impl Analyzer {
                     helper.clone(),
                     FunctionSig {
                         groups: vec![signature_parameters],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(machine_poll_ty.clone()),
                     },
@@ -2331,8 +2333,8 @@ impl Analyzer {
             begin_helper.clone(),
             FunctionSig {
                 groups: vec![vec![self_parameter.clone()]],
-                unsafe_effect: false,
-                throws_error: None,
+                unsafety: false,
+                failure_error: None,
                 custom_effects: Vec::new(),
                 result: Some(Ty::Unit),
             },
@@ -2385,8 +2387,8 @@ impl Analyzer {
                     condition_helper.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(Ty::Bool),
                     },
@@ -2395,8 +2397,8 @@ impl Analyzer {
                     done_helper.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(machine_poll_ty.clone()),
                     },
@@ -2503,8 +2505,8 @@ impl Analyzer {
                     owner.clone(),
                     FunctionSig {
                         groups: vec![vec![self_parameter.clone()]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(owner_ty.clone()),
                     },
@@ -2517,8 +2519,8 @@ impl Analyzer {
                             ty: owner_ty.clone(),
                             mode: PassMode::Copy,
                         }]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(next.ty.clone()),
                     },
@@ -2538,8 +2540,8 @@ impl Analyzer {
                                 mode: PassMode::Copy,
                             },
                         ]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(Ty::Unit),
                     },
@@ -2559,8 +2561,8 @@ impl Analyzer {
                                 mode: PassMode::Copy,
                             },
                         ]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(Ty::Unit),
                     },
@@ -2573,8 +2575,8 @@ impl Analyzer {
                             ty: next.ty.clone(),
                             mode: PassMode::MutBorrow,
                         }]],
-                        unsafe_effect: false,
-                        throws_error: None,
+                        unsafety: false,
+                        failure_error: None,
                         custom_effects: Vec::new(),
                         result: Some(next.ty.clone()),
                     },
@@ -2587,8 +2589,8 @@ impl Analyzer {
                             ty: next.ty.clone(),
                             mode: PassMode::Move,
                         }]],
-                        unsafe_effect: next.unsafe_effect,
-                        throws_error: next.throws_error.clone(),
+                        unsafety: next.unsafety,
+                        failure_error: next.failure_error.clone(),
                         custom_effects: next.custom_effects.clone(),
                         result: Some(owned_poll_ty),
                     },
@@ -3081,8 +3083,8 @@ impl Analyzer {
                 helper.clone(),
                 FunctionSig {
                     groups: vec![vec![self_parameter.clone()]],
-                    unsafe_effect: false,
-                    throws_error: None,
+                    unsafety: false,
+                    failure_error: None,
                     custom_effects: Vec::new(),
                     result: Some(ty.clone()),
                 },
@@ -3209,8 +3211,8 @@ impl Analyzer {
                     helper.clone(),
                     FunctionSig {
                         groups: vec![signature_parameters],
-                        unsafe_effect: future.unsafe_effect,
-                        throws_error: future.throws_error.clone(),
+                        unsafety: future.unsafety,
+                        failure_error: future.failure_error.clone(),
                         custom_effects: future
                             .custom_effects
                             .iter()
@@ -3635,9 +3637,9 @@ impl Analyzer {
 
     fn async_source_effects(&self, future: &AsyncFutureInfo) -> FunctionEffects {
         FunctionEffects {
-            unsafe_effect: future.unsafe_effect,
-            throws: future
-                .throws_error
+            unsafety: future.unsafety,
+            failure: future
+                .failure_error
                 .as_ref()
                 .and_then(|error| self.source_type_for_ty(error))
                 .map(Box::new),
@@ -4524,8 +4526,8 @@ fn async_field_place(local: usize, state: Ty, field: usize, ty: Ty) -> HirPlace 
 pub(super) struct AsyncFutureInfo {
     pub(super) resume: String,
     pub(super) output: Ty,
-    pub(super) unsafe_effect: bool,
-    pub(super) throws_error: Option<Ty>,
+    pub(super) unsafety: bool,
+    pub(super) failure_error: Option<Ty>,
     pub(super) custom_effects: Vec<String>,
     pub(super) capture_modes: Vec<PassMode>,
     pub(super) awaited: Option<AwaitedFutureInfo>,
@@ -4538,15 +4540,15 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) output: Ty,
     pub(super) poll_ty: Ty,
     pub(super) poll_function: String,
-    pub(super) unsafe_effect: bool,
-    pub(super) throws_error: Option<Ty>,
+    pub(super) unsafety: bool,
+    pub(super) failure_error: Option<Ty>,
     pub(super) custom_effects: Vec<String>,
     pub(super) source_poll: bool,
     pub(super) source_loop_factory: bool,
     pub(super) field: usize,
     pub(super) continuation: Option<String>,
     pub(super) continuation_output: Option<Ty>,
-    pub(super) continuation_unsafe_effect: bool,
+    pub(super) continuation_unsafety: bool,
     pub(super) continuation_capture_modes: Vec<PassMode>,
     pub(super) continuation_fields: Vec<usize>,
     pub(super) continuation_capture_types: Vec<Ty>,

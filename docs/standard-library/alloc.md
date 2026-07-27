@@ -57,7 +57,7 @@ ultimately use the ABI documented in [runtime.md](../runtime.md).
 always valid UTF-8. Length and capacity are byte-based; safe code receives only shared byte views,
 and invalid consuming conversion preserves the original vector in `from_utf8_error`. Construction,
 validation, byte recovery, capacity management, clearing, and append are ordinary source-backed
-methods. `from_utf8_unchecked` requires the standard `unsafe_effect` effect. Unicode scalars, a
+methods. `from_utf8_unchecked` requires the standard `unsafety` effect. Unicode scalars, a
 borrowed `str` type, indexing, Unicode algorithms, and general string literal expressions are
 specified by the initial surface contract but remain unimplemented.
 `string` owns a private `vec(u8)`, maintains valid UTF-8, measures length and capacity in bytes,

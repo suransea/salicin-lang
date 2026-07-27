@@ -1,5 +1,5 @@
 /// Internal suspension effect discharged by compiler-generated futures.
-pub let async_effect = effect {
+pub let suspension = effect {
   /// Suspends the current asynchronous computation.
   let suspend(): ()
 }
@@ -47,17 +47,17 @@ extend(spin, executor) {
 
 /// Constructs a cold compiler-generated future without running `action`.
 pub let async(comptime e: effects, comptime f: type, comptime t: type)
-  (move action: (): t with(core.async.async_effect, e)): f
+  (move action: (): t with(core.async.suspension, e)): f
 where f: future(e, output = t) = builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
 pub let await(comptime e: effects, comptime f: type, comptime t: type)
-  (move future: f): t with(core.async.async_effect, e)
+  (move future: f): t with(core.async.suspension, e)
 where f: future(e, output = t) = {
   let mut current = future
   loop {
     match current.poll()
-      { pending -> async_effect.suspend() }
+      { pending -> suspension.suspend() }
       { ready(value) -> break(value) }
   }
 }

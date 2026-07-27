@@ -1,7 +1,7 @@
 let future = std.async.future
 let poll = std.async.poll
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let resource = struct {
   drops: ptr(mut)(i32),
@@ -36,7 +36,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(fail: bool): step with(throws(bool)) = {
+let make_step(fail: bool): step with(throwing(bool)) = {
   if fail {
     throw true
   } else {
@@ -65,7 +65,7 @@ let run_success(drops: ptr(mut)(i32)): i32 = {
     { err(_) -> 0 }
 }
 
-let run_failure(drops: ptr(mut)(i32)): i32 = {
+let run_throwing(drops: ptr(mut)(i32)): i32 = {
   let result: result(bool)(i32) = try {
     let outer = resource { drops: drops, value: 1 }
     let mut future = async {
@@ -108,7 +108,7 @@ let main(): i32 = {
   }
 
   let success = run_success(drops)
-  let failure = run_failure(drops)
+  let failure = run_throwing(drops)
   let cancelled = run_cancelled(drops)
   let drop_count = unsafe {
     *drops

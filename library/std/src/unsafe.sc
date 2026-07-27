@@ -1,2 +1,2 @@
-pub let unsafe_effect = core.unsafe.unsafe_effect
+pub let unsafety = core.unsafe.unsafety
 pub let unsafe = core.unsafe.unsafe

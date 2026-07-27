@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{PassMode, Type};
 use crate::core::LangItemKind;
 
-use super::effects::standard_throws_error_source;
+use super::effects::standard_failure_error_source;
 use super::flow::{LocalInfo, LowerCtx};
 use super::hir::{FunctionSig, HirFunction, HirGlobal, HirParam, LocalCapability, ParamSig, Ty};
 use super::names::function_instance_name;
@@ -44,7 +44,7 @@ impl Analyzer {
             let signature = self.signatures[name].clone();
             let result = signature.result.clone().unwrap_or(Ty::Error);
             let mut valid = signature.groups.len() == 1
-                && signature.throws_error.is_none()
+                && signature.failure_error.is_none()
                 && signature.custom_effects.is_empty();
             for parameter in signature.groups.iter().flatten() {
                 if !matches!(parameter.mode, PassMode::Inferred)
@@ -81,7 +81,7 @@ impl Analyzer {
                 .expect("every registered function has source provenance"),
         );
         context.unsafe_depth = usize::from(self.function_effects_unsafe(&function.effects));
-        context.active_throws_error = signature.throws_error.clone();
+        context.active_failure_error = signature.failure_error.clone();
         context.active_custom_effect_sources =
             self.function_effects_custom_source_map(&function.effects);
         context.active_custom_effects = context
@@ -90,11 +90,11 @@ impl Analyzer {
             .cloned()
             .collect();
         if function.return_type.is_some() {
-            context.return_boundary = signature.throws_error.as_ref().and_then(|error| {
+            context.return_boundary = signature.failure_error.as_ref().and_then(|error| {
                 signature
                     .result
                     .as_ref()
-                    .and_then(|result| self.throws_boundary_for_ty(result, error))
+                    .and_then(|result| self.failure_boundary_for_ty(result, error))
             });
         }
         context.type_substitutions = self
@@ -241,9 +241,9 @@ impl Analyzer {
                 .get(effect_name)
                 .is_some_and(|definition| !definition.operations.is_empty())
         });
-        let standard_throws_requires_handler_lowering =
+        let standard_failure_requires_handler_lowering =
             function.effects.custom.iter().any(|effect| {
-                standard_throws_error_source(
+                standard_failure_error_source(
                     effect,
                     self.lang_item_name(LangItemKind::ThrowsEffect),
                 )
@@ -302,7 +302,7 @@ impl Analyzer {
                     body: lowered_body,
                 },
             );
-        } else if standard_throws_requires_handler_lowering {
+        } else if standard_failure_requires_handler_lowering {
             self.lifted_functions.truncate(lifted_functions_before);
             self.continuation_adapters
                 .truncate(continuation_adapters_before);
@@ -419,9 +419,9 @@ impl Analyzer {
         {
             self.error("`main` cannot expose unhandled custom effects");
         }
-        if let Some(error) = &signature.throws_error {
+        if let Some(error) = &signature.failure_error {
             self.error(format!(
-                "`main` cannot expose unhandled `throws({error})`; handle it with `try {{ ... }}`"
+                "`main` cannot expose unhandled `throwing({error})`; handle it with `try {{ ... }}`"
             ));
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {
@@ -540,17 +540,17 @@ impl Analyzer {
             .return_type
             .as_ref()
             .map(|ty| self.lower_source_type(ty));
-        let throws_error = function
+        let failure_error = function
             .effects
-            .throws
+            .failure
             .as_deref()
             .map(|error| self.lower_source_type(error));
         self.signatures.insert(
             canonical.clone(),
             FunctionSig {
                 groups,
-                unsafe_effect: self.function_effects_unsafe(&function.effects),
-                throws_error,
+                unsafety: self.function_effects_unsafe(&function.effects),
+                failure_error,
                 custom_effects: self.function_effects_custom_identities(&function.effects),
                 result,
             },

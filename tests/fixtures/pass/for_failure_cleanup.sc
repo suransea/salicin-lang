@@ -1,6 +1,6 @@
 let option = std.option
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 let iterator = std.iter.iterator
 let into_iterator = std.iter.into_iterator
 let owned_item = std.iter.owned_item
@@ -41,11 +41,11 @@ extend(counter, into_iterator) {
   }
 }
 
-let check(value: i32): () with(throws(bool)) = {
+let check(value: i32): () with(throwing(bool)) = {
   if value < 0 { throw(true) } else { () }
 }
 
-let visit(move counter: counter): i32 with(throws(bool)) = {
+let visit(move counter: counter): i32 with(throwing(bool)) = {
   for counter { value ->
     check(value)
   }
@@ -72,6 +72,6 @@ let main(): i32 = {
   (success ?? 0) + (failure ?? 0) + drop_count - 2
 }
 
-test("for_throws_cleanup.sc") {
+test("for_failure_cleanup.sc") {
   main() == 42
 }

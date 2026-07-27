@@ -759,11 +759,7 @@ fn impl_type_pattern(
                         .map(|length| length.to_string())
                         .collect::<Vec<_>>()
                         .join("_"),
-                    if effects.unsafe_effect {
-                        "$unsafe"
-                    } else {
-                        "$pure"
-                    }
+                    if effects.unsafety { "$unsafe" } else { "$pure" }
                 ),
                 arguments,
             )

@@ -210,7 +210,7 @@ fn core_diagnostics_are_stable_source_level_contracts() {
             "throw_in_plain_return.sc",
             2,
             3,
-            "call to `throw` requires `throws(bool)`; handle it with `try { ... }` or propagate it from the current function",
+            "call to `throw` requires `throwing(bool)`; handle it with `try { ... }` or propagate it from the current function",
         ),
     ] {
         let source = fixture("fail", fixture_name);
@@ -262,7 +262,7 @@ fn compiler_ir_symbols_and_diagnostics_are_byte_deterministic() {
     for name in [
         "generic_nominal_recursive_layout.sc",
         "trait_ambiguous_method.sc",
-        "standard_throw_ambiguous_throws.sc",
+        "standard_throw_ambiguous_failure.sc",
     ] {
         let source = fs::read_to_string(fixture("fail", name)).expect("read failure fixture");
         let baseline = check_source(&source).expect_err("fixture must fail source checking");

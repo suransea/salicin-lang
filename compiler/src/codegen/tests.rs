@@ -1070,13 +1070,13 @@ let main(): i32 = {
 }
 
 #[test]
-fn throw_returns_the_enclosing_throws_error_variant() {
+fn throw_returns_the_enclosing_failure_error_variant() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let answer(fail: bool): i32 with(throws(bool)) = {
+let answer(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) }
   42
 }
@@ -1086,24 +1086,24 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("throw(in) a throws function must compile");
+    .expect("throw(in) a failure function must compile");
     assert!(ir.contains("switch i32"));
     assert!(ir.contains("ret %sali.type."));
 }
 
 #[test]
-fn throws_calls_propagate_automatically_and_try_handles_them() {
+fn failure_calls_propagate_automatically_and_try_handles_them() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let read(fail: bool): i32 with(throws(bool)) = {
+let read(fail: bool): i32 with(throwing(bool)) = {
   if fail { throw(true) }
   40
 }
-let forward(fail: bool): i32 with(throws(bool)) = { read(fail) + 2 }
-let invoke(action: (bool): i32 with(throws(bool)))(fail: bool): i32 with(throws(bool)) = {
+let forward(fail: bool): i32 with(throwing(bool)) = { read(fail) + 2 }
+let invoke(action: (bool): i32 with(throwing(bool)))(fail: bool): i32 with(throwing(bool)) = {
   action(fail) }
 let main(): i32 = {
   let result: result(bool)(i32) = try { invoke(forward)(false) }
@@ -1114,32 +1114,32 @@ err(_) => 0
 }
 "#,
     )
-    .expect("throws calls should branch automatically and try should produce result");
+    .expect("failure calls should branch automatically and try should produce result");
     assert!(ir.contains("switch"));
 
     let unhandled = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let read(): i32 with(throws(bool)) = { throw(true) }
+let read(): i32 with(throwing(bool)) = { throw(true) }
 let main(): i32 = { read() }
 "#,
     )
-    .expect_err("a pure caller must handle a throws effect");
+    .expect_err("a pure caller must handle a failure effect");
     assert!(unhandled
         .iter()
         .any(|error| error.message.contains("handle it with `try { ... }`")));
 }
 
 #[test]
-fn try_infers_a_unique_escaping_throws_source_without_context() {
+fn try_infers_a_unique_escaping_failure_source_without_context() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let fail(flag: bool): i32 with(throws(bool)) = { if flag { throw(true) } else { 41 } }
+let fail(flag: bool): i32 with(throwing(bool)) = { if flag { throw(true) } else { 41 } }
 let main(): i32 = {
   let action = fail
   let direct = try { fail(false) }
@@ -1148,18 +1148,18 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("try should infer result from a unique direct or indirect throws source");
+    .expect("try should infer result from a unique direct or indirect failure source");
     assert!(ir.contains("switch"));
 
     compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let failure = struct { code: i32 }
 extend(failure, copyable) {}
 extend(failure) {
-  let raise(self: borrow(self))(): i32 with(throws(bool)) = { throw(true) }
+  let raise(self: borrow(self))(): i32 with(throwing(bool)) = { throw(true) }
 }
 let main(): i32 = {
   let failure = failure { code: 1 }
@@ -1173,10 +1173,10 @@ let main(): i32 = {
     let ambiguous = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let left(): i32 with(throws(bool)) = { throw(true) }
-let right(): i32 with(throws(i64)) = { throw(1) }
+let left(): i32 with(throwing(bool)) = { throw(true) }
+let right(): i32 with(throwing(i64)) = { throw(1) }
 let main(): i32 = {
   let result = try { if true { left() } else { right() } }
   result ?? 0
@@ -1196,9 +1196,9 @@ let main(): i32 = {
     let handled = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let fail(): i32 with(throws(bool)) = { throw(true) }
+let fail(): i32 with(throwing(bool)) = { throw(true) }
 let main(): i32 = {
   let inner = try { fail() }
   let outer = try { inner }
@@ -1207,9 +1207,11 @@ let main(): i32 = {
 "#,
     )
     .unwrap_err();
-    assert!(handled
-        .iter()
-        .any(|error| { error.message.contains("body has no escaping throws source") }));
+    assert!(handled.iter().any(|error| {
+        error
+            .message
+            .contains("body has no escaping failure source")
+    }));
 }
 
 #[test]
@@ -1276,9 +1278,9 @@ let main(): i32 = {
     compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let choose(fail: bool): i32 with(throws(bool)) = { if fail { throw(true) } else { 42 } }
+let choose(fail: bool): i32 with(throwing(bool)) = { if fail { throw(true) } else { 42 } }
 let choose(value: i32): i32 = { value }
 let main(): i32 = {
   let result = try { choose(fail: false) }
@@ -1286,7 +1288,7 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("a selected overload should preserve throws inference and lowering");
+    .expect("a selected overload should preserve failure inference and lowering");
 
     compile_unresolved_text(
         r#"
@@ -1349,12 +1351,12 @@ let main(): i32 = { counter { value: 40 }.add(2) }
     compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let counter = struct { value: i32 }
 extend(counter, copyable) {}
 extend(counter) {
-  let read(self: borrow(self))(fail: bool): i32 with(throws(bool)) = {
+  let read(self: borrow(self))(fail: bool): i32 with(throwing(bool)) = {
 if fail { throw(true) } else { self.value }
   }
   let read(self: borrow(self))(fallback: i32): i32 = { fallback }
@@ -1366,7 +1368,7 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("a selected method overload should preserve throws inference");
+    .expect("a selected method overload should preserve failure inference");
 
     compile_text(
         r#"
@@ -1509,16 +1511,16 @@ let main(): i32 = { 0 }
 }
 
 #[test]
-fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
+fn effect_parameters_infer_forward_and_explicitly_select_failure_rows() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let invoke(comptime e: effects)(action: (): i32 with(e))(): i32 with(e) = { action() }
-let fail(): i32 with(throws(bool)) = { throw(true) }
-let forward(): i32 with(throws(bool)) = { invoke(fail)() }
-let explicit(): i32 with(throws(bool)) = { invoke(throws(bool))(fail)() }
+let fail(): i32 with(throwing(bool)) = { throw(true) }
+let forward(): i32 with(throwing(bool)) = { invoke(fail)() }
+let explicit(): i32 with(throwing(bool)) = { invoke(throwing(bool))(fail)() }
 let main(): i32 = {
   let inferred: result(bool)(i32) = try { forward() }
   let selected: result(bool)(i32) = try { explicit() }
@@ -1526,16 +1528,16 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("effect parameters should carry throws rows through inference and forwarding");
+    .expect("effect parameters should carry failure rows through inference and forwarding");
     assert!(ir.contains("switch"));
 }
 
 #[test]
-fn throw_requires_an_exact_active_throws_boundary() {
+fn throw_requires_an_exact_active_failure_boundary() {
     for (source, expected) in [
         (
-            "let fail(): i32 with(throws(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
-            "requires `throws(i32)`",
+            "let fail(): i32 with(throwing(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
+            "requires `throwing(i32)`",
         ),
         (
             "let fail(): option(i32) = { throw(false) }\nlet main(): i32 = { 0 }\n",
@@ -1550,7 +1552,7 @@ fn throw_requires_an_exact_active_throws_boundary() {
             "handle it with `try { ... }`",
         ),
     ] {
-        let source = format!("use std.option\nuse std.result\nuse std.error.throws\n{source}");
+        let source = format!("use std.option\nuse std.result\nuse std.error.throwing\n{source}");
         let errors = compile_resolved_text(&source).expect_err("invalid throw(must) be rejected");
         assert!(
             errors.iter().any(|error| error.message.contains(expected)),
@@ -5718,19 +5720,19 @@ let main(): i32 = { loop {
 }
 
 #[test]
-fn do_transparently_forwards_throws_unsafe_and_custom_effects() {
+fn do_transparently_forwards_failure_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
-let throws = std.error.throws
-let unsafe = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafe = std.unsafe.unsafety
 
 let ui = effect
-let fail(flag: bool): i32 with(throws(bool)) = {
+let fail(flag: bool): i32 with(throwing(bool)) = {
   if flag { throw(true) }
   40
 }
 let render(value: i32): i32 with(ui) = { value }
-let combined(pointer: ptr(i32)): i32 with(throws(bool), unsafe, ui) = { do {
+let combined(pointer: ptr(i32)): i32 with(throwing(bool), unsafe, ui) = { do {
   let attempted = fail(false)
   let value = render(attempted)
   if value == 40 { return(*pointer) }
@@ -5744,17 +5746,17 @@ let main(): i32 = { 0 }
     let errors = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let fail(): i32 with(throws(i64)) = { throw(1) }
-let outer(): i32 with(throws(bool)) = { do { return(fail()) } }
+let fail(): i32 with(throwing(i64)) = { throw(1) }
+let outer(): i32 with(throwing(bool)) = { do { return(fail()) } }
 let main(): i32 = { 0 }
 "#,
     )
     .unwrap_err();
     assert!(errors
         .iter()
-        .any(|error| { error.message.contains("requires `throws(i64)`") }));
+        .any(|error| { error.message.contains("requires `throwing(i64)`") }));
 }
 
 #[test]
@@ -5842,12 +5844,12 @@ let main(): i32 = {
     compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let supply = effect { let seed(): i32 }
-let ask = effect { let value(): i32 with(supply, throws(bool)) }
-let request(): i32 with(ask, supply, throws(bool)) = { ask.value() }
-let inner(): i32 with(supply, throws(bool)) = {
+let ask = effect { let value(): i32 with(supply, throwing(bool)) }
+let request(): i32 with(ask, supply, throwing(bool)) = { ask.value() }
+let inner(): i32 with(supply, throwing(bool)) = {
   ask.handle value { (resume) -> resume(42) } action { request() }
 }
 let main(): i32 = {
@@ -5858,7 +5860,7 @@ supply.handle seed { (resume) -> resume(0) } action { inner() }
 }
 "#,
     )
-    .expect("throws answers should compose across nested named handler frames");
+    .expect("failure answers should compose across nested named handler frames");
 
     let missing_operation_effect = compile_text(
         r#"
@@ -5893,31 +5895,31 @@ let main(): i32 = { run() }
 
     compile_resolved_text(
         r#"
-let throws = std.error.throws
-let unsafe = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafe = std.unsafe.unsafety
 
 let ask_unsafe = effect { let value(): i32 with(unsafe) }
 let unsafe_run(): i32 = { unsafe { ask_unsafe.handle value { (resume) -> resume(42) } action {
   ask_unsafe.value()
 } } }
-let ask_throws = effect { let value(): i32 with(throws(bool)) }
-let throwing_run(): i32 with(throws(bool)) = {
-  ask_throws.handle value { (resume) -> resume(42) } action { ask_throws.value() }
+let ask_failure = effect { let value(): i32 with(throwing(bool)) }
+let throwing_run(): i32 with(throwing(bool)) = {
+  ask_failure.handle value { (resume) -> resume(42) } action { ask_failure.value() }
 }
 let ask_frame = effect { let value(): i32 }
-let throwing_request(): i32 with(ask_frame, throws(bool)) = { ask_frame.value() }
-let throwing_frame(): i32 with(throws(bool)) = {
+let throwing_request(): i32 with(ask_frame, throwing(bool)) = { ask_frame.value() }
+let throwing_frame(): i32 with(throwing(bool)) = {
   ask_frame.handle value { (resume) -> resume(42) } action { throwing_request() }
 }
 let main(): i32 = { 0 }
 "#,
     )
-    .expect("unsafe and throws requirements should survive operation handling");
+    .expect("unsafe and failure requirements should survive operation handling");
 
     let missing_unsafe = compile_resolved_text(
         r#"
 let result = std.result
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let ask = effect { let value(): i32 with(unsafe) }
 let run(): i32 = { ask.handle value { (resume) -> resume(42) } action { ask.value() } }
@@ -5929,19 +5931,20 @@ let main(): i32 = { run() }
         .iter()
         .any(|error| error.message.contains("requires an `unsafe` handler")));
 
-    let missing_throws = compile_resolved_text(
+    let missing_failure = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let ask = effect { let value(): i32 with(throws(bool)) }
+let ask = effect { let value(): i32 with(throwing(bool)) }
 let run(): i32 = { ask.handle value { (resume) -> resume(42) } action { ask.value() } }
 let main(): i32 = { run() }
 "#,
     )
-    .expect_err("handling an operation must not erase its throws requirement");
-    assert!(missing_throws.iter().any(|error| {
-        error.message.contains("requires `throws(bool)`") && error.message.contains("throws(bool)")
+    .expect_err("handling an operation must not erase its failure requirement");
+    assert!(missing_failure.iter().any(|error| {
+        error.message.contains("requires `throwing(bool)`")
+            && error.message.contains("throwing(bool)")
     }));
 }
 
@@ -6287,7 +6290,7 @@ let main(): i32 = { 0 }
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let pure(): i32 = { 42 }
 let accept_unsafe(action: (): i32 with(unsafe))(): i32 with(unsafe) = { action() }
@@ -6348,10 +6351,10 @@ let main(): i32 = {
 }
 
 #[test]
-fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
+fn unsafetys_are_declared_forwarded_and_handled_at_calls() {
     let ir = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(pointer: ptr(i32)): i32 with(unsafe) = { *pointer }
 let forward(pointer: ptr(i32)): i32 with(unsafe) = { read(pointer) }
@@ -6366,7 +6369,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(pointer: ptr(i32)): i32 with(unsafe) = { *pointer }
 let main(): i32 = {
@@ -6384,10 +6387,10 @@ let main(): i32 = {
 }
 
 #[test]
-fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
+fn unsafety_checks_survive_aliasing_and_partial_application() {
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(pointer: ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -6405,7 +6408,7 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(pointer: ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -6419,10 +6422,10 @@ let main(): i32 = {
 }
 
 #[test]
-fn unsafe_effects_participate_in_method_and_trait_signatures() {
+fn unsafetys_participate_in_method_and_trait_signatures() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let reader = struct { pointer: ptr(i32) }
 let read = trait {
@@ -6442,7 +6445,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let reader = struct { pointer: ptr(i32) }
 let read = trait {
@@ -6461,9 +6464,9 @@ let main(): i32 = { 0 }
 }
 
 #[test]
-fn entry_point_cannot_export_an_unsafe_effect() {
+fn entry_point_cannot_export_an_unsafety() {
     let errors = compile_resolved_text(
-        "let unsafe = std.unsafe.unsafe_effect\nlet main(): i32 with(unsafe) = { 42 }\n",
+        "let unsafe = std.unsafe.unsafety\nlet main(): i32 with(unsafe) = { 42 }\n",
     )
     .unwrap_err();
     assert!(errors.iter().any(|error| {
@@ -6477,7 +6480,7 @@ fn entry_point_cannot_export_an_unsafe_effect() {
 fn effect_compile_parameters_select_pure_or_unsafe_instances() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }
 let forward(comptime e: effects)(value: i32): i32 with(e) = { tagged(e)(value) }
@@ -6488,7 +6491,7 @@ let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(e: unsafe
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let identity(comptime e: effects, comptime t: type)(value: t): t with(e) = { value }
 let main(): i32 = { identity(20) + unsafe { identity(e: unsafe, t: i32)(22) } }
@@ -6498,7 +6501,7 @@ let main(): i32 = { identity(20) + unsafe { identity(e: unsafe, t: i32)(22) } }
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let tagged(comptime e: effects)(value: i32): i32 with(e) = { value }
 let forward(comptime e: effects)(value: i32): i32 with(e) = { tagged(e)(value) }
@@ -6515,7 +6518,7 @@ let main(): i32 = { forward(unsafe)(42) }
 
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(comptime e: effects)(pointer: ptr(i32)): i32 with(e) = { *pointer }
 let main(): i32 = {
@@ -6528,7 +6531,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let read(comptime e: effects)(pointer: ptr(i32)): i32 with(e) = { *pointer }
 let main(): i32 = {
@@ -6563,7 +6566,7 @@ let main(): i32 = { tagged(e: copyable)(42) }
 
     let errors = compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let always(comptime e: effects)(value: i32): i32 with(unsafe, e) = { value }
 let main(): i32 = { always(pure)(42) }
@@ -6653,7 +6656,7 @@ let main(): i32 = { run(e: copyable)() }
 fn effect_parameters_specialize_inherent_methods() {
     compile_resolved_text(
         r#"
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let value = struct { value: i32 }
 extend(value) {
@@ -6669,49 +6672,47 @@ let main(): i32 = {
 }
 
 #[test]
-fn throws_effects_lower_to_result_boundaries_and_propagate() {
+fn failure_effects_lower_to_result_boundaries_and_propagate() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let fail(flag: bool): i32 with(throws(bool)) = { if flag { throw(true) } else { 41 } }
-let forward(flag: bool): i32 with(throws(bool)) = { fail(flag) }
+let fail(flag: bool): i32 with(throwing(bool)) = { if flag { throw(true) } else { 41 } }
+let forward(flag: bool): i32 with(throwing(bool)) = { fail(flag) }
 let main(): i32 = {
   let result: result(bool)(i32) = try { forward(false) }
   result ?? 0
 }
 "#,
     )
-    .expect("throws effects should use a result abi with automatic propagation");
+    .expect("failure effects should use a result abi with automatic propagation");
     assert!(ir.contains("define internal %sali.type."));
 }
 
 #[test]
-fn throws_and_unsafe_share_one_effect_row() {
+fn failure_and_unsafe_share_one_effect_row() {
     compile_resolved_library_text(
         r#"
-let throws = std.error.throws
-let unsafe = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafe = std.unsafe.unsafety
 
-let read(pointer: ptr(i32), fail: bool): i32 with(throws(bool), unsafe) = {
+let read(pointer: ptr(i32), fail: bool): i32 with(throwing(bool), unsafe) = {
   if fail { throw(true) }
   *pointer
 }
-let forward(pointer: ptr(i32), fail: bool): i32 with(throws(bool), unsafe) = {
+let forward(pointer: ptr(i32), fail: bool): i32 with(throwing(bool), unsafe) = {
   read(pointer, fail) }
 "#,
     )
-    .expect(
-        "standard throws should propagate while unsafe_effect remains a separate call requirement",
-    );
+    .expect("standard failure should propagate while unsafety remains a separate call requirement");
 
     let errors = compile_resolved_text(
         r#"
-let throws = std.error.throws
-let unsafe = std.unsafe.unsafe_effect
+let throwing = std.error.throwing
+let unsafe = std.unsafe.unsafety
 
-let read(pointer: ptr(i32)): i32 with(throws(bool), unsafe) = { *pointer }
+let read(pointer: ptr(i32)): i32 with(throwing(bool), unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(ptr(borrow(value)))
@@ -6725,11 +6726,11 @@ let main(): i32 = {
 }
 
 #[test]
-fn try_handles_throws_while_forwarding_unsafe_and_custom_effects() {
+fn try_handles_failure_while_forwarding_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
 let result = std.result
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let ui = effect
 let render(value: i32): i32 with(ui) = { value }
@@ -6741,7 +6742,7 @@ let handle(pointer: ptr(i32)): result(bool)(i32) with(unsafe, ui) = { try {
 let main(): i32 = { 0 }
 "#,
     )
-    .expect("try should remove only throws and forward the rest of the active effect row");
+    .expect("try should remove only failure and forward the rest of the active effect row");
 }
 
 #[test]
@@ -8301,23 +8302,23 @@ let main(): i32 = { number.construct(42).value }
 }
 
 #[test]
-fn nominal_error_types_propagate_through_throws() {
+fn nominal_error_types_propagate_through_throwing() {
     let ir = compile_resolved_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let failure = struct { code: i32 }
-let read(fail: bool): i32 with(throws(failure)) = {
+let read(fail: bool): i32 with(throwing(failure)) = {
   if fail { throw(failure { code: 1 }) } else { 40 } }
-let run(fail: bool): i32 with(throws(failure)) = { read(fail) + 2 }
+let run(fail: bool): i32 with(throwing(failure)) = { read(fail) + 2 }
 let main(): i32 = {
   let result: result(failure)(i32) = try { run(false) }
   result match { ok(value) => value, err(_) => 0 }
 }
 "#,
     )
-    .expect("nominal errors should use the same automatic throws propagation");
+    .expect("nominal errors should use the same automatic failure propagation");
 
     assert!(ir.contains("add i32"));
     assert!(ir.contains("switch i32"));
@@ -8696,10 +8697,10 @@ fn async_loop_steps_are_private_compiler_owned_nominals() {
     );
     let layout = &analyzer.enum_layouts[step_name];
     assert_eq!(layout.variants.len(), 2);
-    assert_eq!(layout.variants[0].name, "continue_effect");
+    assert_eq!(layout.variants[0].name, "iteration_skip");
     assert_eq!(layout.variants[0].payload_offset, 0);
     assert_eq!(layout.variants[0].fields[0].ty, step.carry);
-    assert_eq!(layout.variants[1].name, "break_effect");
+    assert_eq!(layout.variants[1].name, "loop_exit");
     assert_eq!(layout.variants[1].payload_offset, 1);
     assert_eq!(layout.variants[1].fields[0].ty, step.output);
 }
@@ -8730,11 +8731,11 @@ let main(): i32 = {
 }
 
 #[test]
-fn cold_async_poll_preserves_its_residual_unsafe_effect() {
+fn cold_async_poll_preserves_its_residual_unsafety() {
     compile_text(
         r#"
 let future = std.async.future
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -8748,12 +8749,12 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect("polling under the residual unsafe_effect effect must compile");
+    .expect("polling under the residual unsafety effect must compile");
 
     let diagnostics = compile_text(
         r#"
 let future = std.async.future
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -8764,18 +8765,18 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect_err("polling outside the residual unsafe_effect effect must fail");
+    .expect_err("polling outside the residual unsafety effect must fail");
     assert!(diagnostics
         .iter()
         .any(|diagnostic| diagnostic.message.contains("requires an `unsafe` handler")));
 }
 
 #[test]
-fn tail_await_forwards_the_child_futures_unsafe_effect() {
+fn tail_await_forwards_the_child_futures_unsafety() {
     compile_text(
         r#"
 let future = std.async.future
-let unsafe = std.unsafe.unsafe_effect
+let unsafe = std.unsafe.unsafety
 
 let dangerous(): i32 with(unsafe) = { unsafe { 42 } }
 
@@ -8789,7 +8790,7 @@ let main(): i32 = { unsafe {
 } }
 "#,
     )
-    .expect("tail await must forward the child future's residual unsafe_effect effect");
+    .expect("tail await must forward the child future's residual unsafety effect");
 }
 
 #[test]
@@ -9545,10 +9546,10 @@ fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
     let plan = cleanup_plan_text(
         r#"
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let read(fail: bool): i32 with(throws(bool)) = { if fail { throw(true) } else { 42 } }
-let propagate(fail: bool): i32 with(throws(bool)) = {
+let read(fail: bool): i32 with(throwing(bool)) = { if fail { throw(true) } else { 42 } }
+let propagate(fail: bool): i32 with(throwing(bool)) = {
   let item = read(fail)
   if item == 0 { throw(true) }
   item

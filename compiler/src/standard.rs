@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::OnceLock;
 
-use crate::ast::{Program, Visibility};
+use crate::ast::{Item, Program, Visibility};
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
@@ -95,6 +95,66 @@ pub(crate) struct StdExport {
     pub(crate) target: Vec<String>,
 }
 
+const CATEGORY_SUFFIXES: &[&str] = &[
+    "_effect",
+    "_trait",
+    "_type",
+    "_struct",
+    "_enum",
+    "_function",
+    "_sort",
+];
+
+pub(crate) fn naming_diagnostics(program: &Program, layer: &str) -> Vec<String> {
+    program
+        .items
+        .iter()
+        .zip(&program.item_visibilities)
+        .filter(|(_, visibility)| **visibility == Visibility::Public)
+        .filter_map(|(item, _)| {
+            let (name, category) = match item {
+                Item::Function(definition) => (&definition.name, "function"),
+                Item::Global(definition) => (&definition.name, "value"),
+                Item::Struct(definition) => (&definition.name, "struct"),
+                Item::Enum(definition) => (&definition.name, "enum"),
+                Item::Effect(definition) => (&definition.name, "effect"),
+                Item::Sort(definition) => (&definition.name, "sort"),
+                Item::TypeForm(definition) => (&definition.name, "type"),
+                Item::TypeAlias(definition) => (&definition.name, "type alias"),
+                Item::Trait(definition) => (&definition.name, "trait"),
+                Item::Extend(_) => return None,
+            };
+            validate_standard_name(name, category).map(|reason| {
+                format!("public {layer} {category} `{name}` violates standard naming: {reason}")
+            })
+        })
+        .collect()
+}
+
+fn validate_standard_name(name: &str, category: &str) -> Option<String> {
+    let ascii_snake_case = !name.is_empty()
+        && !name.starts_with('_')
+        && !name.ends_with('_')
+        && !name.contains("__")
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if !ascii_snake_case {
+        return Some(
+            "use ASCII `snake_case` without leading, trailing, or repeated underscores".into(),
+        );
+    }
+    if let Some(suffix) = CATEGORY_SUFFIXES
+        .iter()
+        .find(|suffix| name.ends_with(**suffix))
+    {
+        return Some(format!(
+            "name the {category} for its semantics instead of using the `{suffix}` category suffix"
+        ));
+    }
+    None
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StdBundle {
     program: Program,
@@ -154,6 +214,15 @@ impl StdBundle {
                         )],
                     ));
                 };
+                if let Some(reason) = validate_standard_name(&name, "alias") {
+                    return Err(StdBundleError::new(
+                        edition,
+                        vec![format!(
+                            "embedded std alias `{}` violates standard naming: {reason}",
+                            display_export(module, &name)
+                        )],
+                    ));
+                }
                 if !matches!(
                     import.path.first().map(String::as_str),
                     Some("core" | "alloc")
@@ -342,6 +411,28 @@ mod tests {
             assert!(!host_target_is_supported(os, arch));
             let error = validate_host_target(os, arch, Edition::Edition2026).unwrap_err();
             assert!(error.to_string().contains(&format!("`{arch}-{os}`")));
+        }
+    }
+
+    #[test]
+    fn standard_names_encode_semantics_instead_of_declaration_categories() {
+        let valid = parser::parse(
+            "pub let option(comptime t: type) = enum { some(t), none }\n\
+             pub let copyable = trait {}\n\
+             pub let suspension = effect { let suspend(): () }\n",
+        )
+        .unwrap();
+        assert!(naming_diagnostics(&valid, "test").is_empty());
+
+        for (source, expected) in [
+            ("pub let network_effect = effect {}\n", "`_effect`"),
+            ("pub let iterator_trait = trait {}\n", "`_trait`"),
+            ("pub let message_type = struct {}\n", "`_type`"),
+        ] {
+            let program = parser::parse(source).unwrap();
+            let diagnostics = naming_diagnostics(&program, "test");
+            assert_eq!(diagnostics.len(), 1);
+            assert!(diagnostics[0].contains(expected), "{diagnostics:?}");
         }
     }
 }

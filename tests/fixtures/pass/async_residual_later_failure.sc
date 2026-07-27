@@ -1,7 +1,7 @@
 let future = std.async.future
 let poll = std.async.poll
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let resource = struct {
   drops: ptr(mut)(i32),
@@ -49,7 +49,7 @@ let finish(
   calls: ptr(mut)(i32),
   fail: bool,
   value: i32,
-): i32 with(throws(bool)) = {
+): i32 with(throwing(bool)) = {
   unsafe {
     *calls = *calls + 1
   }
@@ -136,6 +136,6 @@ let main(): i32 = {
   }
 }
 
-test("async_residual_later_throws.sc") {
+test("async_residual_later_failure.sc") {
   main() == 42
 }

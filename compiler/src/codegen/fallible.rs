@@ -131,7 +131,7 @@ impl Analyzer {
         }
     }
 
-    pub(super) fn throws_boundary_for_ty(&self, ty: &Ty, error: &Ty) -> Option<ReturnBoundary> {
+    pub(super) fn failure_boundary_for_ty(&self, ty: &Ty, error: &Ty) -> Option<ReturnBoundary> {
         let standard = self.standard_fallible_info_for_ty(ty)?;
         if standard.kind != StandardFallibleKind::Result || standard.error.as_ref() != Some(error) {
             return None;
@@ -166,7 +166,7 @@ impl Analyzer {
             return self.construct_boundary_variant(boundary, true, Some(value));
         }
         self.error(format!(
-            "throws function has logical result `{}`, found `{}`",
+            "failure function has logical result `{}`, found `{}`",
             boundary.success, value.ty
         ));
         error_expr()
@@ -219,7 +219,7 @@ impl Analyzer {
         }
     }
 
-    pub(super) fn ensure_throws_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
+    pub(super) fn ensure_failure_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
         let arguments = vec![error, payload];
         let Some(source_arguments) = arguments
             .iter()
@@ -227,7 +227,7 @@ impl Analyzer {
             .collect::<Option<Vec<_>>>()
         else {
             self.error(
-                "throws result type cannot be represented by the current source type system",
+                "failure result type cannot be represented by the current source type system",
             );
             return None;
         };

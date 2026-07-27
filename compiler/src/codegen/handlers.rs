@@ -11,7 +11,7 @@ use crate::core::LangItemKind;
 use super::compile_time::{source_effect_identity, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER};
 use super::effects::{
     call_argument_labels, handled_operation_call, logical_effect_result_source,
-    logical_function_result_source, standard_throws_error_source,
+    logical_function_result_source, standard_failure_error_source,
 };
 use super::flow::{projection_paths_overlap, LowerCtx};
 use super::hir::{
@@ -1548,10 +1548,10 @@ impl Analyzer {
                         .collect()
                 })
                 .collect(),
-            unsafe_effect: self.function_effects_unsafe(&specialized.effects),
-            throws_error: specialized
+            unsafety: self.function_effects_unsafe(&specialized.effects),
+            failure_error: specialized
                 .effects
-                .throws
+                .failure
                 .as_deref()
                 .map(|error| self.lower_source_type(error)),
             custom_effects: self.function_effects_custom_identities(&specialized.effects),
@@ -1709,7 +1709,7 @@ impl Analyzer {
                         continue;
                     };
                     if self.function_effects_unsafe(effects)
-                        || effects.throws.is_some()
+                        || effects.failure.is_some()
                         || !effects.parameters.is_empty()
                         || self.function_effects_custom_identities(effects).len() != 1
                         || groups.len() != 1
@@ -1731,7 +1731,7 @@ impl Analyzer {
                             .effects
                             .custom
                             .iter()
-                            .filter(|candidate| !self.is_standard_unsafe_effect_source(candidate))
+                            .filter(|candidate| !self.is_standard_unsafety_source(candidate))
                             .any(|candidate| source_effect_identity(candidate) == effect)
                         || !expression_handles_effect(body, &effect)
                     {
@@ -1877,7 +1877,7 @@ impl Analyzer {
                 let mut bindings = Vec::new();
                 let mut residual_effects = residual_effects.clone();
                 if handler_for_clause.lexical_unsafe_depth.get() > 0 {
-                    analyzer.strip_authorized_unsafe_effects(&mut residual_effects);
+                    analyzer.strip_authorized_unsafetys(&mut residual_effects);
                 }
                 if residual_effects != FunctionEffects::default() {
                     let gate_id = analyzer.next_closure;
@@ -1950,7 +1950,7 @@ impl Analyzer {
                     annotation: Some(Type::Function {
                         groups: vec![vec![input.clone()]],
                         effects: FunctionEffects {
-                            unsafe_effect: handler_for_clause
+                            unsafety: handler_for_clause
                                 .inlining
                                 .borrow()
                                 .values()
@@ -2497,7 +2497,7 @@ impl Analyzer {
                 continuation(self, Expr::Try(Box::new(transformed)))
             }
             Expr::Throw(value) => {
-                if standard_throws_error_source(
+                if standard_failure_error_source(
                     &handler.source,
                     self.lang_item_name(LangItemKind::ThrowsEffect),
                 )
@@ -3711,7 +3711,7 @@ impl Analyzer {
             .custom
             .retain(|effect| source_effect_identity(effect) != handler.identity);
         if handler.lexical_unsafe_depth.get() > 0 {
-            self.strip_authorized_unsafe_effects(&mut rewritten_effects);
+            self.strip_authorized_unsafetys(&mut rewritten_effects);
         }
         let rewritten_result = self.effect_abi_result_source(answer.clone(), &rewritten_effects);
         let rewritten = Binding {
@@ -4009,7 +4009,7 @@ impl Analyzer {
                 annotation: Some(Type::Function {
                     groups: vec![vec![frame.input.clone()]],
                     effects: FunctionEffects {
-                        unsafe_effect: has_borrow_channels,
+                        unsafety: has_borrow_channels,
                         ..FunctionEffects::default()
                     },
                     result: Box::new(frame.answer.clone()),
@@ -4272,7 +4272,7 @@ impl Analyzer {
                 || groups.len() != 1
                 || groups[0].len() > 1
                 || self.function_effects_unsafe(effects)
-                || effects.throws.is_some()
+                || effects.failure.is_some()
                 || !effects.parameters.is_empty()
                 || custom_effects.as_slice() != [handler.identity.as_str()]
             {
@@ -4559,7 +4559,7 @@ impl Analyzer {
             annotation: Some(Type::Function {
                 groups: vec![vec![input.clone()]],
                 effects: FunctionEffects {
-                    unsafe_effect: !recursive_borrow_channels.is_empty(),
+                    unsafety: !recursive_borrow_channels.is_empty(),
                     ..FunctionEffects::default()
                 },
                 result: Box::new(answer.clone()),
@@ -4804,10 +4804,10 @@ impl Analyzer {
             .custom
             .retain(|effect| source_effect_identity(effect) != handler.identity);
         if handler.lexical_unsafe_depth.get() > 0 {
-            self.strip_authorized_unsafe_effects(&mut frame_effects);
+            self.strip_authorized_unsafetys(&mut frame_effects);
         }
         if !recursive_borrow_channels.is_empty() {
-            frame_effects.unsafe_effect = true;
+            frame_effects.unsafety = true;
         }
         let frame_result = self.effect_abi_result_source(answer, &frame_effects);
         let frame_annotation = Some(Type::Function {

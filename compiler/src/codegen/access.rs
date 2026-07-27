@@ -303,8 +303,8 @@ impl Analyzer {
                     let restricted = visit(analyzer, restricted, output, fallback_origin, visited);
                     visit(analyzer, restricted, answer, fallback_origin, visited)
                 }
-                Ty::EffectRow { throws_error, .. } => {
-                    throws_error.as_deref().map_or(access.clone(), |error| {
+                Ty::EffectRow { failure_error, .. } => {
+                    failure_error.as_deref().map_or(access.clone(), |error| {
                         visit(analyzer, access, error, fallback_origin, visited)
                     })
                 }
@@ -430,8 +430,8 @@ impl Analyzer {
                 self.collect_type_api_leaks(output, exposed, description, visited, diagnostics);
                 self.collect_type_api_leaks(answer, exposed, description, visited, diagnostics);
             }
-            Ty::EffectRow { throws_error, .. } => {
-                if let Some(error) = throws_error {
+            Ty::EffectRow { failure_error, .. } => {
+                if let Some(error) = failure_error {
                     self.collect_type_api_leaks(error, exposed, description, visited, diagnostics);
                 }
             }

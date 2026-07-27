@@ -1,8 +1,8 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 let defer = std.control.defer
 
-let fail(counter: borrow(mut)(i32)): i32 with(throws(bool)) = {
+let fail(counter: borrow(mut)(i32)): i32 with(throwing(bool)) = {
   defer {
       counter = counter + 1
     }

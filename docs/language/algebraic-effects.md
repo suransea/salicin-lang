@@ -85,15 +85,21 @@ duplicate drops, or silently skip destructors.
 
 ## Standard Effects
 
-`core.error.throws(error)` is the standard abortive error effect. Its `raise` operation returns
+`core.error.throwing(error)` is the standard abortive error effect. Its `raise` operation returns
 `never`. `throw(error)` invokes that operation. `try { action }` is one standard interpreter that
 handles it into `core.result(error)(value)`; the effect itself is independent of `result`.
 
-`core.unsafe.unsafe_effect` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary.
+`core.unsafe.unsafety` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary.
 Authorization does not weaken type checking, ownership, region checking, or cleanup.
 
 Standard effects use the same nominal row and handler machinery as user effects. Their source
 declarations are validated lang items, not name-based exceptions.
+
+Their names describe the behavior or capability rather than repeating the
+declaration kind: `throwing`, `suspension`, `unsafety`, `loop_exit`,
+`iteration_skip`, and `function_exit`. The `with(...)` position and nominal
+identity distinguish them from types and traits without an `_effect` suffix.
+This naming rule is enforced for the embedded standard library only.
 
 ## Selective CPS Lowering
 
@@ -125,7 +131,7 @@ structures, and their values are linear resources.
 The runtime representation may use generated frames and adapters, but those details are not
 observable language entities. Generated names must not appear in user diagnostics or participate in
 source lookup. A continuation currently cannot escape its handler clause.
-Consequently `async_effect.handle` can interpret `async_effect.suspend()` directly, but a
+Consequently `suspension.handle` can interpret `suspension.suspend()` directly, but a
 source handler cannot yet store the suspended continuation as future state;
 `core.async.async` remains the compiler boundary that materializes that state.
 

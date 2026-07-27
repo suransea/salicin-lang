@@ -80,13 +80,13 @@ pub(super) fn usize_value_from_marker(marker: &str) -> Option<u64> {
     marker.strip_prefix(USIZE_VALUE_PREFIX)?.parse().ok()
 }
 
-fn effect_row_marker(unsafe_effect: bool, custom: &[String]) -> String {
+fn effect_row_marker(unsafety: bool, custom: &[String]) -> String {
     let mut custom = custom.to_vec();
     custom.sort();
     custom.dedup();
     format!(
         "{EFFECT_ROW_MARKER_PREFIX}{}|{}",
-        if unsafe_effect { "unsafe" } else { "pure" },
+        if unsafety { "unsafe" } else { "pure" },
         custom.join("|")
     )
 }
@@ -99,7 +99,7 @@ pub(super) fn effect_row_from_marker(marker: &str) -> Option<(bool, Vec<String>)
     }
     let row = marker.strip_prefix(EFFECT_ROW_MARKER_PREFIX)?;
     let (head, tail) = row.split_once('|')?;
-    let unsafe_effect = match head {
+    let unsafety = match head {
         "pure" => false,
         "unsafe" => true,
         _ => return None,
@@ -109,17 +109,17 @@ pub(super) fn effect_row_from_marker(marker: &str) -> Option<(bool, Vec<String>)
     } else {
         tail.split('|').map(str::to_owned).collect()
     };
-    Some((unsafe_effect, custom))
+    Some((unsafety, custom))
 }
 
 pub(super) fn effect_row_source(
-    unsafe_effect: bool,
-    throws_error: Option<Type>,
+    unsafety: bool,
+    failure_error: Option<Type>,
     custom_effects: &[String],
 ) -> Type {
     Type::Named(
-        effect_row_marker(unsafe_effect, custom_effects),
-        throws_error.into_iter().collect(),
+        effect_row_marker(unsafety, custom_effects),
+        failure_error.into_iter().collect(),
     )
 }
 
@@ -127,19 +127,19 @@ pub(super) fn effect_row_from_source(source: &Type) -> Option<(bool, Option<Type
     let Type::Named(marker, arguments) = source else {
         return None;
     };
-    let (unsafe_effect, custom_effects) = effect_row_from_marker(marker)?;
-    let throws_error = match arguments.as_slice() {
+    let (unsafety, custom_effects) = effect_row_from_marker(marker)?;
+    let failure_error = match arguments.as_slice() {
         [] => None,
         [error] => Some(error.clone()),
         _ => return None,
     };
-    Some((unsafe_effect, throws_error, custom_effects))
+    Some((unsafety, failure_error, custom_effects))
 }
 
 pub(super) fn effect_row_is_singleton(effects: &FunctionEffects) -> bool {
     effects.parameters.is_empty()
-        && usize::from(effects.unsafe_effect)
-            + usize::from(effects.throws.is_some())
+        && usize::from(effects.unsafety)
+            + usize::from(effects.failure.is_some())
             + effects.custom.len()
             == 1
 }
@@ -189,20 +189,20 @@ pub(super) fn static_value_from_source(source: &Type, sort: &Sort) -> Option<Sta
         },
         Sort::String => None,
         Sort::Effect => {
-            let (unsafe_effect, throws, custom) = effect_row_from_source(source)?;
+            let (unsafety, failure, custom) = effect_row_from_source(source)?;
             let effects = FunctionEffects {
-                unsafe_effect,
-                throws: throws.map(Box::new),
+                unsafety,
+                failure: failure.map(Box::new),
                 custom: effect_identity_sources(&custom),
                 parameters: Vec::new(),
             };
             effect_row_is_singleton(&effects).then_some(StaticValue::Effect(effects))
         }
         Sort::Effects => {
-            let (unsafe_effect, throws, custom) = effect_row_from_source(source)?;
+            let (unsafety, failure, custom) = effect_row_from_source(source)?;
             Some(StaticValue::Effects(FunctionEffects {
-                unsafe_effect,
-                throws: throws.map(Box::new),
+                unsafety,
+                failure: failure.map(Box::new),
                 custom: effect_identity_sources(&custom),
                 parameters: Vec::new(),
             }))
@@ -252,8 +252,8 @@ pub(super) fn source_from_static_value(value: &StaticValue) -> Option<Type> {
             if effects.parameters.is_empty() =>
         {
             Some(effect_row_source(
-                effects.unsafe_effect,
-                effects.throws.as_deref().cloned(),
+                effects.unsafety,
+                effects.failure.as_deref().cloned(),
                 &source_effect_identities(&effects.custom),
             ))
         }
@@ -433,7 +433,7 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
                 .flatten()
                 .any(|argument| source_type_mentions_any_name(argument, names))
                 || effects
-                    .throws
+                    .failure
                     .as_deref()
                     .is_some_and(|error| source_type_mentions_any_name(error, names))
                 || effects
@@ -639,14 +639,14 @@ mod tests {
                 member: "speed".into(),
             },
             StaticValue::Effect(FunctionEffects {
-                unsafe_effect: true,
-                throws: None,
+                unsafety: true,
+                failure: None,
                 custom: Vec::new(),
                 parameters: Vec::new(),
             }),
             StaticValue::Effects(FunctionEffects {
-                unsafe_effect: true,
-                throws: Some(Box::new(Type::I32)),
+                unsafety: true,
+                failure: Some(Box::new(Type::I32)),
                 custom: vec![Type::Named("Log".into(), Vec::new())],
                 parameters: Vec::new(),
             }),

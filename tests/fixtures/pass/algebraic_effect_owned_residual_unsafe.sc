@@ -1,4 +1,4 @@
-let unsafe_effect = std.unsafe.unsafe_effect
+let unsafety = std.unsafe.unsafety
 
 let step = effect {
   let delta(): i32
@@ -20,7 +20,7 @@ extend(state, droppable) {
 let update(
   state: borrow(mut)(state),
   calls: ptr(mut)(i32),
-): i32 with(step, unsafe_effect) = {
+): i32 with(step, unsafety) = {
   let delta = step.delta()
   unsafe { *calls = *calls + 1 }
   state.value = state.value + delta

@@ -114,13 +114,19 @@ any of these standard namespaces.
 traits require ordinary aliases when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 `std.flow.chain` and `std.flow.coalesce` require ordinary aliases when named directly.
-`throws(e)`, `unsafe_effect`, and `async_effect` are ordinary standard effect declarations in `std.error`,
+`throwing(e)`, `unsafety`, and `suspension` are ordinary standard effect declarations in `std.error`,
 `std.unsafe`, and `std.async`. Source that names them binds them normally. `try` and `throw` target
 `core.error`; `unsafe` targets `core.unsafe`; structural control spellings such as `do` and `loop`
 target `core.control`. These contextual spellings do not inject module exports as ordinary
 unqualified names.
 Effect identities and row parameters use the same `snake_case` convention as every other source
 identifier; for example, `comptime e: effects`.
+Standard declaration names describe semantics rather than encoding their
+kind: types use entity/state nouns, traits use capability/role/operation
+names, and effects use abstract behavior or capability nouns such as
+`throwing`, `suspension`, and `unsafety`. Embedded public names are ASCII
+`snake_case` and may not use category suffixes such as `_type`, `_trait`, or
+`_effect`; ordinary user declarations are not subject to this library gate.
 The `effect` identity sort, `effects` row sort, finite `access` sort, and parameter modifier functions use
 contextual names such as `pure`, `shared`, `mut`, `copy`, and `move` in parameter positions.
 `semigroup` and `monoid` require aliases from `std.algebra` when named.

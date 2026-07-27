@@ -1,7 +1,7 @@
 let future = std.async.future
 let poll = std.async.poll
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let resource = struct {
   value: i32,
@@ -16,7 +16,7 @@ extend(resource, droppable) {
   }
 }
 
-let choose(fail: bool, value: i32): i32 with(throws(bool)) = {
+let choose(fail: bool, value: i32): i32 with(throwing(bool)) = {
   if fail {
     throw(true)
   } else {
@@ -24,7 +24,7 @@ let choose(fail: bool, value: i32): i32 with(throws(bool)) = {
   }
 }
 
-let consume_or_throw(move resource: resource): i32 with(throws(bool)) = {
+let consume_or_throw(move resource: resource): i32 with(throwing(bool)) = {
   choose(true, resource.value)
 }
 
@@ -78,6 +78,6 @@ let main(): i32 = {
   }
 }
 
-test("async_residual_throws.sc") {
+test("async_residual_failure.sc") {
   main() == 42
 }

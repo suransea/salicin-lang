@@ -1,7 +1,7 @@
 let future = std.async.future
 let poll = std.async.poll
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let step = struct {
   polls: i32,
@@ -23,7 +23,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(fail: bool): step with(throws(bool)) = {
+let make_step(fail: bool): step with(throwing(bool)) = {
   if fail {
     throw true
   } else {
@@ -61,6 +61,6 @@ let main(): i32 = {
   }
 }
 
-test("async_residual_throws_await.sc") {
+test("async_residual_failure_await.sc") {
   main() == 42
 }

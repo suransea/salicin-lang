@@ -1,34 +1,34 @@
 let result = std.result
 
-let throws = std.error.throws
-let async_effect = std.async.async_effect
+let throwing = std.error.throwing
+let suspension = std.async.suspension
 
-let fail_with_answer(): never with(throws(i32)) = {
-  throws(i32).raise(42)
+let fail_with_answer(): never with(throwing(i32)) = {
+  throwing(i32).raise(42)
 }
 
-let fail_with_throw_sugar(): never with(throws(i32)) = {
+let fail_with_throw_sugar(): never with(throwing(i32)) = {
   throw(42)
 }
 
-let choose_with_throw_sugar(fail: bool): i32 with(throws(i32)) = {
+let choose_with_throw_sugar(fail: bool): i32 with(throwing(i32)) = {
   if fail { throw(42) } else { 1 }
 }
 
 let handled_throw(): i32 = {
-  throws(i32).handle raise { (error) -> error } action {
+  throwing(i32).handle raise { (error) -> error } action {
       fail_with_answer()
     }
 }
 
 let handled_throw_sugar_function(): i32 = {
-  throws(i32).handle raise { (error) -> error } action {
+  throwing(i32).handle raise { (error) -> error } action {
       fail_with_throw_sugar()
     }
 }
 
 let handled_throw_sugar_action(): i32 = {
-  throws(i32).handle raise { (error) -> error } action {
+  throwing(i32).handle raise { (error) -> error } action {
       throw(42)
     }
 }
@@ -62,11 +62,11 @@ let inferred_try_from_throw_sugar_function(): i32 = {
 
 let handled_async(): i32 = {
   let mut seen = 0
-  let value = async_effect.handle suspend { (resume) ->
+  let value = suspension.handle suspend { (resume) ->
       seen = 1;
       resume(())
     } action {
-      async_effect.suspend();
+      suspension.suspend();
       1
     }
   value + seen + 40

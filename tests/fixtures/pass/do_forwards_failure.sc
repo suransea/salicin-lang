@@ -1,9 +1,9 @@
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
-let reject(): i32 with(throws(bool)) = { throw(true) }
+let reject(): i32 with(throwing(bool)) = { throw(true) }
 
-let choose(flag: bool): i32 with(throws(bool)) = {
+let choose(flag: bool): i32 with(throwing(bool)) = {
   do {
     if flag { return(reject()) }
     42
@@ -16,6 +16,6 @@ let main(): i32 = {
   (success ?? 0) + (failure ?? 0)
 }
 
-test("do_forwards_throws.sc") {
+test("do_forwards_failure.sc") {
   main() == 42
 }

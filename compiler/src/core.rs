@@ -144,7 +144,7 @@ pub let unwrap = trait {
 pub let raise = trait {
   let output: type
   let error: type
-  let raise(move self): output with(throws(error))
+  let raise(move self): output with(throwing(error))
 }
 "#;
 
@@ -425,9 +425,9 @@ impl LangItemKind {
             Self::Coalesce => "coalesce",
             Self::Unwrap => "unwrap",
             Self::Raise => "raise",
-            Self::UnsafeEffect => "unsafe_effect",
-            Self::ThrowsEffect => "throws",
-            Self::AsyncEffect => "async_effect",
+            Self::UnsafeEffect => "unsafety",
+            Self::ThrowsEffect => "throwing",
+            Self::AsyncEffect => "suspension",
             Self::TypeSort => "type",
             Self::RegionSort => "region",
             Self::AccessSort => "access",
@@ -449,9 +449,9 @@ impl LangItemKind {
             Self::Continuation => "continuation",
             Self::EffectCallable => "effect_callable",
             Self::Handle => "handle",
-            Self::BreakEffect => "break_effect",
-            Self::ContinueEffect => "continue_effect",
-            Self::ReturnEffect => "return_effect",
+            Self::BreakEffect => "loop_exit",
+            Self::ContinueEffect => "iteration_skip",
+            Self::ReturnEffect => "function_exit",
             Self::Attempt => "attempt",
             Self::Break | Self::BreakUnit => "break",
             Self::Continue => "continue",
@@ -801,9 +801,9 @@ pub struct LangItems {
     coalesce: LangItem,
     unwrap: LangItem,
     raise: LangItem,
-    unsafe_effect: LangItem,
-    throws_effect: LangItem,
-    async_effect: LangItem,
+    unsafety: LangItem,
+    failure_effect: LangItem,
+    suspension: LangItem,
     type_sort: LangItem,
     region_sort: LangItem,
     access_sort: LangItem,
@@ -1000,14 +1000,14 @@ impl LangItems {
         &self.coalesce
     }
 
-    pub const fn unsafe_effect(&self) -> &LangItem {
-        &self.unsafe_effect
+    pub const fn unsafety(&self) -> &LangItem {
+        &self.unsafety
     }
-    pub const fn throws_effect(&self) -> &LangItem {
-        &self.throws_effect
+    pub const fn failure_effect(&self) -> &LangItem {
+        &self.failure_effect
     }
-    pub const fn async_effect(&self) -> &LangItem {
-        &self.async_effect
+    pub const fn suspension(&self) -> &LangItem {
+        &self.suspension
     }
     pub const fn type_sort(&self) -> &LangItem {
         &self.type_sort
@@ -1162,9 +1162,9 @@ impl LangItems {
             LangItemKind::Coalesce => &self.coalesce,
             LangItemKind::Unwrap => &self.unwrap,
             LangItemKind::Raise => &self.raise,
-            LangItemKind::UnsafeEffect => &self.unsafe_effect,
-            LangItemKind::ThrowsEffect => &self.throws_effect,
-            LangItemKind::AsyncEffect => &self.async_effect,
+            LangItemKind::UnsafeEffect => &self.unsafety,
+            LangItemKind::ThrowsEffect => &self.failure_effect,
+            LangItemKind::AsyncEffect => &self.suspension,
             LangItemKind::TypeSort => &self.type_sort,
             LangItemKind::RegionSort => &self.region_sort,
             LangItemKind::AccessSort => &self.access_sort,
@@ -1376,9 +1376,9 @@ impl CoreBundle {
             &mut lang_items.coalesce,
             &mut lang_items.unwrap,
             &mut lang_items.raise,
-            &mut lang_items.unsafe_effect,
-            &mut lang_items.throws_effect,
-            &mut lang_items.async_effect,
+            &mut lang_items.unsafety,
+            &mut lang_items.failure_effect,
+            &mut lang_items.suspension,
             &mut lang_items.type_sort,
             &mut lang_items.region_sort,
             &mut lang_items.access_sort,
@@ -1551,7 +1551,7 @@ pub const fn embedded_algebra_source(edition: Edition) -> &'static str {
 }
 
 fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, CoreBundleError> {
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = crate::standard::naming_diagnostics(program, "core");
 
     if program.items.len() != program.item_visibilities.len()
         || program.items.len() != program.item_origins.len()
@@ -1759,9 +1759,9 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         coalesce: item(LangItemKind::Coalesce),
         unwrap: item(LangItemKind::Unwrap),
         raise: item(LangItemKind::Raise),
-        unsafe_effect: item(LangItemKind::UnsafeEffect),
-        throws_effect: item(LangItemKind::ThrowsEffect),
-        async_effect: item(LangItemKind::AsyncEffect),
+        unsafety: item(LangItemKind::UnsafeEffect),
+        failure_effect: item(LangItemKind::ThrowsEffect),
+        suspension: item(LangItemKind::AsyncEffect),
         type_sort: item(LangItemKind::TypeSort),
         region_sort: item(LangItemKind::RegionSort),
         access_sort: item(LangItemKind::AccessSort),
@@ -2845,7 +2845,7 @@ fn validate_raise(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `raise` must declare `output`, `error`, and `raise(move self): output with(throws(error))`"
+            "lang item `raise` must declare `output`, `error`, and `raise(move self): output with(throwing(error))`"
                 .to_owned(),
         );
     }
@@ -2858,18 +2858,18 @@ fn valid_raise_method(function: &Function) -> bool {
     let [receiver] = receiver_group.as_slice() else {
         return false;
     };
-    let throws_error = matches!(
+    let failure_error = matches!(
         function.effects.custom.as_slice(),
         [Type::Named(name, arguments)]
-            if name.split('.').next_back() == Some("throws")
+            if name.split('.').next_back() == Some("throwing")
                 && arguments == &vec![named_type("error")]
     );
     function.name == "raise"
         && function.compile_groups.is_empty()
         && function.return_type == Some(named_type("output"))
-        && throws_error
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && failure_error
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.parameters.is_empty()
         && function.where_predicates.is_empty()
         && function.body.is_none()
@@ -2891,7 +2891,7 @@ fn validate_effect(
             definition.compile_groups == vec![vec![type_parameter("error")]]
                 && matches!(
                     definition.operations.as_slice(),
-                    [operation] if valid_throws_raise_operation(operation)
+                    [operation] if valid_failure_raise_operation(operation)
                 )
         }
         LangItemKind::AsyncEffect => {
@@ -2905,9 +2905,9 @@ fn validate_effect(
     };
     if !valid {
         let shape = match kind {
-            LangItemKind::UnsafeEffect => "pub let unsafe_effect = effect {}",
+            LangItemKind::UnsafeEffect => "pub let unsafety = effect {}",
             LangItemKind::ThrowsEffect => {
-                "pub let throws(comptime error: type) = effect { let raise(move error: error): never }"
+                "pub let throwing(comptime error: type) = effect { let raise(move error: error): never }"
             }
             LangItemKind::AsyncEffect => "pub let async = effect { let suspend(): () }",
             _ => unreachable!(),
@@ -2926,7 +2926,7 @@ fn valid_async_suspend_operation(function: &Function) -> bool {
         && function.body.is_none()
 }
 
-fn valid_throws_raise_operation(function: &Function) -> bool {
+fn valid_failure_raise_operation(function: &Function) -> bool {
     let [group] = function.groups.as_slice() else {
         return false;
     };
@@ -3036,8 +3036,8 @@ fn validate_control_function(
 
 fn valid_control_exit_function(kind: LangItemKind, function: &Function, unit: bool) -> bool {
     let effect_name = match kind {
-        LangItemKind::Break | LangItemKind::BreakUnit => "break_effect",
-        LangItemKind::Return | LangItemKind::ReturnUnit => "return_effect",
+        LangItemKind::Break | LangItemKind::BreakUnit => "loop_exit",
+        LangItemKind::Return | LangItemKind::ReturnUnit => "function_exit",
         _ => return false,
     };
     let argument = if unit { Type::Unit } else { named_type("t") };
@@ -3057,13 +3057,13 @@ fn valid_continue_function(function: &Function) -> bool {
     function.compile_groups.is_empty()
         && function.groups == vec![Vec::new()]
         && function.return_type == Some(named_type("never"))
-        && has_only_control_effect(&function.effects, "continue_effect", &[])
+        && has_only_control_effect(&function.effects, "iteration_skip", &[])
         && function.body.is_some()
 }
 
 fn has_only_control_effect(effects: &FunctionEffects, name: &str, arguments: &[Type]) -> bool {
-    !effects.unsafe_effect
-        && effects.throws.is_none()
+    !effects.unsafety
+        && effects.failure.is_none()
         && effects.parameters.is_empty()
         && matches!(
             effects.custom.as_slice(),
@@ -3086,8 +3086,8 @@ fn valid_do(function: &Function) -> bool {
         && single_moved_callable(function, "action", named_type("t"), effect_parameter("e"))
         && function.return_type == Some(named_type("t"))
         && function.effects.parameters == vec!["e"]
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_some()
 }
@@ -3132,7 +3132,7 @@ fn valid_try(function: &Function) -> bool {
     );
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.error.throws".to_owned(),
+            "core.error.throwing".to_owned(),
             vec![named_type("e")],
         )],
         parameters: vec!["f".to_owned()],
@@ -3151,8 +3151,8 @@ fn valid_try(function: &Function) -> bool {
         && single_moved_callable(function, "action", named_type("t"), effects)
         && function.return_type == Some(result)
         && function.effects.parameters == vec!["f"]
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_some()
 }
@@ -3160,7 +3160,7 @@ fn valid_try(function: &Function) -> bool {
 fn valid_throw(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.error.throws".to_owned(),
+            "core.error.throwing".to_owned(),
             vec![named_type("error")],
         )],
         ..crate::ast::FunctionEffects::default()
@@ -3174,10 +3174,7 @@ fn valid_throw(function: &Function) -> bool {
 
 fn valid_unsafe(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
-        custom: vec![Type::Named(
-            "core.unsafe.unsafe_effect".to_owned(),
-            Vec::new(),
-        )],
+        custom: vec![Type::Named("core.unsafe.unsafety".to_owned(), Vec::new())],
         parameters: vec!["e".to_owned()],
         ..crate::ast::FunctionEffects::default()
     };
@@ -3193,8 +3190,8 @@ fn valid_unsafe(function: &Function) -> bool {
         && single_moved_callable(function, "action", named_type("t"), effects)
         && function.return_type == Some(named_type("t"))
         && function.effects.parameters == vec!["e"]
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_some()
 }
@@ -3217,8 +3214,8 @@ fn valid_loop(function: &Function) -> bool {
         )
         && function.return_type == Some(named_type("t"))
         && function.effects.parameters == vec!["e"]
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_none()
 }
@@ -3243,8 +3240,8 @@ fn valid_while(function: &Function) -> bool {
         && moved_callable_parameter(body, "do", Type::Unit, effect_parameter("e"))
         && function.return_type == Some(Type::Unit)
         && function.effects.parameters == vec!["e"]
-        && !function.effects.unsafe_effect
-        && function.effects.throws.is_none()
+        && !function.effects.unsafety
+        && function.effects.failure.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_some()
 }
@@ -3389,8 +3386,8 @@ fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
 fn loop_body_effects(result: Type, rest: &str) -> crate::ast::FunctionEffects {
     crate::ast::FunctionEffects {
         custom: vec![
-            Type::Named("core.control.break_effect".to_owned(), vec![result]),
-            Type::Named("core.control.continue_effect".to_owned(), Vec::new()),
+            Type::Named("core.control.loop_exit".to_owned(), vec![result]),
+            Type::Named("core.control.iteration_skip".to_owned(), Vec::new()),
         ],
         parameters: vec![rest.to_owned()],
         ..crate::ast::FunctionEffects::default()
@@ -3893,7 +3890,7 @@ fn validate_async_function(
     definition: &Function,
     diagnostics: &mut Vec<String>,
 ) {
-    let effects = async_effect_row("e");
+    let effects = suspension_row("e");
     let expected_bound = future_output_bound("f", "e", "t");
     let valid = definition.name == kind.source_name()
         && definition.where_predicates == vec![expected_bound]
@@ -3909,7 +3906,7 @@ fn validate_async_function(
                         definition,
                         "action",
                         named_type("t"),
-                        async_effect_row("e"),
+                        suspension_row("e"),
                     )
                     && definition.return_type == Some(named_type("f"))
                     && definition.effects == crate::ast::FunctionEffects::default()
@@ -3939,12 +3936,9 @@ fn validate_async_function(
     }
 }
 
-fn async_effect_row(rest: &str) -> crate::ast::FunctionEffects {
+fn suspension_row(rest: &str) -> crate::ast::FunctionEffects {
     crate::ast::FunctionEffects {
-        custom: vec![Type::Named(
-            "core.async.async_effect".to_owned(),
-            Vec::new(),
-        )],
+        custom: vec![Type::Named("core.async.suspension".to_owned(), Vec::new())],
         parameters: vec![rest.to_owned()],
         ..crate::ast::FunctionEffects::default()
     }
@@ -4327,9 +4321,9 @@ pub let index(comptime key: type) = trait {
                 | LangItemKind::Raise => {
                     format!("core::flow::{}", kind.source_name())
                 }
-                LangItemKind::UnsafeEffect => "core::unsafe::unsafe_effect".to_owned(),
-                LangItemKind::ThrowsEffect => "core::error::throws".to_owned(),
-                LangItemKind::AsyncEffect => "core::async::async_effect".to_owned(),
+                LangItemKind::UnsafeEffect => "core::unsafe::unsafety".to_owned(),
+                LangItemKind::ThrowsEffect => "core::error::throwing".to_owned(),
+                LangItemKind::AsyncEffect => "core::async::suspension".to_owned(),
                 LangItemKind::TypeSort
                 | LangItemKind::RegionSort
                 | LangItemKind::EffectSort
@@ -4502,10 +4496,10 @@ pub let index(comptime key: type) = trait {
             assert!(location.column > 0);
         }
 
-        let throws = &bundle.program().items[bundle.lang_items().throws_effect().item_index()];
+        let failure = &bundle.program().items[bundle.lang_items().failure_effect().item_index()];
         let never_name = bundle.lang_items().never().canonical_name().to_owned();
         assert!(matches!(
-            throws,
+            failure,
             Item::Effect(definition)
                 if matches!(
                     definition.operations.as_slice(),
@@ -4514,14 +4508,14 @@ pub let index(comptime key: type) = trait {
                             && operation.return_type == Some(Type::Named(never_name.clone(), Vec::new()))
                 )
         ));
-        let async_effect = bundle
+        let suspension = bundle
             .program()
             .items
             .iter()
-            .find(|item| item_name(item) == Some("core::async::async_effect"))
-            .expect("core.async.async_effect must be mounted");
+            .find(|item| item_name(item) == Some("core::async::suspension"))
+            .expect("core.async.suspension must be mounted");
         assert!(matches!(
-            async_effect,
+            suspension,
             Item::Effect(definition)
                 if matches!(
                     definition.operations.as_slice(),
@@ -4785,7 +4779,7 @@ pub let index(comptime key: type) = trait {
     fn rejects_malformed_control_contracts() {
         for (name, malformed) in [
             (
-                "break_effect",
+                "loop_exit",
                 EDITION_2026_CONTROL.replace(
                     "let exit(move value: t): never",
                     "let exit(value: t): never",
@@ -4794,22 +4788,22 @@ pub let index(comptime key: type) = trait {
             (
                 "continue",
                 EDITION_2026_CONTROL.replace(
-                    "pub let continue(): never with(continue_effect)",
-                    "pub let continue(): () with(continue_effect)",
+                    "pub let continue(): never with(iteration_skip)",
+                    "pub let continue(): () with(iteration_skip)",
                 ),
             ),
             (
                 "return",
                 EDITION_2026_CONTROL.replace(
-                    "(move value: t): never with(return_effect(t))",
-                    "(value: t): never with(return_effect(t))",
+                    "(move value: t): never with(function_exit(t))",
+                    "(value: t): never with(function_exit(t))",
                 ),
             ),
             (
                 "do",
                 EDITION_2026_CONTROL.replace(
-                    "  (move while: (): bool with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)",
-                    "  (move until: (): bool with(core.control.break_effect(()), core.control.continue_effect, e)): () with(e)",
+                    "  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)",
+                    "  (move until: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)",
                 ),
             ),
             (
@@ -4847,7 +4841,7 @@ pub let index(comptime key: type) = trait {
         }
 
         let malformed = EDITION_2026_UNSAFE.replace(
-            "pub let unsafe(comptime e: effects, comptime t: type)\n  (move action: (): t with(core.unsafe.unsafe_effect, e)): t with(e)",
+            "pub let unsafe(comptime e: effects, comptime t: type)\n  (move action: (): t with(core.unsafe.unsafety, e)): t with(e)",
             "pub let unsafe(comptime e: effects, comptime t: type)\n  (move action: (): t with(e)): t with(e)",
         );
         let modules = edition_2026_test_modules(&[("unsafe", &malformed)]);
@@ -4858,7 +4852,7 @@ pub let index(comptime key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let bodyless = EDITION_2026_UNSAFE.replace(
-            " = {\n  core.unsafe.unsafe_effect.handle\n    action {\n      action()\n    }\n}",
+            " = {\n  core.unsafe.unsafety.handle\n    action {\n      action()\n    }\n}",
             "",
         );
         let modules = edition_2026_test_modules(&[("unsafe", &bodyless)]);
@@ -4929,7 +4923,7 @@ pub let index(comptime key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `handle`")));
 
         let malformed = EDITION_2026_ERROR.replace(
-            "pub let throw(comptime error: type)\n  (move error: error): never with(core.error.throws(error))",
+            "pub let throw(comptime error: type)\n  (move error: error): never with(core.error.throwing(error))",
             "pub let throw(comptime error: type)\n  (move error: error): never",
         );
         let modules = edition_2026_test_modules(&[("error", &malformed)]);
@@ -4944,7 +4938,7 @@ pub let index(comptime key: type) = trait {
     fn rejects_malformed_async_contracts() {
         for (name, malformed) in [
             (
-                "async_effect",
+                "suspension",
                 EDITION_2026_ASYNC.replace("let suspend(): ()", "let suspend(): i32"),
             ),
             ("poll", EDITION_2026_ASYNC.replace("  pending,\n", "")),
@@ -4962,14 +4956,14 @@ pub let index(comptime key: type) = trait {
             (
                 "async",
                 EDITION_2026_ASYNC.replace(
-                    "(move action: (): t with(core.async.async_effect, e)): f",
+                    "(move action: (): t with(core.async.suspension, e)): f",
                     "(move action: (): t with(e)): f",
                 ),
             ),
             (
                 "await",
                 EDITION_2026_ASYNC.replace(
-                    "(move future: f): t with(core.async.async_effect, e)",
+                    "(move future: f): t with(core.async.suspension, e)",
                     "(move future: f): t with(e)",
                 ),
             ),
@@ -5067,7 +5061,7 @@ pub let index(comptime key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unwrap`")));
 
         let malformed = EDITION_2026_FLOW.replace(
-            "let raise(move self): output with(core.error.throws(error))",
+            "let raise(move self): output with(core.error.throwing(error))",
             "let raise(move self): output",
         );
         let modules = edition_2026_test_modules(&[("flow", &malformed)]);

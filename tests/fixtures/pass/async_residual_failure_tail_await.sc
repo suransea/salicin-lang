@@ -1,7 +1,7 @@
 let future = std.async.future
 let poll = std.async.poll
 let result = std.result
-let throws = std.error.throws
+let throwing = std.error.throwing
 
 let resource = struct {
   drops: ptr(mut)(i32),
@@ -36,7 +36,7 @@ extend(step, future(())) {
   }
 }
 
-let choose(fail: bool): i32 with(throws(bool)) = {
+let choose(fail: bool): i32 with(throwing(bool)) = {
   if fail {
     throw true
   } else {
@@ -44,7 +44,7 @@ let choose(fail: bool): i32 with(throws(bool)) = {
   }
 }
 
-let make_step(move resource: resource, fail: bool): step with(throws(bool)) = {
+let make_step(move resource: resource, fail: bool): step with(throwing(bool)) = {
   step { polls: 0, value: choose(fail), resource: resource }
 }
 
@@ -68,7 +68,7 @@ let run_success(drops: ptr(mut)(i32)): i32 = {
     { err(_) -> 0 }
 }
 
-let run_failure(drops: ptr(mut)(i32)): i32 = {
+let run_throwing(drops: ptr(mut)(i32)): i32 = {
   let result: result(bool)(i32) = try {
     let resource = resource { drops: drops }
     let mut future = async {
@@ -97,7 +97,7 @@ let main(): i32 = {
   }
 
   let success = run_success(drops)
-  let failure = run_failure(drops)
+  let failure = run_throwing(drops)
   let drop_count = unsafe {
     *drops
   }
@@ -108,6 +108,6 @@ let main(): i32 = {
   if success == 42 && failure == 42 && drop_count == 2 { 42 } else { 0 }
 }
 
-test("async_residual_throws_tail_await.sc") {
+test("async_residual_failure_tail_await.sc") {
   main() == 42
 }

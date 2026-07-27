@@ -595,12 +595,12 @@ fn m2_coalesce_errors_report_their_cause() {
 }
 
 #[test]
-fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
+fn explicit_result_values_and_failure_handlers_run_with_expected_result() {
     let fixtures = [
         "try_full_container_unchanged.sc",
         "do_try_boundary.sc",
         "do_function_boundary.sc",
-        "do_forwards_throws.sc",
+        "do_forwards_failure.sc",
     ];
     for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
@@ -795,7 +795,7 @@ fn m2_optional_chain_errors_report_their_cause() {
 }
 
 #[test]
-fn throws_programs_run_with_expected_result() {
+fn failure_programs_run_with_expected_result() {
     let fixtures = [
         "throw_result_err_propagate.sc",
         "throw_error_once.sc",
@@ -814,7 +814,7 @@ fn throws_programs_run_with_expected_result() {
 }
 
 #[test]
-fn throws_errors_report_their_cause() {
+fn failure_errors_report_their_cause() {
     for (name, expected) in [
         ("throw_in_option_return.sc", "handle it with `try { ... }`"),
         ("throw_in_plain_return.sc", "handle it with `try { ... }`"),
@@ -824,7 +824,7 @@ fn throws_errors_report_their_cause() {
             "throw_omitted_return_type.sc",
             "handle it with `try { ... }`",
         ),
-        ("throw_error_type_mismatch.sc", "requires `throws(i32)`"),
+        ("throw_error_type_mismatch.sc", "requires `throwing(i32)`"),
         (
             "throw_without_value.sc",
             "standard-library item `throw` is not in the prelude",

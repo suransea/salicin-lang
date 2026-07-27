@@ -1,4 +1,4 @@
-let async_effect = std.async.async_effect
+let suspension = std.async.suspension
 let poll = std.async.poll
 let future = std.async.future
 let await_source = std.async.await
@@ -21,7 +21,7 @@ extend(step, future(())) {
 }
 
 let main(): i32 = {
-  async_effect.handle
+  suspension.handle
     suspend { (resume) -> resume(()) }
     action {
       await_source(step { ready: false })
