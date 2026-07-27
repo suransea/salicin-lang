@@ -2,25 +2,6 @@ use super::ctfe_value::{CtfeValue, CtfeValueKind};
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
-pub(super) fn evaluate_globals(
-    program: &HirProgram,
-) -> Result<HashMap<String, CtfeValue>, Vec<Diagnostic>> {
-    let mut diagnostics = Vec::new();
-    for global in &program.globals {
-        if !program.normalized_globals.contains_key(&global.name) {
-            diagnostics.push(Diagnostic::new(format!(
-                "constant `{}` was not evaluated",
-                global.name
-            )));
-        }
-    }
-    if diagnostics.is_empty() {
-        Ok(program.normalized_globals.clone())
-    } else {
-        Err(diagnostics)
-    }
-}
-
 pub(super) struct Emitter<'a> {
     program: &'a HirProgram,
     constants: HashMap<String, CtfeValue>,

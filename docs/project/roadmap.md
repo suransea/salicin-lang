@@ -61,9 +61,11 @@ enums including standard `option` and `result`; global normalization represents
 the same value families. Dependent evaluation now interprets fully applied
 eligible source calls with their runtime groups, labels, generic instances,
 statically resolved members, cross-module identities, control flow, returns,
-and bounded recursion. The remaining milestone work replaces the two
-consumer-specific entry paths with one evaluation boundary and completes the
-acceptance proof.
+and bounded recursion. Dependent lengths and globals now enter that evaluator
+through the same source boundary; normalized nominal identity and emitted
+constants exclude checkout path, declaration order, and module traversal.
+Only the complete rejection, determinism, complexity, and native-emission
+acceptance proof remains.
 
 Runtime `struct` and `enum` declarations remain runtime types; this milestone
 does not turn them into `sort`s. A value of such a type may be constructed,

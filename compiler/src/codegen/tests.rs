@@ -1,3 +1,4 @@
+use super::ctfe_value::CtfeValueKind;
 use super::*;
 use crate::ast::Param;
 use crate::cleanup::{
@@ -3683,6 +3684,166 @@ let main(): i32 = { total }
     .expect("global constants should call eligible ordinary source functions");
     assert!(llvm.contains("{ i32 40, i32 2 }"));
     assert!(llvm.contains("constant i32 42"));
+}
+
+#[test]
+fn shared_ctfe_consumers_ignore_paths_declaration_order_and_module_traversal() {
+    fn unit(
+        path: &str,
+        module_path: &[&str],
+        source: &str,
+        is_root: bool,
+    ) -> crate::modules::SourceUnit {
+        crate::modules::SourceUnit {
+            path: path.to_owned(),
+            module_path: module_path
+                .iter()
+                .map(|segment| (*segment).to_owned())
+                .collect(),
+            source: source.to_owned(),
+            is_root,
+        }
+    }
+
+    fn analyze(program: &Program) -> HirProgram {
+        let mut analyzer = Analyzer::new(program);
+        let hir = analyzer
+            .analyze()
+            .unwrap_or_else(|| panic!("program should analyze: {:?}", analyzer.diagnostics));
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        hir
+    }
+
+    let model_forward = r#"
+pub let packet(comptime t: type) = struct { pub value: t, pub width: usize }
+pub let make(comptime t: type)(value: t)(width: usize): packet(t) = {
+  packet(t) { value: value, width: width }
+}
+pub let dimension(value: usize): usize = { value + 2 }
+pub let layout_size(comptime t: type)(): u64 = { size_of(t) }
+"#;
+    let model_reverse = r#"
+pub let layout_size(comptime t: type)(): u64 = { size_of(t) }
+pub let dimension(value: usize): usize = { value + 2 }
+pub let make(comptime t: type)(value: t)(width: usize): packet(t) = {
+  packet(t) { value: value, width: width }
+}
+pub let packet(comptime t: type) = struct { pub value: t, pub width: usize }
+"#;
+    let root_forward = r#"
+use root.model.packet
+use root.model.make
+use root.model.dimension
+use root.model.layout_size
+let length: usize = dimension(4)
+let global: packet(i32) = make(i32)(42)(length)
+let bytes: u64 = layout_size(packet(i32))()
+let read(values: array(i32)(dimension(4))): i32 = { values[0] }
+let main(): i32 = { global.value + read([0, 0, 0, 0, 0, 0]) }
+"#;
+    let root_reverse = r#"
+use root.model.packet
+use root.model.make
+use root.model.dimension
+use root.model.layout_size
+let bytes: u64 = layout_size(packet(i32))()
+let global: packet(i32) = make(i32)(42)(length)
+let length: usize = dimension(4)
+let main(): i32 = { global.value + read([0, 0, 0, 0, 0, 0]) }
+let read(values: array(i32)(dimension(4))): i32 = { values[0] }
+"#;
+
+    let forward = crate::modules::resolve_sources(&[
+        unit("/checkout/one/src/main.sc", &[], root_forward, true),
+        unit(
+            "/checkout/one/src/model.sc",
+            &["model"],
+            model_forward,
+            false,
+        ),
+    ])
+    .expect("forward module traversal should resolve");
+    let reverse = crate::modules::resolve_sources(&[
+        unit(
+            "/different/checkout/model.sc",
+            &["model"],
+            model_reverse,
+            false,
+        ),
+        unit("/different/checkout/main.sc", &[], root_reverse, true),
+    ])
+    .expect("reverse module traversal should resolve");
+
+    let forward_hir = analyze(&forward);
+    let reverse_hir = analyze(&reverse);
+    for name in ["length", "global", "bytes"] {
+        assert_eq!(
+            forward_hir.normalized_globals.get(name),
+            reverse_hir.normalized_globals.get(name),
+            "normalized global `{name}` changed with path or traversal order"
+        );
+    }
+    let global = forward_hir
+        .normalized_globals
+        .get("global")
+        .expect("normalized nominal global");
+    assert!(
+        matches!(
+            (&global.ty, &global.kind),
+            (
+                Ty::Struct(ty_name),
+                CtfeValueKind::Struct { name, fields },
+            ) if ty_name == name
+                && name.contains("model::packet")
+                && name.contains("i32")
+                && fields.len() == 2
+        ),
+        "unexpected exact nominal value: {global:?}"
+    );
+    let bytes = forward_hir
+        .normalized_globals
+        .get("bytes")
+        .expect("normalized layout global");
+    assert!(
+        matches!(
+            &bytes.kind,
+            CtfeValueKind::LayoutQuery {
+                queried,
+                kind: LayoutQueryKind::Size,
+            } if queried == &global.ty
+        ),
+        "layout query lost its exact target type: {bytes:?}"
+    );
+
+    let forward_ir = compile(&forward).expect("forward program should compile");
+    let reverse_ir = compile(&reverse).expect("reverse program should compile");
+    let global_constants = |ir: &str| {
+        let mut lines = ir
+            .lines()
+            .filter(|line| line.starts_with("@sali.global."))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        lines.sort();
+        lines
+    };
+    assert_eq!(
+        global_constants(&forward_ir),
+        global_constants(&reverse_ir),
+        "emitted constants changed with path, declaration, or traversal order"
+    );
+    assert!(forward_ir.contains("[6 x i32]"), "{forward_ir}");
+    let bytes_constant = global_constants(&forward_ir)
+        .into_iter()
+        .find(|line| line.starts_with("@sali.global.6279746573"))
+        .expect("emitted bytes global");
+    assert!(
+        bytes_constant.contains("ptrtoint (ptr getelementptr ("),
+        "{bytes_constant}"
+    );
 }
 
 #[test]

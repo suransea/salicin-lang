@@ -11,7 +11,7 @@ use crate::cleanup::CleanupPlan;
 
 use super::cleanup_plan::build_and_verify_cleanup_plans;
 use super::ctfe_value::CtfeValue;
-use super::emitter::{evaluate_globals, Emitter};
+use super::emitter::Emitter;
 use super::hir::Ty;
 use super::{Analyzer, Diagnostic, HirProgram};
 
@@ -201,12 +201,28 @@ fn c_field_type_is_valid(
 
 fn prepare(analyzed: AnalyzedProgram) -> Result<PreparedProgram, Vec<Diagnostic>> {
     let cleanup_plans = build_and_verify_cleanup_plans(&analyzed.hir)?;
-    let constants = evaluate_globals(&analyzed.hir)?;
+    let constants = collect_normalized_globals(&analyzed.hir)?;
     Ok(PreparedProgram {
         hir: analyzed.hir,
         cleanup_plans,
         constants,
     })
+}
+
+fn collect_normalized_globals(
+    program: &HirProgram,
+) -> Result<HashMap<String, CtfeValue>, Vec<Diagnostic>> {
+    let diagnostics = program
+        .globals
+        .iter()
+        .filter(|global| !program.normalized_globals.contains_key(&global.name))
+        .map(|global| Diagnostic::new(format!("constant `{}` was not evaluated", global.name)))
+        .collect::<Vec<_>>();
+    if diagnostics.is_empty() {
+        Ok(program.normalized_globals.clone())
+    } else {
+        Err(diagnostics)
+    }
 }
 
 #[cfg(test)]

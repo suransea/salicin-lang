@@ -289,7 +289,7 @@ let Constructor: (T: type): type = core.Option
 
 Alias expansion must terminate. Cyclic aliases and arity or sort mismatches are rejected.
 
-### 4.2 Compile-Time Evaluation and Dependent Array Lengths
+### 4.2 Compile-Time Evaluation, Dependent Array Lengths, and Globals
 
 Salicin does not require a second spelling such as `const fn` for compile-time functions. An
 ordinary function may be evaluated in a static context when its body is available, its effects are
@@ -308,23 +308,28 @@ immediate cycle error.
 ```sc fragment
 let next(value: usize): usize = { value + 1 }
 
-let Buffer(Element: type)(Length: usize) = struct {
-  values: Array(Element)(next(Length))
+let buffer(element: type)(length: usize) = struct {
+  values: array(element)(next(length))
 }
 ```
 
 Static expressions preserve call-group boundaries and labels and are
 evaluated after generic static arguments are substituted and before runtime
 type lowering. The result therefore participates in type identity:
-`Buffer(i32)(2)` contains an `Array(i32)(3)`. Mutation, borrowing, handlers,
-closures, runtime effects, foreign or builtin calls, and bodyless functions
-are rejected in static evaluation. Checked overflow, division by zero, invalid
+`buffer(i32)(2)` contains an `array(i32)(3)`. Global initializers use the same
+evaluator and retain the same exact typed normalized values before LLVM
+encoding; they may call the same eligible ordinary source functions.
+Mutation, borrowing, handlers, closures, runtime effects, foreign calls,
+builtins without a specified CTFE rule, and bodyless functions are rejected
+in static evaluation. Checked overflow, division by zero, invalid
 shifts, or exhaustion of the implementation's evaluation budget are compile errors. Struct values
 retain canonical nominal identity and declaration-order fields. Unsized, address-dependent,
 allocating, recursively laid out, or `droppable` fields are rejected before construction. Enum
 values retain canonical identity, source variant identity, and only the active declaration-order
 payload; matching never exposes or depends on a backend discriminant. Resource exclusion checks
-every possible variant of an enum before it becomes a CTFE value.
+every possible variant of an enum before it becomes a CTFE value. `size_of`
+and `align_of` preserve the fully substituted queried type and are encoded
+against the compilation target rather than the compiler host.
 
 ### 4.3 Borrow, Pointer, and Array Types
 

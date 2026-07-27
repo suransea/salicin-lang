@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Composite Compile-Time Evaluation
 
-### Pure calls and consumers
-
-- [ ] **CTFE-8 — Shared constant consumers.** Route dependent array lengths
-  and global constant initialization through the unified evaluator. Preserve
-  exact nominal types and target layout while keeping path, declaration order,
-  and module traversal out of normalized identity.
-
 ### Acceptance
 
 - [ ] **CTFE-9 — Rejection and determinism proof.** Cover every supported

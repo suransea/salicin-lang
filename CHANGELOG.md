@@ -53,6 +53,14 @@ subset.
   16,384-step and 128-active-call limits while repeated equal calls remain
   immediate cycles. Effectful, borrowing, closure, mutation, foreign,
   builtin, and unavailable-body calls remain rejected.
+- Routed global initializers through the same source CTFE evaluator as
+  dependent array lengths and removed the separate HIR constant interpreter.
+  Globals now call eligible ordinary, generic, member, and cross-module
+  functions while retaining exact composite and nominal types. Generic
+  `size_of`/`align_of` calls preserve their substituted queried type for
+  target-layout LLVM constants. Regression coverage proves normalized values
+  and emitted constants are independent of checkout path, declaration order,
+  and source-unit traversal.
 - Standardized all source identifiers on `snake_case`, including types,
   traits, parameters, functions, values, modules, and sorts. Compile-time
   length and metadata binders use `usize` and `string`.

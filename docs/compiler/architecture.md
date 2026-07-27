@@ -50,7 +50,8 @@ The implementation lives under `compiler/src`:
   - `ctfe_value.rs` defines the recursive runtime-typed value shared by dependent-expression and
     global-constant evaluation, plus exact checked integer operations, while keeping erased
     metadata in `StaticValue`.
-  - `emitter.rs` normalizes globals into typed CTFE values and encodes them as textual LLVM IR.
+  - `emitter.rs` totally encodes already normalized typed CTFE globals as textual LLVM IR; it does
+    not evaluate source expressions.
   - `effects.rs` owns source-level support state, effect identity helpers, call-site effect
     requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
     and handler entry lowering.

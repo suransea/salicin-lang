@@ -162,16 +162,20 @@ as cycles; value-changing recursion may proceed within the fixed 16,384-step
 and 128-active-call limits.
 
 Effectful calls, borrow parameters or expressions, closures, mutation,
-foreign or builtin bodies, and unavailable source remain outside CTFE. Global
-constant evaluation still cannot call ordinary source functions. Unifying
-dependent and global consumer entry points is the active roadmap boundary.
+foreign or builtin bodies without a specified CTFE rule, and unavailable
+source remain outside CTFE. Dependent array lengths and global constants use
+the same source evaluator and typed normalized values. Globals can call the
+same eligible ordinary functions, including generic and cross-module
+instances; generic `size_of` and `align_of` retain the concrete queried type
+for target-layout encoding.
 
 The accepted [composite CTFE contract](composite-ctfe.md) fixes the typed
 value domain, phase and function-eligibility rules, strict evaluation order,
 resource exclusion, structural normalization, deterministic complexity
 budgets, diagnostics, and the boundary from erased `StaticValue` metadata.
-Implementation now has the unified typed value IR and complete builtin
-scalars.
+Implementation now has the unified typed value IR, evaluator, and constant
+consumer boundary. The remaining milestone work is its complete acceptance
+matrix.
 
 ## Ownership and Borrowing
 

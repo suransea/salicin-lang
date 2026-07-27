@@ -227,6 +227,7 @@ impl Analyzer {
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
     ) -> Result<CtfeValue, String> {
         Self::consume_static_fuel(fuel)?;
+        let display_name = self.diagnostic_function_name(name);
         if active_calls.len() >= MAX_CTFE_ACTIVE_CALLS {
             return Err(format!(
                 "evaluation exceeded the {MAX_CTFE_ACTIVE_CALLS}-active-call limit"
@@ -235,7 +236,7 @@ impl Analyzer {
         let call = (name.to_owned(), arguments.to_vec());
         if active_calls.contains(&call) {
             return Err(format!(
-                "recursive ctfe call `{name}` repeated with the same arguments"
+                "recursive ctfe call `{display_name}` repeated with the same arguments"
             ));
         }
         let function = self
@@ -243,7 +244,7 @@ impl Analyzer {
             .get(name)
             .or_else(|| self.function_templates.get(name))
             .cloned()
-            .ok_or_else(|| format!("unknown function `{name}` in static expression"))?;
+            .ok_or_else(|| format!("unknown function `{display_name}` in static expression"))?;
         let result_ty = self.validate_static_function(&function, arguments)?;
 
         let parameters = function.groups.iter().flatten();
@@ -275,28 +276,29 @@ impl Analyzer {
         function: &Function,
         arguments: &[CtfeValue],
     ) -> Result<Ty, String> {
+        let display_name = self.diagnostic_function_name(&function.name);
         if function.foreign.is_some() || function.builtin || function.body.is_none() {
             return Err(format!(
                 "function `{}` has no source body available to ctfe",
-                function.name
+                display_name
             ));
         }
         if !function.compile_groups.is_empty() {
             return Err(format!(
                 "generic ctfe function `{}` is not supported yet",
-                function.name
+                display_name
             ));
         }
         if function.groups.iter().map(Vec::len).sum::<usize>() != arguments.len() {
             return Err(format!(
                 "ctfe function `{}` must be fully applied",
-                function.name
+                display_name
             ));
         }
         if function.effects != Default::default() {
             return Err(format!(
                 "effectful function `{}` cannot run during ctfe",
-                function.name
+                display_name
             ));
         }
         for (parameter, argument) in function.groups.iter().flatten().zip(arguments) {
@@ -306,13 +308,13 @@ impl Analyzer {
             ) {
                 return Err(format!(
                     "ctfe parameter `{}.{}` cannot borrow runtime storage",
-                    function.name, parameter.name
+                    display_name, parameter.name
                 ));
             }
             let parameter_ty = self.static_value_type(&parameter.ty).ok_or_else(|| {
                 format!(
                     "ctfe parameter `{}.{}` has unsupported type `{}`",
-                    function.name,
+                    display_name,
                     parameter.name,
                     self.source_type_name(&parameter.ty)
                 )
@@ -321,7 +323,7 @@ impl Analyzer {
             if argument.ty != parameter_ty {
                 return Err(format!(
                     "ctfe argument for `{}.{}` has type `{}`, expected `{parameter_ty}`",
-                    function.name, parameter.name, argument.ty
+                    display_name, parameter.name, argument.ty
                 ));
             }
         }
@@ -329,7 +331,7 @@ impl Analyzer {
             self.static_value_type(return_type).ok_or_else(|| {
                 format!(
                     "ctfe function `{}` has unsupported result type `{}`",
-                    function.name,
+                    display_name,
                     self.source_type_name(return_type)
                 )
             })?
@@ -340,7 +342,7 @@ impl Analyzer {
                 .ok_or_else(|| {
                     format!(
                         "ctfe function `{}` has no concrete inferred result type",
-                        function.name
+                        display_name
                     )
                 })?
         };
@@ -1049,8 +1051,13 @@ impl Analyzer {
                         "ctfe layout query `{name}` does not accept a runtime argument label"
                     ));
                 }
+                let substitutions = active_calls
+                    .last()
+                    .and_then(|(function, _)| self.function_type_substitutions.get(function))
+                    .cloned()
+                    .unwrap_or_default();
                 let source = self
-                    .probe_type_argument_source(&argument.value, &HashMap::new())
+                    .probe_type_argument_source(&argument.value, &substitutions)
                     .ok_or_else(|| format!("ctfe layout query `{name}` expects a type argument"))?;
                 let queried = self
                     .static_value_type(&source)
@@ -1245,10 +1252,12 @@ impl Analyzer {
                 );
             }
         };
-        let function =
-            self.functions.get(&function_name).cloned().ok_or_else(|| {
-                format!("unknown function `{function_name}` in static expression")
-            })?;
+        let display_name = self.diagnostic_function_name(&function_name);
+        let function = self
+            .functions
+            .get(&function_name)
+            .cloned()
+            .ok_or_else(|| format!("unknown function `{display_name}` in static expression"))?;
         let runtime_groups = &groups[runtime_start..];
         let arguments = self.evaluate_static_call_arguments(
             &function_name,
@@ -1264,7 +1273,7 @@ impl Analyzer {
             Self::expect_static_type(
                 result,
                 expected,
-                &format!("ctfe call `{function_name}` result"),
+                &format!("ctfe call `{display_name}` result"),
             )
         } else {
             Ok(result)
@@ -1396,7 +1405,14 @@ impl Analyzer {
             .ok_or_else(|| format!("could not instantiate generic ctfe function `{name}`"))?;
         let result = self.evaluate_static_call(&canonical, &values, fuel, active_calls)?;
         if let Some(expected) = expected {
-            Self::expect_static_type(result, expected, &format!("ctfe call `{canonical}` result"))
+            Self::expect_static_type(
+                result,
+                expected,
+                &format!(
+                    "ctfe call `{}` result",
+                    self.diagnostic_function_name(&canonical)
+                ),
+            )
         } else {
             Ok(result)
         }
@@ -1526,10 +1542,11 @@ impl Analyzer {
         fuel: &mut usize,
         active_calls: &mut Vec<(String, Vec<CtfeValue>)>,
     ) -> Result<Vec<CtfeValue>, String> {
+        let display_name = self.diagnostic_function_name(function_name);
         let parameter_offset = usize::from(receiver.is_some());
         if groups.len() + parameter_offset != function.groups.len() {
             return Err(format!(
-                "ctfe function `{function_name}` must be fully applied: expected {} runtime groups, found {}",
+                "ctfe function `{display_name}` must be fully applied: expected {} runtime groups, found {}",
                 function.groups.len() - parameter_offset,
                 groups.len()
             ));
@@ -1538,12 +1555,12 @@ impl Analyzer {
         if let Some(receiver) = receiver {
             let [parameter] = function.groups[0].as_slice() else {
                 return Err(format!(
-                    "ctfe method `{function_name}` must have one receiver parameter"
+                    "ctfe method `{display_name}` must have one receiver parameter"
                 ));
             };
             let expected = self.static_value_type(&parameter.ty).ok_or_else(|| {
                 format!(
-                    "ctfe receiver `{function_name}.{}` has unsupported type `{}`",
+                    "ctfe receiver `{display_name}.{}` has unsupported type `{}`",
                     parameter.name,
                     self.source_type_name(&parameter.ty)
                 )
@@ -1561,7 +1578,7 @@ impl Analyzer {
         {
             if arguments.len() != parameters.len() {
                 return Err(format!(
-                    "ctfe call to `{function_name}` group {} has {} arguments, expected {}",
+                    "ctfe call to `{display_name}` group {} has {} arguments, expected {}",
                     group_index + 1,
                     arguments.len(),
                     parameters.len()
@@ -1575,7 +1592,7 @@ impl Analyzer {
                 .any(|argument| argument.label.is_some() != labeled)
             {
                 return Err(format!(
-                    "ctfe call to `{function_name}` cannot mix labeled and positional arguments"
+                    "ctfe call to `{display_name}` cannot mix labeled and positional arguments"
                 ));
             }
             let mut ordered = vec![None; parameters.len()];
@@ -1586,7 +1603,7 @@ impl Analyzer {
                         .position(|parameter| parameter.name == *label)
                         .ok_or_else(|| {
                             format!(
-                                "unknown ctfe argument label `{label}` in call to `{function_name}`"
+                                "unknown ctfe argument label `{label}` in call to `{display_name}`"
                             )
                         })?
                 } else {
@@ -1595,13 +1612,13 @@ impl Analyzer {
                 if ordered[parameter_index].is_some() {
                     return Err(format!(
                         "duplicate ctfe argument for `{}.{}`",
-                        function_name, parameters[parameter_index].name
+                        display_name, parameters[parameter_index].name
                     ));
                 }
                 let parameter = &parameters[parameter_index];
                 let expected = self.static_value_type(&parameter.ty).ok_or_else(|| {
                     format!(
-                        "ctfe parameter `{function_name}.{}` has unsupported type `{}`",
+                        "ctfe parameter `{display_name}.{}` has unsupported type `{}`",
                         parameter.name,
                         self.source_type_name(&parameter.ty)
                     )
@@ -1619,7 +1636,7 @@ impl Analyzer {
                 values.push(value.ok_or_else(|| {
                     format!(
                         "missing ctfe argument for `{}.{}`",
-                        function_name, parameters[index].name
+                        display_name, parameters[index].name
                     )
                 })?);
             }
