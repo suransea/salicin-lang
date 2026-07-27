@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.210.0 - 2026-07-27
+
 - Accepted the initial standard-library usability contract: edition-matched
   `core`, `alloc`, and host `std` layers; uniform `snake_case` public naming;
   a deliberately small prelude; consistent ownership and borrowing modes;
