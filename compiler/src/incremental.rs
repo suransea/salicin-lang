@@ -87,6 +87,11 @@ pub fn fingerprint_package_graph(
         b"alloc",
         crate::alloc::incremental_sources(edition),
     );
+    encode_source_bundle(
+        &mut encoder,
+        b"std",
+        crate::standard::incremental_sources(edition),
+    );
 
     encoder.usize(ordered.len());
     for package in ordered {

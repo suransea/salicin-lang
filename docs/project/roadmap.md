@@ -54,15 +54,15 @@ effectful programs, but the library surface is not yet sufficient for ordinary
 command-line applications. `string` owns validated UTF-8 but lacks borrowed
 text, character iteration, search, and formatting. `array`, `slice`, and
 `vec` do not yet share a consistent safe-access and algorithm vocabulary.
-There is no host-facing `std` layer, and `test("name")` registrations return
-only a boolean without standard assertions or structured failures.
+The source-backed `std` facade and native target boundary are in place, but
+its host-facing modules are not yet implemented. `test("name")` registrations
+return only a boolean without standard assertions or structured failures.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:
 
-1. implement the accepted
-   [module, error, naming, and ownership contract](standard-library-surface.md)
-   for the minimum standard-library surface;
+1. extend the implemented edition-matched `std` facade according to the
+   accepted [module, error, naming, and ownership contract](standard-library-surface.md);
 2. complete UTF-8 text and common collection operations;
 3. add parsing and source-backed formatting needed by I/O and test messages;
 4. add explicit synchronous console, process, and filesystem authority;

@@ -27,7 +27,9 @@ The implementation lives under `compiler/src`:
   fingerprint. It does not define or store cache artifacts.
 - `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
   preserve resolved provider identities, and resolve names.
-- `core.rs` and `alloc.rs` load and validate compiler-matched standard-library declarations.
+- `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library
+  sources. `standard.rs` accepts only public aliases to validated lower-layer
+  identities and enforces the native target boundary.
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.

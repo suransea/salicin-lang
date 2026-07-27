@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+- Added the edition-matched `library/std` source bundle above `core` and
+  `alloc`. The compiler now derives the mounted `std` namespace from explicit
+  public source aliases, preserves each lower-layer canonical identity, and
+  rejects definitions, private or duplicate aliases, non-library targets, and
+  unresolved targets instead of granting authority by name or shape.
+- Included the `std` source bundle in semantic preprocessing and incremental
+  fingerprints, reserved its namespace for every package, and made the
+  initial host boundary explicit: Linux/x86-64 and macOS/arm64 are supported,
+  while other host pairs receive a target-specific diagnostic.
+
 ## 0.210.0 - 2026-07-27
 
 - Accepted the initial standard-library usability contract: edition-matched

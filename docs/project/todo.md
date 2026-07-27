@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Foundation
-
-- [ ] **STD-2 — Host library boundary.** Add the edition-matched `library/std`
-  source layer above `core` and `alloc`, its embedding and module-resolution
-  rules, and explicit rejection on unsupported targets. Do not give ordinary
-  user declarations compiler or runtime authority by name.
-
 ### Common values
 
 - [ ] **VALUE-1 — `option` and `result` ergonomics.** Add common state

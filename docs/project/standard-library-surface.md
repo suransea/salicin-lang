@@ -107,10 +107,13 @@ facilities.
 | `std.fs` | paths, file options, owned files, and bounded convenience operations |
 | `std.test` | failure values and assertion helpers |
 
-The current compiler-generated `std` aliases are transitional implementation,
-not the host-library boundary. `STD-2` replaces that synthesis with embedded
-`library/std` sources and identity validation. A user module or dependency
-cannot claim `core`, `alloc`, or `std`.
+The compiler embeds the edition-matched `library/std` sources and derives the
+mounted facade from their public aliases. The initial bundle is deliberately
+alias-only: each target must resolve to an already validated `core` or `alloc`
+identity, so the alias gains no compiler or runtime authority of its own.
+Definitions, private aliases, foreign targets, duplicate exports, and
+unsupported native targets are rejected. A user module or dependency cannot
+claim `core`, `alloc`, or `std`.
 
 ## Prelude
 

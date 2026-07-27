@@ -133,6 +133,24 @@ pub(crate) fn resolve_embedded_alloc_sources(
     )
 }
 
+/// Resolve compiler-owned `std` modules while exposing the already-validated
+/// `core` and `alloc` namespaces. The bundle cannot see or recursively import
+/// its own public `std.*` facade.
+pub(crate) fn resolve_embedded_std_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
+    resolve_packages_impl(
+        &[SourcePackage {
+            id: PackageId(0),
+            name: "std".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            identity: format!("std@{}", env!("CARGO_PKG_VERSION")),
+            is_primary: true,
+            dependencies: BTreeMap::new(),
+            sources: sources.to_vec(),
+        }],
+        StandardLibraryExposure::core_alloc_for_embedded(),
+    )
+}
+
 fn resolve_packages_impl(
     packages: &[SourcePackage],
     standard_library: StandardLibraryExposure,
@@ -373,6 +391,15 @@ impl StandardLibraryExposure {
             allow_source_standard_modules: true,
         }
     }
+
+    const fn core_alloc_for_embedded() -> Self {
+        Self {
+            expose_core: true,
+            expose_alloc: true,
+            expose_std: false,
+            allow_source_standard_modules: true,
+        }
+    }
 }
 
 /// Direct dependency aliases keyed by the internal root of the declaring
@@ -524,151 +551,6 @@ const CORE_ITER_EXPORTS: &[&str] = &[
 ];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["semigroup", "monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["functor", "applicative", "monad"];
-
-const STD_ROOT_EXPORTS: &[(&str, &str)] = &[
-    ("never", "core::never::never"),
-    ("copyable", "core::marker::copyable"),
-    ("droppable", "core::marker::droppable"),
-    ("option", "core::option::option"),
-    ("result", "core::result::result"),
-    ("slice", "core::memory::slice"),
-];
-
-const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
-    ("prelude", "never", "core::never::never"),
-    ("prelude", "copyable", "core::marker::copyable"),
-    ("prelude", "droppable", "core::marker::droppable"),
-    ("never", "never", "core::never::never"),
-    ("marker", "copyable", "core::marker::copyable"),
-    ("marker", "droppable", "core::marker::droppable"),
-    ("option", "option", "core::option::option"),
-    ("result", "result", "core::result::result"),
-    ("error", "throws", "core::error::throws"),
-    ("error", "try", "core::error::try"),
-    ("error", "throw", "core::error::throw"),
-    ("ops", "add", "core::ops::arith::add"),
-    ("ops", "sub", "core::ops::arith::sub"),
-    ("ops", "mul", "core::ops::arith::mul"),
-    ("ops", "div", "core::ops::arith::div"),
-    ("ops", "rem", "core::ops::arith::rem"),
-    ("ops", "neg", "core::ops::arith::neg"),
-    ("ops", "bit_and", "core::ops::bit::bit_and"),
-    ("ops", "bit_or", "core::ops::bit::bit_or"),
-    ("ops", "bit_xor", "core::ops::bit::bit_xor"),
-    ("ops", "shl", "core::ops::bit::shl"),
-    ("ops", "shr", "core::ops::bit::shr"),
-    ("ops", "not", "core::ops::bit::not"),
-    ("ops", "add_assign", "core::ops::assign::add_assign"),
-    ("ops", "sub_assign", "core::ops::assign::sub_assign"),
-    ("ops", "mul_assign", "core::ops::assign::mul_assign"),
-    ("ops", "div_assign", "core::ops::assign::div_assign"),
-    ("ops", "rem_assign", "core::ops::assign::rem_assign"),
-    ("ops", "bit_and_assign", "core::ops::assign::bit_and_assign"),
-    ("ops", "bit_or_assign", "core::ops::assign::bit_or_assign"),
-    ("ops", "bit_xor_assign", "core::ops::assign::bit_xor_assign"),
-    ("ops", "shl_assign", "core::ops::assign::shl_assign"),
-    ("ops", "shr_assign", "core::ops::assign::shr_assign"),
-    ("ops", "eq", "core::cmp::eq"),
-    ("ops", "partial_ordering", "core::cmp::partial_ordering"),
-    ("ops", "partial_ord", "core::cmp::partial_ord"),
-    ("ops", "index", "core::ops::index::index"),
-    ("ops", "chain", "core::flow::chain"),
-    ("ops", "coalesce", "core::flow::coalesce"),
-    ("ops", "unwrap", "core::flow::unwrap"),
-    ("ops", "raise", "core::flow::raise"),
-    ("ops.arith", "add", "core::ops::arith::add"),
-    ("ops.arith", "sub", "core::ops::arith::sub"),
-    ("ops.arith", "mul", "core::ops::arith::mul"),
-    ("ops.arith", "div", "core::ops::arith::div"),
-    ("ops.arith", "rem", "core::ops::arith::rem"),
-    ("ops.arith", "neg", "core::ops::arith::neg"),
-    ("ops.bit", "bit_and", "core::ops::bit::bit_and"),
-    ("ops.bit", "bit_or", "core::ops::bit::bit_or"),
-    ("ops.bit", "bit_xor", "core::ops::bit::bit_xor"),
-    ("ops.bit", "shl", "core::ops::bit::shl"),
-    ("ops.bit", "shr", "core::ops::bit::shr"),
-    ("ops.bit", "not", "core::ops::bit::not"),
-    ("ops.assign", "add_assign", "core::ops::assign::add_assign"),
-    ("ops.assign", "sub_assign", "core::ops::assign::sub_assign"),
-    ("ops.assign", "mul_assign", "core::ops::assign::mul_assign"),
-    ("ops.assign", "div_assign", "core::ops::assign::div_assign"),
-    ("ops.assign", "rem_assign", "core::ops::assign::rem_assign"),
-    (
-        "ops.assign",
-        "bit_and_assign",
-        "core::ops::assign::bit_and_assign",
-    ),
-    (
-        "ops.assign",
-        "bit_or_assign",
-        "core::ops::assign::bit_or_assign",
-    ),
-    (
-        "ops.assign",
-        "bit_xor_assign",
-        "core::ops::assign::bit_xor_assign",
-    ),
-    ("ops.assign", "shl_assign", "core::ops::assign::shl_assign"),
-    ("ops.assign", "shr_assign", "core::ops::assign::shr_assign"),
-    ("ops.index", "index", "core::ops::index::index"),
-    ("cmp", "eq", "core::cmp::eq"),
-    ("cmp", "partial_ordering", "core::cmp::partial_ordering"),
-    ("cmp", "partial_ord", "core::cmp::partial_ord"),
-    ("flow", "chain", "core::flow::chain"),
-    ("flow", "coalesce", "core::flow::coalesce"),
-    ("flow", "unwrap", "core::flow::unwrap"),
-    ("flow", "raise", "core::flow::raise"),
-    ("unsafe", "unsafe_effect", "core::unsafe::unsafe_effect"),
-    ("unsafe", "unsafe", "core::unsafe::unsafe"),
-    ("async", "async_effect", "core::async::async_effect"),
-    ("async", "poll", "core::async::poll"),
-    ("async", "future", "core::async::future"),
-    ("async", "executor", "core::async::executor"),
-    ("async", "spin", "core::async::spin"),
-    ("async", "async", "core::async::async"),
-    ("async", "await", "core::async::await"),
-    ("effect", "continuation", "core::effect::continuation"),
-    ("effect", "effect_callable", "core::effect::effect_callable"),
-    ("effect", "handle", "core::effect::handle"),
-    ("sorts", "type", "core::sorts::type"),
-    ("sorts", "region", "core::sorts::region"),
-    ("sorts", "effect", "core::sorts::effect"),
-    ("sorts", "effects", "core::sorts::effects"),
-    ("sorts", "parameters", "core::sorts::parameters"),
-    ("sorts", "string", "core::sorts::string"),
-    ("foreign", "abi", "core::foreign::abi"),
-    ("foreign", "foreign", "core::foreign::foreign"),
-    ("passing", "copy", "core::passing::copy"),
-    ("passing", "move", "core::passing::move"),
-    ("passing", "comptime", "core::passing::comptime"),
-    ("borrow", "access", "core::borrow::access"),
-    ("borrow", "mut", "$access$mut"),
-    ("borrow", "shared", "$access$shared"),
-    ("borrow", "borrow", "core::borrow::borrow"),
-    ("control", "do", "core::control::do"),
-    ("control", "defer", "core::control::defer"),
-    ("control", "loop", "core::control::loop"),
-    ("iter", "iterator", "core::iter::iterator"),
-    ("iter", "into_iterator", "core::iter::into_iterator"),
-    ("iter", "array_into_iter", "core::iter::array_into_iter"),
-    ("iter", "slice_iter", "core::iter::slice_iter"),
-    ("iter", "owned_item", "core::iter::owned_item"),
-    ("iter", "borrowed_item", "core::iter::borrowed_item"),
-    ("algebra", "semigroup", "core::algebra::semigroup"),
-    ("algebra", "monoid", "core::algebra::monoid"),
-    ("functional", "functor", "core::functional::functor"),
-    ("functional", "applicative", "core::functional::applicative"),
-    ("functional", "monad", "core::functional::monad"),
-    ("boxed", "box", "alloc::boxed::box"),
-    ("vec", "vec", "alloc::vec::vec"),
-    ("vec", "vec_into_iter", "alloc::vec::vec_into_iter"),
-    ("string", "string", "alloc::string::string"),
-    (
-        "string",
-        "from_utf8_error",
-        "alloc::string::from_utf8_error",
-    ),
-];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -1238,27 +1120,46 @@ fn install_standard_namespaces(
             required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
         }
     }
-    if exposure.expose_std {
+    let std_exports = if exposure.expose_std {
+        match crate::standard::StdBundle::cached_for_edition(crate::manifest::Edition::Edition2026)
+        {
+            Ok(bundle) => Some(bundle.exports()),
+            Err(error) => {
+                diagnostics.push(format!("<std>: error: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(exports) = std_exports {
         let mut std_required_imports = HashMap::new();
-        for (name, _) in STD_ROOT_EXPORTS {
-            if is_core_prelude_export(name) {
+        for export in exports {
+            if export.module.is_empty() && is_core_prelude_export(&export.name) {
                 continue;
             }
-            std_required_imports.insert((*name).to_owned(), format!("std.{name}"));
-        }
-        for (module, name, _) in STD_MODULE_EXPORTS {
             if matches!(
-                *module,
+                export.module.as_str(),
                 "prelude" | "never" | "marker" | "option" | "result" | "cmp"
             ) {
                 continue;
             }
-            if *module == "ops" && matches!(*name, "chain" | "coalesce" | "unwrap" | "raise") {
+            if export.module == "ops"
+                && matches!(
+                    export.name.as_str(),
+                    "chain" | "coalesce" | "unwrap" | "raise"
+                )
+            {
                 continue;
             }
+            let import_path = if export.module.is_empty() {
+                format!("std.{}", export.name)
+            } else {
+                format!("std.{}.{}", export.module, export.name)
+            };
             std_required_imports
-                .entry((*name).to_owned())
-                .or_insert_with(|| format!("std.{module}.{name}"));
+                .entry(export.name.clone())
+                .or_insert(import_path);
         }
         required_imports.extend(std_required_imports);
     }
@@ -1272,8 +1173,8 @@ fn install_standard_namespaces(
             install_alloc_namespace(symbols, module_paths, diagnostics, &package_root);
         }
 
-        if exposure.expose_std {
-            install_std_namespace(symbols, module_paths, diagnostics, &package_root);
+        if let Some(exports) = std_exports {
+            install_std_namespace(symbols, module_paths, diagnostics, &package_root, exports);
         }
     }
 
@@ -1780,6 +1681,7 @@ fn install_std_namespace(
     module_paths: &mut HashSet<Vec<String>>,
     diagnostics: &mut Vec<String>,
     package_root: &[String],
+    exports: &[crate::standard::StdExport],
 ) {
     let mut std_root = package_root.to_vec();
     std_root.push("std".to_owned());
@@ -1799,59 +1701,37 @@ fn install_std_namespace(
     }
 
     module_paths.insert(std_root.clone());
-    for module in [
-        "prelude",
-        "never",
-        "marker",
-        "option",
-        "result",
-        "error",
-        "ops",
-        "ops.arith",
-        "ops.bit",
-        "ops.assign",
-        "cmp",
-        "flow",
-        "effect",
-        "async",
-        "unsafe",
-        "sorts",
-        "foreign",
-        "control",
-        "iter",
-        "algebra",
-        "functional",
-        "boxed",
-        "vec",
-        "string",
-    ] {
-        insert_standard_module_path(module_paths, &std_root, module);
-    }
-
-    for (name, canonical) in STD_ROOT_EXPORTS {
+    for export in exports {
+        insert_standard_module_path(module_paths, &std_root, &export.module);
+        let mut target_path = package_root.to_vec();
+        target_path.extend(export.target.iter().cloned());
+        let Some(target) = symbols.get(&target_path) else {
+            diagnostics.push(format!(
+                "<std>: error: std export `{}` targets unavailable declaration `{}`",
+                if export.module.is_empty() {
+                    format!("std.{}", export.name)
+                } else {
+                    format!("std.{}.{}", export.module, export.name)
+                },
+                export.target.join(".")
+            ));
+            continue;
+        };
+        let canonical = target.canonical.clone();
         let mut logical_path = std_root.clone();
-        logical_path.push((*name).to_owned());
+        if !export.module.is_empty() {
+            logical_path.extend(export.module.split('.').map(str::to_owned));
+        }
+        logical_path.push(export.name.clone());
         symbols.insert(
             logical_path,
             Symbol {
-                canonical: (*canonical).to_owned(),
-                module_path: std_root.clone(),
+                canonical,
+                module_path: standard_module_path(&std_root, &export.module),
                 package_root: package_root.to_vec(),
                 visibility: Visibility::Public,
                 source_path: "<std>".to_owned(),
             },
-        );
-    }
-
-    for (module, name, canonical) in STD_MODULE_EXPORTS {
-        insert_standard_symbol(
-            symbols,
-            package_root,
-            &std_root,
-            module,
-            name,
-            canonical,
-            "<std>",
         );
     }
 }
@@ -5880,21 +5760,40 @@ let main(): i32 = { option {} }
         let mut symbols = SymbolTable::new();
         let mut module_paths = HashSet::new();
         let mut diagnostics = Vec::new();
-        install_std_namespace(&mut symbols, &mut module_paths, &mut diagnostics, &[]);
+        install_core_namespace(&mut symbols, &mut module_paths, &mut diagnostics, &[]);
+        install_alloc_namespace(&mut symbols, &mut module_paths, &mut diagnostics, &[]);
+        let std =
+            crate::standard::StdBundle::for_edition(crate::manifest::Edition::Edition2026).unwrap();
+        install_std_namespace(
+            &mut symbols,
+            &mut module_paths,
+            &mut diagnostics,
+            &[],
+            std.exports(),
+        );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(module_paths.contains(&vec!["std".to_owned()]));
         assert!(module_paths.contains(&vec!["std".to_owned(), "vec".to_owned()]));
-        for (name, canonical) in STD_ROOT_EXPORTS {
-            assert_eq!(
-                symbols[&vec!["std".to_owned(), (*name).to_owned()]].canonical,
-                *canonical
-            );
-        }
-        for (module, name, canonical) in STD_MODULE_EXPORTS {
+        assert!(module_paths.contains(&vec![
+            "std".to_owned(),
+            "ops".to_owned(),
+            "index".to_owned()
+        ]));
+        for export in std.exports() {
             let mut logical_path = vec!["std".to_owned()];
-            logical_path.extend(module.split('.').map(str::to_owned));
-            logical_path.push((*name).to_owned());
-            assert_eq!(symbols[&logical_path].canonical, *canonical);
+            logical_path.extend(
+                export
+                    .module
+                    .split('.')
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_owned),
+            );
+            logical_path.push(export.name.clone());
+            let target_path = export.target.clone();
+            assert_eq!(
+                symbols[&logical_path].canonical,
+                symbols[&target_path].canonical
+            );
         }
     }
 

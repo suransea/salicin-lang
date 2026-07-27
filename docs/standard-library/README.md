@@ -5,7 +5,9 @@ the `std` namespace:
 
 - `core` contains allocation-free language protocols and fundamental types.
 - `alloc` contains owning heap types and depends on the allocator ABI.
-- `std` will contain host facilities such as files, processes, networking, and threading.
+- `std` is the edition-matched user facade. It currently re-exports validated
+  `core` and `alloc` identities; later host modules add files, process access,
+  and standard streams at this boundary.
 
 Source is organized around definition modules plus small `pub let` alias facades:
 
@@ -41,6 +43,31 @@ library/
     vec.sc
     string.sc
     raw.sc
+  std/src/
+    lib.sc
+    prelude.sc
+    option.sc
+    result.sc
+    cmp.sc
+    flow.sc
+    ops.sc
+    ops/
+    effect.sc
+    async.sc
+    unsafe.sc
+    sorts.sc
+    foreign.sc
+    passing.sc
+    borrow.sc
+    control.sc
+    iter.sc
+    algebra.sc
+    functional.sc
+    boxed.sc
+    vec.sc
+    string.sc
+    array.sc
+    slice.sc
 ```
 
 ## Prelude policy
@@ -72,7 +99,13 @@ let vec = std.vec.vec
 let string = std.string.string
 ```
 
-The compiler mounts `std` plus the lower-level `core` and `alloc` namespaces in every package.
+The compiler validates and embeds the matching `library/std` source bundle,
+then mounts its public aliases plus the lower-level `core` and `alloc`
+namespaces in every package. An alias keeps the canonical identity of its
+resolved target; ordinary declarations cannot obtain compiler authority by
+copying a privileged name or shape. Unsupported hosts are rejected before
+semantic analysis. The initial supported pairs are Linux/x86-64 and
+macOS/arm64.
 Non-prelude declarations have qualified internal identities, so a user declaration without such an alias may
 still be named `add`, `box`, or `vec`. A project dependency or top-level file module cannot claim
 any of these standard namespaces.

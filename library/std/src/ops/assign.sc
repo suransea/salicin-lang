@@ -1,0 +1,10 @@
+pub let add_assign = core.ops.assign.add_assign
+pub let sub_assign = core.ops.assign.sub_assign
+pub let mul_assign = core.ops.assign.mul_assign
+pub let div_assign = core.ops.assign.div_assign
+pub let rem_assign = core.ops.assign.rem_assign
+pub let bit_and_assign = core.ops.assign.bit_and_assign
+pub let bit_or_assign = core.ops.assign.bit_or_assign
+pub let bit_xor_assign = core.ops.assign.bit_xor_assign
+pub let shl_assign = core.ops.assign.shl_assign
+pub let shr_assign = core.ops.assign.shr_assign

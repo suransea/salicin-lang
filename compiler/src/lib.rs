@@ -14,6 +14,7 @@ pub mod lockfile;
 pub mod manifest;
 pub mod modules;
 pub mod parser;
+pub mod standard;
 pub mod static_semantics;
 
 fn format_codegen_diagnostics(diagnostics: Vec<codegen::Diagnostic>) -> Vec<String> {

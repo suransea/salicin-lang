@@ -35,8 +35,8 @@ The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`
 public naming, prelude exclusions, ownership modes, failure policy, error
 families, explicit `io` authority, initial native target matrix, and minimum
-text, collection, conversion, I/O, and test APIs. Its host layer remains
-planned work.
+text, collection, conversion, I/O, and test APIs. Its source-backed facade and
+target boundary are implemented; host APIs remain planned work.
 
 The command-line surface is:
 
@@ -411,7 +411,17 @@ The source library is split into:
 
 - `core`: allocation-free language contracts and primitives;
 - `alloc`: owning heap-backed containers;
-- `std`: target and host facilities, not yet populated.
+- `std`: an edition-matched source facade above `core` and `alloc`, with host
+  facilities still to be added.
+
+The compiler embeds `library/std`, validates that its declarations are public
+aliases targeting only `core` or `alloc`, resolves every target, and mounts
+each alias with the target's canonical identity. The bundle participates in
+incremental fingerprints and semantic preprocessing. It cannot define
+language items or host authority, and ordinary source cannot reserve the
+`std`, `core`, or `alloc` namespaces. Host-library loading is accepted only on
+Linux/x86-64 and macOS/arm64; other host pairs receive a target-specific
+diagnostic.
 
 Implemented `core` facilities include:
 
@@ -470,7 +480,7 @@ modules, owning strings, vectors, results, user traits, resource transfer, itera
 
 The principal incomplete areas are:
 
-- host-facing `std` APIs;
+- host-facing modules within `std`;
 - complete asynchronous execution;
 - stable ABI and package distribution.
 

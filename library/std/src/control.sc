@@ -1,0 +1,10 @@
+pub let do = core.control.do
+pub let defer = core.control.defer
+pub let loop = core.control.loop
+pub let while = core.control.while
+pub let if = core.control.if
+pub let match = core.control.match
+pub let for = core.control.for
+pub let break = core.control.break
+pub let continue = core.control.continue
+pub let return = core.control.return

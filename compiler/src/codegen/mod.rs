@@ -21,6 +21,7 @@ use crate::core::{
 };
 use crate::manifest::Edition;
 use crate::modules::PackageId;
+use crate::standard::StdBundle;
 use crate::static_semantics::{Constraint, Goal, GoalResult};
 
 use self::ctfe_value::CtfeValue;
@@ -283,6 +284,8 @@ impl Analyzer {
             .map_err(|error| error.to_string())?;
         let alloc = AllocBundle::cached_for_edition(Edition::Edition2026)
             .map_err(|error| error.to_string())?;
+        let std = StdBundle::cached_for_edition(Edition::Edition2026)
+            .map_err(|error| error.to_string())?;
         let mut analyzer = Box::new(Self {
             lang_items: Box::new(core.lang_items().clone()),
             functions: HashMap::new(),
@@ -383,29 +386,41 @@ impl Analyzer {
         let mut core_program = core.program().clone();
         remove_nonruntime_syntax_contracts(&mut core_program, &analyzer.lang_items);
         let mut alloc_program = alloc.program().clone();
+        let mut std_program = std.program().clone();
         let mut source_program = program.clone();
         erase_region_parameters(&mut core_program);
         erase_region_parameters(&mut alloc_program);
+        erase_region_parameters(&mut std_program);
         erase_region_parameters(&mut source_program);
         for diagnostic in normalize_labeled_type_arguments([
             &mut core_program,
             &mut alloc_program,
+            &mut std_program,
             &mut source_program,
         ]) {
             analyzer.error(diagnostic);
         }
-        promote_inferred_type_aliases([&mut core_program, &mut alloc_program, &mut source_program]);
+        promote_inferred_type_aliases([
+            &mut core_program,
+            &mut alloc_program,
+            &mut std_program,
+            &mut source_program,
+        ]);
         analyzer.type_aliases =
-            collect_type_aliases([&core_program, &alloc_program, &source_program]);
-        for diagnostic in
-            expand_type_aliases([&mut core_program, &mut alloc_program, &mut source_program])
-        {
+            collect_type_aliases([&core_program, &alloc_program, &std_program, &source_program]);
+        for diagnostic in expand_type_aliases([
+            &mut core_program,
+            &mut alloc_program,
+            &mut std_program,
+            &mut source_program,
+        ]) {
             analyzer.error(diagnostic);
         }
         normalize_source_call_groups(&mut core_program);
         normalize_source_call_groups(&mut alloc_program);
+        normalize_source_call_groups(&mut std_program);
         normalize_source_call_groups(&mut source_program);
-        analyzer.collect_items(&core_program, &alloc_program, &source_program);
+        analyzer.collect_items(&core_program, &alloc_program, &std_program, &source_program);
         Ok(analyzer)
     }
 
@@ -428,7 +443,7 @@ impl Analyzer {
             )
     }
 
-    fn collect_items(&mut self, core: &Program, alloc: &Program, program: &Program) {
+    fn collect_items(&mut self, core: &Program, alloc: &Program, std: &Program, program: &Program) {
         let mut names = HashMap::<String, HashSet<TopLevelNamespace>>::new();
         for (kind, namespaces) in [
             (LangItemKind::ArrayTypeForm, &[TopLevelNamespace::Type][..]),
@@ -488,8 +503,15 @@ impl Analyzer {
             .zip(&alloc.item_visibilities)
             .zip(&alloc.item_origins)
             .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
+        let std_items = std
+            .items
+            .iter()
+            .zip(&std.item_visibilities)
+            .zip(&std.item_origins)
+            .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
         let all_items = prelude_items
             .chain(alloc_items)
+            .chain(std_items)
             .chain(source_items)
             .collect::<Vec<_>>();
         let mut function_counts = HashMap::<String, usize>::new();
