@@ -404,6 +404,9 @@ impl Analyzer {
             if name == "raw_slice" {
                 return self.lower_raw_slice(&groups, expected, context);
             }
+            if name == "raw_array_slice" {
+                return self.lower_raw_array_slice(&groups, expected, context);
+            }
             if name == "raw_slice_len" {
                 return self.lower_raw_slice_len(&groups, context);
             }

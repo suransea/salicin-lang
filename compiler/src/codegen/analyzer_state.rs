@@ -13,11 +13,11 @@ use super::hir::{
     HirFunction, HirGlobal, ParamSig, RuntimeHandlerAction, StructLayout, Ty,
 };
 use super::registry::{
-    ArrayTraitExtension, ConstructorTraitImplKey, FunctionInstanceInfo, FunctionInstanceKey,
-    GenericInherentExtension, GenericTraitExtension, InherentMemberSet, InherentOverloadKey,
-    NominalInstanceInfo, NominalInstanceKey, NominalInstanceState, ParameterLabelShape,
-    PointerInherentExtension, ResolutionState, SliceInherentExtension, SliceTraitExtension,
-    TraitImplInfo, TraitImplKey, TraitSchema,
+    ArrayInherentExtension, ArrayTraitExtension, ConstructorTraitImplKey, FunctionInstanceInfo,
+    FunctionInstanceKey, GenericInherentExtension, GenericTraitExtension, InherentMemberSet,
+    InherentOverloadKey, NominalInstanceInfo, NominalInstanceKey, NominalInstanceState,
+    ParameterLabelShape, PointerInherentExtension, ResolutionState, SliceInherentExtension,
+    SliceTraitExtension, TraitImplInfo, TraitImplKey, TraitSchema,
 };
 
 #[derive(Default)]
@@ -68,6 +68,7 @@ pub(super) struct CollectionState {
     pub(super) slice_inherent_extensions: Vec<SliceInherentExtension>,
     pub(super) slice_trait_extensions: Vec<SliceTraitExtension>,
     pub(super) instantiated_slice_extensions: HashSet<String>,
+    pub(super) array_inherent_extensions: Vec<ArrayInherentExtension>,
     pub(super) array_trait_extensions: Vec<ArrayTraitExtension>,
     pub(super) instantiated_array_trait_extensions: HashSet<String>,
     pub(super) instantiating_array_trait_extension: usize,

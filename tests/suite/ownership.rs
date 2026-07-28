@@ -468,6 +468,27 @@ fn slices_preserve_array_and_vec_borrow_safety() {
 }
 
 #[test]
+fn contiguous_containers_share_checked_and_trapping_access() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "contiguous_access.sc"))
+        .output()
+        .expect("run consistent contiguous-container access fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "array_at_out_of_bounds.sc"))
+        .output()
+        .expect("run trapping array access fixture");
+    assert!(
+        !trapped.status.success(),
+        "array at did not trap: {}",
+        output_text(&trapped)
+    );
+}
+
+#[test]
 fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
     let fixtures = [
         "generic_inherent_extend.sc",

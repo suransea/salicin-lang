@@ -18,6 +18,55 @@ extend(array(t)(l), index(usize)) {
     (key: usize): borrow(a)(t) = builtin()
 }
 
+/// Provides access operations shared with slices and vectors.
+extend(array(t)(l)) {
+  /// Borrows all elements as a slice with the same source region.
+  let as_slice(comptime a: access = shared)
+    (self: borrow(a)(self))(): borrow(a)(slice(t)) = {
+    unsafe {
+      raw_array_slice(a)(self)
+    }
+  }
+
+  /// Returns the number of elements.
+  let len(self: borrow(self))(): u64 = {
+    let values = self.as_slice()
+    values.len()
+  }
+
+  /// Returns whether this array contains no elements.
+  let is_empty(self: borrow(self))(): bool = { self.len() == 0 }
+
+  /// Borrows the element at `index`, or returns `none` when out of bounds.
+  let get(comptime a: access = shared)
+    (self: borrow(a)(self))
+    (index: u64): core.option(borrow(a)(t)) = {
+    let values = self.as_slice(a)()
+    values.get(a)(index)
+  }
+
+  /// Borrows the element at `index`, trapping when out of bounds.
+  let at(comptime a: access = shared)
+    (self: borrow(a)(self))
+    (index: u64): borrow(a)(t) = {
+    let values = self.as_slice(a)()
+    values.at(a)(index)
+  }
+
+  /// Borrows the first element, or returns `none` when empty.
+  let first(comptime a: access = shared)
+    (self: borrow(a)(self))(): core.option(borrow(a)(t)) = {
+    self.get(a)(0)
+  }
+
+  /// Borrows the last element, or returns `none` when empty.
+  let last(comptime a: access = shared)
+    (self: borrow(a)(self))(): core.option(borrow(a)(t)) = {
+    let values = self.as_slice(a)()
+    values.last(a)()
+  }
+}
+
 /// Provides operations on a borrowed contiguous sequence.
 extend(slice(t)) {
   /// Returns the number of elements in this slice.
@@ -27,10 +76,47 @@ extend(slice(t)) {
     }
   }
 
+  /// Returns whether this slice contains no elements.
+  let is_empty(comptime a: access = shared)(self: borrow(a)(self))(): bool = {
+    self.len(a)() == 0
+  }
+
+  /// Borrows the element at `index`, or returns `none` when out of bounds.
+  let get(comptime a: access = shared)
+    (self: borrow(a)(self))
+    (index: u64): core.option(borrow(a)(t)) = {
+    if index >= self.len(a)() {
+      core.option.none
+    } else {
+      core.option.some(unsafe {
+        raw_slice_at(a)(self, index)
+      })
+    }
+  }
+
   /// Borrows the element at `index`, trapping if `index` is out of bounds.
-  let at(comptime a: access = shared)(self: borrow(a)(self))(index: u64): borrow(a)(t) = {
+  let at(comptime a: access = shared)
+    (self: borrow(a)(self))
+    (index: u64): borrow(a)(t) = {
     unsafe {
       raw_slice_at(a)(self, index)
+    }
+  }
+
+  /// Borrows the first element, or returns `none` when empty.
+  let first(comptime a: access = shared)
+    (self: borrow(a)(self))(): core.option(borrow(a)(t)) = {
+    self.get(a)(0)
+  }
+
+  /// Borrows the last element, or returns `none` when empty.
+  let last(comptime a: access = shared)
+    (self: borrow(a)(self))(): core.option(borrow(a)(t)) = {
+    let length = self.len(a)()
+    if length == 0 {
+      core.option.none
+    } else {
+      self.get(a)(length - 1)
     }
   }
 }

@@ -342,7 +342,7 @@ extend(vec(t)) {
   /// Returns the number of initialized elements.
   let len(self: borrow(self))(): u64 = { vec_len(self) }
   /// Borrows all initialized elements as a slice.
-  let as_slice(comptime a: access)(self: borrow(a)(self))(): borrow(a)(slice(t)) = {
+  let as_slice(comptime a: access = shared)(self: borrow(a)(self))(): borrow(a)(slice(t)) = {
     unsafe {
       raw_slice(a)(self.pointer, self.length, borrow(a)(self))
     }
@@ -350,7 +350,19 @@ extend(vec(t)) {
   /// Returns the number of elements that fit without reallocating.
   let capacity(self: borrow(self))(): u64 = { vec_capacity(self) }
   /// Borrows the element at `index`, trapping if it is out of bounds.
-  let at(comptime a: access)(self: borrow(a)(self))(index: u64): borrow(a)(t) = {
+  let get(comptime a: access = shared)
+    (self: borrow(a)(self))
+    (index: u64): option(borrow(a)(t)) = {
+    if index >= self.length {
+      option.none
+    } else {
+      option.some(unsafe {
+        raw_borrow(a)(raw_offset(self.pointer, index), borrow(a)(self))
+      })
+    }
+  }
+  /// Borrows the element at `index`, trapping if it is out of bounds.
+  let at(comptime a: access = shared)(self: borrow(a)(self))(index: u64): borrow(a)(t) = {
     if index >= self.length {
       unsafe {
         raw_trap()
@@ -358,6 +370,21 @@ extend(vec(t)) {
     }
     unsafe {
       raw_borrow(a)(raw_offset(self.pointer, index), borrow(a)(self))
+    }
+  }
+  /// Borrows the first element, or returns `none` when empty.
+  let first(comptime a: access = shared)
+    (self: borrow(a)(self))(): option(borrow(a)(t)) = {
+    self.get(a)(0)
+  }
+  /// Borrows the last element, or returns `none` when empty.
+  let last(comptime a: access = shared)
+    (self: borrow(a)(self))(): option(borrow(a)(t)) = {
+    let length = self.length
+    if length == 0 {
+      option.none
+    } else {
+      self.get(a)(length - 1)
     }
   }
   /// Ensures capacity for at least `additional` more elements.

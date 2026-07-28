@@ -453,6 +453,10 @@ Implemented `core` facilities include:
 - primitive integer bounds, sign and total magnitude helpers, and checked
   conversions in `core.numeric`;
 - `borrow`, `ptr`, `array`, `slice`, `size_of`, and `align_of`;
+- consistent `array` and `slice` length, emptiness, checked `get`,
+  trapping `at`/index, first/last, and access-preserving array-to-slice views.
+  Checked misses test bounds before forming a borrow, and mutable views retain
+  the original array loan;
 - ownership markers and operator traits;
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
@@ -493,7 +497,8 @@ Implemented `core` facilities include:
 Implemented `alloc` facilities include:
 
 - `box(t)`;
-- `vec(t)` with mutation and consuming iteration;
+- `vec(t)` with consistent checked/trapping shared or mutable access,
+  first/last, slice conversion, mutation, and consuming iteration;
 - ownership-preserving `vec(u8)`/`string` conversion: success transfers the
   allocation, failure retains the original vector and its valid-prefix length,
   and static strings copy into owned bytes;

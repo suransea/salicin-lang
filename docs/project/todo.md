@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Arrays, slices, vectors, and iteration
 
-- [ ] **COLL-1 — Consistent contiguous access.** Give `array`, `slice`, and
-  `vec` a consistent `len`, `is_empty`, checked `get`, trapping `at`/index,
-  first/last, slice conversion, and shared or mutable access contract. Checked
-  operations return `option` and never form an out-of-bounds borrow.
-
 - [ ] **COLL-2 — `slice` and `array` iteration.** Complete shared and mutable
   iteration for arrays and slices, remove the current copy-only limitation
   from borrowed array traversal, and preserve exclusive yielded-borrow rules.

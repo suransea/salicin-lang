@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.223.0 - 2026-07-28
+
+- Completed COLL-1 with a common `len`, `is_empty`, checked `get`, trapping
+  `at`/index, and first/last vocabulary across fixed arrays, borrowed slices,
+  and vectors. Access defaults to shared and accepts explicit mutable access.
+- Added source-backed generic inherent array extensions and a validated
+  array-to-slice intrinsic that retains the source access and borrow region.
+  Checked misses validate bounds before constructing an element borrow.
+- Added native coverage for successful, empty, missing, mutable, and trapping
+  access, including mutation through array and vector views.
+
 ## 0.222.0 - 2026-07-28
 
 - Completed FMT-2 with strict radix-2-through-36 `u64`/`i64` parsing,

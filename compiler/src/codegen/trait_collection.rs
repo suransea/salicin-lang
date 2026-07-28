@@ -64,6 +64,7 @@ impl Analyzer {
             "raw_offset",
             "raw_borrow",
             "raw_slice",
+            "raw_array_slice",
             "raw_slice_len",
             "raw_slice_at",
             "raw_subview",

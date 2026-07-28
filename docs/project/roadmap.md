@@ -72,7 +72,9 @@ iteration, scalar counting, and checked scalar lookup complete runtime text.
 The accepted [parsing and formatting contract](formatting.md) now has strict
 64-bit radix parsing, scalar/ASCII writer dispatch, an allocation-backed
 string writer, and the first concrete display/debug implementations. The
-active slice is consistent checked access across arrays, slices, and vectors.
+accepted [contiguous-access contract](contiguous-access.md) is implemented for
+arrays, slices, and vectors. The active slice is shared and mutable array and
+slice iteration.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

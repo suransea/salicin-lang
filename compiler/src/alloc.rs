@@ -1109,12 +1109,14 @@ fn valid_vec_receiver_method(
         && function.body.is_some()
 }
 
-fn valid_vec_access_method(function: &Function) -> bool {
-    function.name == "at"
-        && matches!(function.compile_groups.as_slice(), [group]
-            if matches!(group.as_slice(), [access]
-                if access.name == "a" && access.kind.is_access()))
-        && matches!(function.groups.as_slice(), [receiver, index]
+fn valid_vec_element_access_method(
+    function: &Function,
+    name: &str,
+    indexed: bool,
+    checked: bool,
+) -> bool {
+    let arguments_match = if indexed {
+        matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "self"
                     && parameter.mode == PassMode::Inferred
@@ -1123,13 +1125,35 @@ fn valid_vec_access_method(function: &Function) -> bool {
                     && parameter.region.is_none()
                     && parameter.ty == borrow_type(false, Some("a"), None, named("self")))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
-        && function.return_type
-            == Some(Type::Borrow {
-                mutable: false,
-                access: Some("a".to_owned()),
-                region: None,
-                pointee: Box::new(named("t")),
-            })
+    } else {
+        matches!(function.groups.as_slice(), [receiver, runtime]
+            if matches!(receiver.as_slice(), [parameter]
+                if parameter.name == "self"
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.modifiers.is_empty()
+                    && parameter.region.is_none()
+                    && parameter.ty == borrow_type(false, Some("a"), None, named("self")))
+                && runtime.is_empty())
+    };
+    let borrowed = Type::Borrow {
+        mutable: false,
+        access: Some("a".to_owned()),
+        region: None,
+        pointee: Box::new(named("t")),
+    };
+    let result = if checked {
+        applied("option", borrowed)
+    } else {
+        borrowed
+    };
+    function.name == name
+        && matches!(function.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [access]
+                if access.name == "a" && access.kind.is_access()))
+        && arguments_match
+        && function.return_type == Some(result)
+        && function.where_predicates.is_empty()
         && function.body.is_some()
 }
 
@@ -1188,7 +1212,10 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(len),
             crate::ast::ExtendMember::Function(as_slice),
             crate::ast::ExtendMember::Function(capacity),
+            crate::ast::ExtendMember::Function(get),
             crate::ast::ExtendMember::Function(at),
+            crate::ast::ExtendMember::Function(first),
+            crate::ast::ExtendMember::Function(last),
             crate::ast::ExtendMember::Function(reserve),
             crate::ast::ExtendMember::Function(push),
             crate::ast::ExtendMember::Function(replace),
@@ -1218,7 +1245,10 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && valid_vec_receiver_method(len, "len", PassMode::Borrow, &[], Type::U64)
             && valid_vec_as_slice_method(as_slice)
             && valid_vec_receiver_method(capacity, "capacity", PassMode::Borrow, &[], Type::U64)
-            && valid_vec_access_method(at)
+            && valid_vec_element_access_method(get, "get", true, true)
+            && valid_vec_element_access_method(at, "at", true, false)
+            && valid_vec_element_access_method(first, "first", false, true)
+            && valid_vec_element_access_method(last, "last", false, true)
             && valid_vec_receiver_method(reserve, "reserve", PassMode::MutBorrow, &[("additional", PassMode::Inferred, Type::U64)], Type::Unit)
             && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Inferred, named("t"))], Type::Unit)
             && valid_vec_receiver_method(replace, "replace", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("t"))], named("t"))

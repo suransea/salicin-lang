@@ -88,6 +88,16 @@ pub(super) struct SliceTraitExtension {
 }
 
 #[derive(Clone)]
+pub(super) struct ArrayInherentExtension {
+    pub(super) element_parameter: String,
+    pub(super) length_parameter: String,
+    pub(super) where_predicates: Vec<crate::ast::WherePredicate>,
+    pub(super) members: Vec<ExtendMember>,
+    pub(super) access: AccessBoundary,
+    pub(super) origin: ItemOrigin,
+}
+
+#[derive(Clone)]
 pub(super) struct ArrayTraitExtension {
     pub(super) element_parameter: Option<String>,
     pub(super) required_element: Option<Ty>,

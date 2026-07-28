@@ -17,10 +17,11 @@ use super::registry::{
     display_parameter_label_shape, function_parameter_labels,
     generic_trait_pattern_overlaps_concrete, overloaded_function_name,
     schema_function_has_receiver, substitute_self_type, trait_method_identity,
-    trait_reference_patterns_overlap, ArrayTraitExtension, ConstructorTraitImplKey,
-    ConstructorTraitRefKey, GenericInherentExtension, GenericTraitExtension, NominalKind,
-    PointerInherentExtension, SliceInherentExtension, SliceTraitExtension, TraitImplInfo,
-    TraitImplKey, TraitRefKey, TraitSchema, TypeConstructorImplTarget,
+    trait_reference_patterns_overlap, ArrayInherentExtension, ArrayTraitExtension,
+    ConstructorTraitImplKey, ConstructorTraitRefKey, GenericInherentExtension,
+    GenericTraitExtension, NominalKind, PointerInherentExtension, SliceInherentExtension,
+    SliceTraitExtension, TraitImplInfo, TraitImplKey, TraitRefKey, TraitSchema,
+    TypeConstructorImplTarget,
 };
 use super::source_rewrite::{
     substitute_expr_types, substitute_function_types, substitute_self_expression_target,
@@ -2391,6 +2392,24 @@ impl Analyzer {
             }
         }
         let extension_target = extension.target.clone();
+        if let Type::ArrayApplication {
+            constructor,
+            element,
+            length,
+        } = &extension_target
+        {
+            if self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm) {
+                self.collect_array_inherent_extension(
+                    extension,
+                    origin,
+                    parameters,
+                    declared,
+                    element.as_ref().clone(),
+                    length.clone(),
+                );
+                return;
+            }
+        }
         let Type::Named(target_template, target_sources) = &extension_target else {
             self.error("generic inherent extend target must be a generic nominal type");
             return;
@@ -2948,6 +2967,83 @@ impl Analyzer {
             });
     }
 
+    pub(super) fn collect_array_inherent_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        parameters: Vec<CompileParam>,
+        declared: HashSet<String>,
+        element: Type,
+        length: crate::ast::USizeConst,
+    ) {
+        if origin.package != PackageId::CORE.0 {
+            self.error("inherent extension for `array` must be declared in core");
+            return;
+        }
+        let crate::ast::USizeConst::Parameter(length_parameter) = length else {
+            self.error("generic `array` extend target length must be a usize parameter");
+            return;
+        };
+        let Type::Named(element_parameter, element_arguments) = element else {
+            self.error("generic `array` extension element must be a declared type parameter");
+            return;
+        };
+        if !element_arguments.is_empty()
+            || !parameters.iter().any(|parameter| {
+                parameter.name == element_parameter && parameter.kind == Sort::Type
+            })
+        {
+            self.error("`array` extension element must be determined by a `type` parameter");
+            return;
+        }
+        let expected = HashSet::from([element_parameter.clone(), length_parameter.clone()]);
+        if declared != expected {
+            self.error(
+                "every generic `array` extend parameter must be determined by its element and length",
+            );
+            return;
+        }
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                self.error("generic `array` associated constants are not supported");
+                return;
+            };
+            if !function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self")
+            {
+                self.error("generic `array` extensions currently support methods only");
+                return;
+            }
+            if let Some(parameter) = function
+                .compile_groups
+                .iter()
+                .flatten()
+                .find(|parameter| declared.contains(&parameter.name))
+            {
+                self.error(format!(
+                    "generic `array` method `{}` redeclares outer compile-time parameter `{}`",
+                    function.name, parameter.name
+                ));
+                return;
+            }
+        }
+        self.collection
+            .array_inherent_extensions
+            .push(ArrayInherentExtension {
+                element_parameter,
+                length_parameter,
+                where_predicates: extension.where_predicates,
+                members: extension.members,
+                access: AccessBoundary {
+                    visibility: Visibility::Public,
+                    origin: origin.clone(),
+                },
+                origin,
+            });
+    }
+
     pub(super) fn collect_array_trait_extension(
         &mut self,
         extension: ExtendDef,
@@ -3048,7 +3144,7 @@ impl Analyzer {
         if !self
             .collection
             .instantiated_array_trait_extensions
-            .insert(key)
+            .insert(key.clone())
         {
             return;
         }
@@ -3058,6 +3154,44 @@ impl Analyzer {
             ));
             return;
         };
+        let array_source = Type::Array(Box::new(element_source.clone()), *length);
+        for template in self.collection.array_inherent_extensions.clone() {
+            let member_access =
+                self.restrict_access_boundary_to_type(&template.access, element, &template.origin);
+            let mut substitutions = HashMap::new();
+            substitutions.insert(template.element_parameter, element_source.clone());
+            substitutions.insert(template.length_parameter, Type::CompileUSize(*length));
+            let mut predicates = template.where_predicates;
+            for predicate in &mut predicates {
+                substitute_where_predicate(predicate, &substitutions);
+            }
+            if predicates
+                .iter()
+                .any(|predicate| !self.concrete_where_predicate_holds(predicate))
+            {
+                continue;
+            }
+            let mut members = template.members;
+            for member in &mut members {
+                let ExtendMember::Function(function) = member else {
+                    unreachable!("array associated constants were rejected")
+                };
+                substitute_function_types(function, &substitutions);
+                if let Some(body) = &mut function.body {
+                    substitute_type_expression_parameters(body, &substitutions);
+                }
+                let mut self_substitution = HashMap::new();
+                self_substitution.insert("self".to_owned(), array_source.clone());
+                substitute_function_types(function, &self_substitution);
+            }
+            self.register_builtin_extension_methods(
+                &key,
+                array,
+                members,
+                &member_access,
+                &template.origin,
+            );
+        }
         for template in self.collection.array_trait_extensions.clone() {
             if template
                 .required_element
@@ -3426,6 +3560,23 @@ impl Analyzer {
                 }
             }
         }
+        let option_extension = extension.origin.package == PackageId::CORE.0
+            && extension
+                .origin
+                .module_path
+                .last()
+                .is_some_and(|module| module == "option");
+        // A borrowed payload makes these fallback methods choose between two
+        // anonymous input regions. Until source types can state their equality,
+        // do not materialize a signature with no sound result-region inference.
+        members.retain(|member| {
+            let ExtendMember::Function(function) = member else {
+                return true;
+            };
+            !option_extension
+                || !matches!(function.name.as_str(), "unwrap_or" | "unwrap_or_else")
+                || !matches!(function.return_type, Some(Type::Borrow { .. }))
+        });
         self.collect_extension(
             ExtendDef {
                 compile_groups: Vec::new(),
