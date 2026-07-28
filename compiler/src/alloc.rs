@@ -12,11 +12,13 @@ use crate::parser;
 const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sc");
 const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
 const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
+const EDITION_2026_STRING: &str = include_str!("../../library/alloc/src/string.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("boxed", EDITION_2026_BOXED),
     ("vec", EDITION_2026_VEC),
+    ("string", EDITION_2026_STRING),
     ("raw", EDITION_2026_RAW),
 ];
 
@@ -147,12 +149,14 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = crate::standard::naming_diagnostics(program, "alloc");
-    if program.items.len() != 45
-        || program.item_visibilities.len() != 45
-        || program.item_origins.len() != 45
+    if program.items.len() != 52
+        || program.item_visibilities.len() != 52
+        || program.item_origins.len() != 52
     {
-        diagnostics
-            .push("embedded alloc must contain the fixed box and vec bootstrap schema".to_owned());
+        diagnostics.push(
+            "embedded alloc must contain the fixed box, vec, and string bootstrap schema"
+                .to_owned(),
+        );
     } else {
         let visibilities_are_valid =
             program
@@ -160,8 +164,10 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 12 | 39) {
+                    let expected = if matches!(index, 0 | 12 | 39 | 47 | 50 | 51) {
                         Visibility::Public
+                    } else if matches!(index, 45 | 46) {
+                        Visibility::Package
                     } else {
                         Visibility::Private
                     };
@@ -384,6 +390,39 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[44] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc vec droppable extension has an invalid shape".to_owned()),
+        }
+        match &program.items[45] {
+            Item::Function(function) if function.name == "vec_from_raw_parts" => {}
+            _ => diagnostics.push("alloc vec_from_raw_parts helper is missing".to_owned()),
+        }
+        match &program.items[46] {
+            Item::Function(function) if function.name == "vec_into_raw_parts" => {}
+            _ => diagnostics.push("alloc vec_into_raw_parts helper is missing".to_owned()),
+        }
+        match &program.items[47] {
+            Item::Struct(definition) if definition.name == "from_utf8_error" => {}
+            _ => diagnostics.push("alloc from_utf8_error has an invalid shape".to_owned()),
+        }
+        match &program.items[48] {
+            Item::Extend(extension)
+                if matches!(
+                    &extension.target,
+                    Type::Named(name, arguments)
+                        if name == "from_utf8_error" && arguments.is_empty()
+                ) => {}
+            _ => diagnostics.push("alloc from_utf8_error extension is missing".to_owned()),
+        }
+        match &program.items[49] {
+            Item::Function(function) if function.name == "first_invalid_owned_utf8" => {}
+            _ => diagnostics.push("alloc owned UTF-8 validation helper is missing".to_owned()),
+        }
+        match &program.items[50] {
+            Item::Function(function) if function.name == "string_from_utf8" => {}
+            _ => diagnostics.push("alloc string_from_utf8 has an invalid shape".to_owned()),
+        }
+        match &program.items[51] {
+            Item::Function(function) if function.name == "string_into_bytes" => {}
+            _ => diagnostics.push("alloc string_into_bytes has an invalid shape".to_owned()),
         }
     }
     if diagnostics.is_empty() {
@@ -1331,13 +1370,13 @@ mod tests {
     }
 
     fn alloc_source() -> String {
-        [EDITION_2026_BOXED, EDITION_2026_VEC].join("\n")
+        [EDITION_2026_BOXED, EDITION_2026_VEC, EDITION_2026_STRING].join("\n")
     }
 
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 45);
+        assert_eq!(bundle.program.items.len(), 52);
         assert!(bundle
             .program
             .item_origins
@@ -1346,9 +1385,12 @@ mod tests {
         assert!(bundle.program.item_origins[..12]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "boxed"]));
-        assert!(bundle.program.item_origins[12..45]
+        assert!(bundle.program.item_origins[12..47]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
+        assert!(bundle.program.item_origins[47..52]
+            .iter()
+            .all(|origin| origin.module_path == ["@alloc", "string"]));
     }
 
     #[test]

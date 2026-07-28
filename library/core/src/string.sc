@@ -40,7 +40,7 @@ let text_equal(left: borrow(str), right: borrow(str)): bool = {
 /// Validates the exact well-formed UTF-8 byte sequences from Unicode Table
 /// 3-7. The implementation is allocation-free and reads each byte at most a
 /// constant number of times.
-let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
+let utf8_error_offset(bytes: borrow(slice(u8))): core.option(u64) = {
   let length = bytes.len()
   let mut index: u64 = 0
   let one: u64 = 1
@@ -73,52 +73,52 @@ let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
     } else if first >= two_min && first <= two_max {
       if index + one >= length ||
         !is_continuation(byte_at(bytes, index + one)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + two
     } else if first == e0 {
       if index + two >= length {
-        return(false)
+        return(core.option.some(index))
       }
       let second: u8 = byte_at(bytes, index + one)
       if second < e0_second_min || second > continuation_max ||
         !is_continuation(byte_at(bytes, index + two)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + three
     } else if first >= e1 && first <= ec {
       if index + two >= length ||
         !is_continuation(byte_at(bytes, index + one)) ||
         !is_continuation(byte_at(bytes, index + two)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + three
     } else if first == ed {
       if index + two >= length {
-        return(false)
+        return(core.option.some(index))
       }
       let second: u8 = byte_at(bytes, index + one)
       if second < continuation_min || second > ed_second_max ||
         !is_continuation(byte_at(bytes, index + two)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + three
     } else if first >= ee && first <= ef {
       if index + two >= length ||
         !is_continuation(byte_at(bytes, index + one)) ||
         !is_continuation(byte_at(bytes, index + two)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + three
     } else if first == f0 {
       if index + three >= length {
-        return(false)
+        return(core.option.some(index))
       }
       let second: u8 = byte_at(bytes, index + one)
       if second < f0_second_min || second > continuation_max ||
         !is_continuation(byte_at(bytes, index + two)) ||
         !is_continuation(byte_at(bytes, index + three)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + four
     } else if first >= f1 && first <= f3 {
@@ -126,25 +126,29 @@ let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
         !is_continuation(byte_at(bytes, index + one)) ||
         !is_continuation(byte_at(bytes, index + two)) ||
         !is_continuation(byte_at(bytes, index + three)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + four
     } else if first == f4 {
       if index + three >= length {
-        return(false)
+        return(core.option.some(index))
       }
       let second: u8 = byte_at(bytes, index + one)
       if second < continuation_min || second > f4_second_max ||
         !is_continuation(byte_at(bytes, index + two)) ||
         !is_continuation(byte_at(bytes, index + three)) {
-        return(false)
+        return(core.option.some(index))
       }
       index = index + four
     } else {
-      return(false)
+      return(core.option.some(index))
     }
   }
-  true
+  core.option.none
+}
+
+let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
+  utf8_error_offset(bytes).is_none()
 }
 
 extend(str) {
@@ -156,6 +160,12 @@ extend(str) {
     } else {
       core.option.none
     }
+  }
+
+  /// Returns the length of the valid UTF-8 prefix, or `none` when all bytes
+  /// are valid. For a truncated sequence this is the leading-byte offset.
+  let first_invalid_utf8(bytes: borrow(slice(u8))): core.option(u64) = {
+    utf8_error_offset(bytes)
   }
 
   /// Returns the number of UTF-8 bytes.
@@ -260,9 +270,28 @@ extend(unicode_scalar) {
 /// borrows static literal storage; non-zero capacity is reserved for owned
 /// storage supplied by the allocation package.
 pub let string = struct {
-  data: ptr(u8),
+  data: ptr(mut)(u8),
   length: u64,
   capacity: u64,
+}
+
+/// Rebuilds unique string ownership from validated initialized byte storage.
+pub let string_from_raw_parts(
+  data: ptr(mut)(u8),
+  length: u64,
+  capacity: u64,
+): string with(core.unsafe.unsafety) = {
+  string { data: data, length: length, capacity: capacity }
+}
+
+/// Consumes a string into its representation. Capacity zero means borrowed
+/// static storage and must be copied before constructing an owned byte vector.
+pub let string_into_raw_parts(
+  move value: string,
+): (ptr(mut)(u8), u64, u64) with(core.unsafe.unsafety) = {
+  let parts = (value.data, value.length, value.capacity)
+  forget(value)
+  parts
 }
 
 extend(string, core.literal.string_literal) {
@@ -294,5 +323,15 @@ extend(string, core.cmp.eq(string)) {
     let left = self.as_str()
     let right = other.as_str()
     text_equal(left, right)
+  }
+}
+
+extend(string, core.marker.droppable) {
+  let drop(self: borrow(mut)(self))(): () = {
+    if self.capacity != 0 {
+      unsafe {
+        raw_dealloc(self.data, self.capacity, 1)
+      }
+    }
   }
 }

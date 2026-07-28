@@ -22,7 +22,7 @@ pub(super) struct FunctionInstanceInfo {
     pub(super) canonical: String,
 }
 
-pub(super) const MAX_FUNCTION_INSTANCES: usize = 256;
+pub(super) const MAX_FUNCTION_INSTANCES: usize = 512;
 pub(super) const MAX_NOMINAL_INSTANCES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

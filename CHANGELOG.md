@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.217.0 - 2026-07-28
+
+- Completed TEXT-1 with ownership-preserving UTF-8 conversion in
+  `alloc.string`. Valid `vec(u8)` storage transfers into `string` without
+  copying, while `from_utf8_error` retains the rejected vector and reports the
+  valid-prefix length, including truncated sequences.
+- Added consuming `string_into_bytes`: heap-backed strings transfer their
+  allocation to `vec(u8)`, while static literal storage is copied into a new
+  owned vector. Empty zero-capacity vectors are released normally instead of
+  being confused with static string storage.
+- Added package-private vector raw-parts adapters and unsafe core string
+  raw-parts contracts. Owning strings now run source-defined drop glue exactly
+  once for heap storage; static strings never deallocate their literal global.
+- Raised the explicit generic-function instance budget from 256 to 512 so the
+  complete fixture corpus and the new allocation adapters compose in one
+  compilation without relaxing the separate nominal-layout budget.
+
 ## 0.216.0 - 2026-07-28
 
 - Added `str.is_char_boundary` and checked `str.get(start, end)` subviews,

@@ -38,6 +38,28 @@ fn borrowed_utf8_str_preserves_validation_and_source_loans() {
 }
 
 #[test]
+fn owned_utf8_conversion_preserves_the_success_or_error_owner() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "string_owned_utf8.sc"))
+        .output()
+        .expect("run owned UTF-8 conversion fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let unsafe_parts = salic()
+        .arg("check")
+        .arg(fixture("fail", "string_raw_parts_safe.sc"))
+        .output()
+        .expect("check safe string raw-parts access");
+    assert!(!unsafe_parts.status.success());
+    assert!(
+        String::from_utf8_lossy(&unsafe_parts.stderr).contains("requires an `unsafe` handler"),
+        "{}",
+        output_text(&unsafe_parts)
+    );
+}
+
+#[test]
 fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
     let output = salic()
         .arg("run")

@@ -24,21 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Text and conversion
 
-- [ ] **TEXT-1 — Runtime literals, borrowed text, and scalars.** Define a
-  zero-allocation runtime string literal backed by immutable static UTF-8,
-  plus an invariant-preserving borrowed UTF-8 view and Unicode scalar value.
-  Specify escapes, storage/linkage, representation, region behavior,
-  construction, equality, byte boundaries, invalid input, and conversions to
-  and from existing byte slices. Compile-time test names and foreign symbols
-  remain metadata rather than runtime allocations. The
-  [runtime text contract](text-runtime.md), static literal representation, and
-  checked `unicode_scalar` domain are implemented. The source-defined
-  loan-retaining `str` view, checked borrowed UTF-8 validation, `string.as_str`,
-  `str.as_bytes`, and composite-borrow escape/write-conflict enforcement are
-  implemented. Boundary queries, checked loan-retaining subviews, and exact
-  byte-wise `str`/`string` equality are also implemented; the next slice is
-  ownership-preserving byte/string conversion with the first invalid offset.
-
 - [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
   text and scalars; borrowed text access; `push`, `push_str`, truncation,
   checked byte-boundary slicing, comparison, prefix/suffix checks, and search.

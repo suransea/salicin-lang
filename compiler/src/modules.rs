@@ -412,8 +412,14 @@ type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
 /// bootstrap bundle. The module resolver is the language boundary: source
 /// code reaches these declarations through `alloc.<module>.<name>`, while the
 /// analyzer continues to consume the flattened canonical name.
-const ALLOC_EXPORTS: &[(&str, &str)] =
-    &[("boxed", "box"), ("vec", "vec"), ("vec", "vec_into_iter")];
+const ALLOC_EXPORTS: &[(&str, &str)] = &[
+    ("boxed", "box"),
+    ("vec", "vec"),
+    ("vec", "vec_into_iter"),
+    ("string", "from_utf8_error"),
+    ("string", "string_from_utf8"),
+    ("string", "string_into_bytes"),
+];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("never", "core::never::never"),
@@ -517,7 +523,13 @@ const CORE_SORT_EXPORTS: &[&str] = &[
     "effects",
     "parameters",
 ];
-const CORE_STRING_EXPORTS: &[&str] = &["str", "string", "unicode_scalar"];
+const CORE_STRING_EXPORTS: &[&str] = &[
+    "str",
+    "string",
+    "string_from_raw_parts",
+    "string_into_raw_parts",
+    "unicode_scalar",
+];
 const CORE_LITERAL_EXPORTS: &[&str] = &["array_literal", "string_literal"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
@@ -1647,7 +1659,7 @@ fn install_alloc_namespace(
     }
 
     module_paths.insert(alloc_root.clone());
-    for module in ["boxed", "vec"] {
+    for module in ["boxed", "vec", "string"] {
         let mut module_path = alloc_root.clone();
         module_path.push(module.to_owned());
         module_paths.insert(module_path);

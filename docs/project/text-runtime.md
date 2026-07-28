@@ -72,8 +72,9 @@ prevents mutation or deallocation while a view or iterator is live.
 Validation accepts only the well-formed sequences in Unicode 17 Table 3-7. It
 rejects isolated continuation bytes, invalid leading bytes, truncated
 sequences, overlong encodings, surrogate encodings, and values above
-`U+10FFFF`. The first invalid byte offset is reported. Validation is linear
-in byte length and performs no allocation.
+`U+10FFFF`. Errors report the valid-prefix length, or equivalently the leading
+byte of the first ill-formed subsequence. Validation is linear in byte length
+and performs no allocation.
 
 Byte offsets `0` and `len` are boundaries. An interior offset is a boundary
 exactly when its byte is not a UTF-8 continuation byte. An offset above `len`
@@ -88,9 +89,16 @@ grapheme clusters. `string` and `str` comparisons use the same rule.
 
 Borrowed byte-to-text conversion returns `option(borrow(r)(str))`. Owned
 byte-to-string conversion returns a result whose error retains the original
-byte vector and the first invalid offset. Allocation failure remains the
-allocator trap defined by the standard-library surface. Recoverable invalid
-UTF-8 never discards owned bytes.
+byte vector and the valid-prefix length, which is also the leading-byte offset
+of the first ill-formed subsequence. Allocation failure remains the allocator
+trap defined by the standard-library surface. Recoverable invalid UTF-8 never
+discards owned bytes.
+
+The implemented owned conversion reports `valid_up_to`, the byte length of
+the valid prefix and the leading-byte offset of an ill-formed or truncated
+subsequence. Success transfers non-empty vector storage into `string`; failure
+stores the unchanged vector in `from_utf8_error`. Consuming conversion back to
+bytes transfers heap storage and copies immutable static literal storage.
 
 ## Iteration
 
@@ -127,6 +135,12 @@ concentrated, after which the type system propagates spatial and temporal
 guarantees. Salicin therefore checks range and UTF-8 endpoints in `str.get`
 before crossing one small unsafe `raw_subview` boundary; the resulting view
 then carries the source loan without repeating those checks at each access.
+The 2025 work on linear effects, exceptions, and destructors proves
+resource-safety properties in which allocations are released exactly once
+even on error paths. The owned conversion mirrors that discipline directly:
+the input allocation moves into exactly one `result` payload, either the
+successful `string` or the recoverable error, and normal drop glue handles
+whichever branch the caller abandons.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
@@ -134,3 +148,4 @@ then carries the source loan without repeating those checks at each access.
 - [Place Capability Graphs (OOPSLA 2025)](https://pm.inf.ethz.ch/publications/GrannanBilaFialaGeerMedeirosMuellerSummers25.pdf)
 - [From Linearity to Borrowing (OOPSLA 2025)](https://johnm.li/from-linearity-to-borrowing.pdf)
 - [SafeFFI (2025 preprint)](https://arxiv.org/abs/2510.20688)
+- [Linear effects, exceptions, and resource safety (2025 preprint)](https://arxiv.org/abs/2510.23517)

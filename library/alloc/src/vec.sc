@@ -478,3 +478,18 @@ extend(vec(t), droppable) {
     vec_deallocate(self.pointer, self.storage_capacity)
   }
 }
+
+/// Rebuilds vector ownership from initialized storage supplied by another
+/// adapter in this package.
+pub(package) let vec_from_raw_parts(comptime t: type)
+  (pointer: ptr(mut)(t), length: u64, capacity: u64): vec(t) with(core.unsafe.unsafety) = {
+  vec(t) { pointer: pointer, length: length, storage_capacity: capacity }
+}
+
+/// Consumes a vector and transfers its allocation to another package adapter.
+pub(package) let vec_into_raw_parts(comptime t: type)
+  (move values: vec(t)): (ptr(mut)(t), u64, u64) = {
+  let parts = (values.pointer, values.length, values.storage_capacity)
+  forget(values)
+  parts
+}

@@ -63,9 +63,9 @@ storage, scalar validity, borrowed-view regions, UTF-8 validation and
 boundaries, equality, conversion failure, and iteration behavior. Static
 literal storage, the checked Unicode scalar domain, the loan-retaining
 borrowed view, and checked borrowed UTF-8 validation are implemented.
-Boundary-safe subviews and exact text equality are implemented.
-Ownership-preserving conversion with precise invalid-byte offsets is the
-active text slice.
+Boundary-safe subviews, exact text equality, and ownership-preserving byte
+conversion with precise invalid-prefix offsets are implemented. Core `string`
+construction and mutation are the active text slice.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

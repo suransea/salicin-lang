@@ -479,14 +479,17 @@ Implemented `alloc` facilities include:
 
 - `box(t)`;
 - `vec(t)` with mutation and consuming iteration;
+- ownership-preserving `vec(u8)`/`string` conversion: success transfers the
+  allocation, failure retains the original vector and its valid-prefix length,
+  and static strings copy into owned bytes;
 
 The accepted [runtime text contract](text-runtime.md) defines the remaining
-conversion and iteration behavior. Safe `string` and `str` APIs preserve
-valid UTF-8 and do not expose mutable bytes. Borrowed-view
+mutation and iteration behavior. Safe `string` and `str` APIs preserve valid
+UTF-8 and do not expose mutable bytes. Borrowed-view
 escape analysis follows reference loans through raw view casts, calls,
 `option` payloads, and matches, so a view cannot outlive local bytes or overlap
-a mutable write. Ownership-preserving conversion, scalar iteration, broader
-Unicode algorithms, and host I/O are not yet library features.
+a mutable write. Core string mutation, scalar iteration, broader Unicode
+algorithms, and host I/O are not yet library features.
 
 Borrowed `slice_iter(a)(t)` preserves shared or mutable source access and yields
 `borrow(a)(r)(t)`. `vec` iteration consumes elements and drops an unyielded suffix exactly once on
