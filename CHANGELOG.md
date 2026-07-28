@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.218.0 - 2026-07-28
+
+- Added owning `string` construction through `new`, `with_capacity`,
+  `from_str`, and `from_unicode_scalar`, plus byte-capacity inspection and
+  reservation. Copy construction accepts only validated borrowed `str`;
+  scalar construction emits the canonical one-to-four-byte UTF-8 encoding.
+- Added safe `push`, `push_str`, `truncate`, and `clear`. All public mutation
+  transitions preserve valid UTF-8: append inputs already carry the text or
+  scalar invariant, and truncation rejects out-of-range and continuation-byte
+  offsets without changing the string.
+- Static literal strings now detach into allocator-owned storage on their
+  first growth. Reallocation copies initialized bytes before releasing the old
+  allocation, while clear and successful truncation retain capacity.
+
 ## 0.217.0 - 2026-07-28
 
 - Completed TEXT-1 with ownership-preserving UTF-8 conversion in

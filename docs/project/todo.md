@@ -24,11 +24,11 @@ status and changelog instead of remaining as a checked archive.
 
 ### Text and conversion
 
-- [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
-  text and scalars; borrowed text access; `push`, `push_str`, truncation,
-  checked byte-boundary slicing, comparison, prefix/suffix checks, and search.
-  Preserve valid UTF-8 after every safe mutation and retain ownership on
-  recoverable conversion failure.
+- [ ] **TEXT-2 — Complete core `string` operations.** Add checked owned
+  byte-range extraction, ordering, prefix/suffix checks, and forward search.
+  Reuse the implemented borrowed view, constructors, capacity management,
+  scalar/text append, checked truncation, exact equality, and
+  ownership-preserving conversion without exposing mutable UTF-8 bytes.
 
 - [ ] **TEXT-3 — Text iteration.** Add byte and Unicode-scalar iterators,
   scalar counting and lookup, and forward search with exact invalid-boundary

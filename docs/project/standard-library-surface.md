@@ -92,7 +92,7 @@ allocator or host symbol.
 | `core.flow` | chaining, fallback, unwrap, and typed raising protocols |
 | `core.iter` | iterator protocols and allocation-free algorithms |
 | `core.numeric` | integer bounds, sign/magnitude helpers, and checked width conversion |
-| `core.string` | canonical UTF-8 `string`, literals, borrowed views, scalars, validation, and iteration |
+| `core.string` | canonical UTF-8 `string`, literals, construction/mutation, borrowed views, scalars, validation, and iteration |
 | `core.fmt` | allocation-free parse, display, debug, and writer protocols |
 | `core.effect` | effect-handler machinery |
 | `core.error` | typed failure effect machinery |
@@ -113,7 +113,7 @@ added when a declaration moves.
 | --- | --- |
 | `alloc.boxed` | the owning `box(t)` allocation |
 | `alloc.vec` | `vec(t)` and consuming vector iteration |
-| `alloc.string` | allocating `string` construction/mutation helpers and ownership-preserving conversion errors |
+| `alloc.string` | ownership-preserving `vec(u8)`/`string` conversion and conversion errors |
 | `alloc.fmt` | `string_writer` and allocation-backed formatting helpers |
 
 `alloc.raw` remains package-private. Safe source cannot call the allocator or

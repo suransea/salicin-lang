@@ -272,7 +272,106 @@ extend(unicode_scalar) {
 pub let string = struct {
   data: ptr(mut)(u8),
   length: u64,
-  capacity: u64,
+  storage_capacity: u64,
+}
+
+let string_allocate(capacity: u64): ptr(mut)(u8) = {
+  unsafe {
+    raw_alloc(u8)(capacity, 1)
+  }
+}
+
+let string_deallocate(data: ptr(mut)(u8), capacity: u64): () = {
+  unsafe {
+    raw_dealloc(u8)(data, capacity, 1)
+  }
+}
+
+let string_reserve(value: borrow(mut)(string), additional: u64): () = {
+  if additional > 18446744073709551615 - value.length {
+    unsafe {
+      raw_trap()
+    }
+  }
+  let required = value.length + additional
+  if required > value.storage_capacity {
+    let mut new_capacity: u64 = if value.storage_capacity == 0 {
+      1
+    } else {
+      value.storage_capacity
+    }
+    while { new_capacity < required } {
+      new_capacity = if new_capacity > 9223372036854775807 {
+        required
+      } else {
+        new_capacity * 2
+      }
+    }
+    let new_data = string_allocate(new_capacity)
+    let mut index: u64 = 0
+    while { index < value.length } {
+      let byte = unsafe {
+        *raw_offset(value.data, index)
+      }
+      unsafe {
+        raw_init(raw_offset(new_data, index), byte)
+      }
+      index = index + 1
+    }
+    if value.storage_capacity != 0 {
+      string_deallocate(value.data, value.storage_capacity)
+    }
+    value.data = new_data
+    value.storage_capacity = new_capacity
+  }
+}
+
+let string_copy_from_str(comptime r: region)(value: borrow(r)(str)): string = {
+  let length = value.len()
+  if length == 0 {
+    ""
+  } else {
+    let data = string_allocate(length)
+    let bytes = value.as_bytes()
+    let mut index: u64 = 0
+    while { index < length } {
+      unsafe {
+        raw_init(raw_offset(data, index), byte_at(bytes, index))
+      }
+      index = index + 1
+    }
+    string { data: data, length: length, storage_capacity: length }
+  }
+}
+
+let scalar_byte(value: u32): u8 = {
+  let mut remaining = value
+  let mut byte: u8 = 0
+  while { remaining != 0 } {
+    byte = byte + 1
+    remaining = remaining - 1
+  }
+  byte
+}
+
+let string_push_byte(value: borrow(mut)(string), byte: u8): () = {
+  unsafe {
+    raw_init(raw_offset(value.data, value.length), byte)
+  }
+  value.length = value.length + 1
+}
+
+let string_is_char_boundary(value: borrow(string), index: u64): bool = {
+  if index == 0 || index == value.length {
+    true
+  } else if index > value.length {
+    false
+  } else {
+    let byte = unsafe {
+      *raw_offset(value.data, index)
+    }
+    !is_continuation(byte)
+  }
 }
 
 /// Rebuilds unique string ownership from validated initialized byte storage.
@@ -281,7 +380,7 @@ pub let string_from_raw_parts(
   length: u64,
   capacity: u64,
 ): string with(core.unsafe.unsafety) = {
-  string { data: data, length: length, capacity: capacity }
+  string { data: data, length: length, storage_capacity: capacity }
 }
 
 /// Consumes a string into its representation. Capacity zero means borrowed
@@ -289,7 +388,7 @@ pub let string_from_raw_parts(
 pub let string_into_raw_parts(
   move value: string,
 ): (ptr(mut)(u8), u64, u64) with(core.unsafe.unsafety) = {
-  let parts = (value.data, value.length, value.capacity)
+  let parts = (value.data, value.length, value.storage_capacity)
   forget(value)
   parts
 }
@@ -302,11 +401,43 @@ extend(string, core.literal.string_literal) {
 }
 
 extend(string) {
+  /// Creates an empty string without allocating.
+  let new(): string = { "" }
+
+  /// Creates an empty string with space for at least `capacity` bytes.
+  let with_capacity(capacity: u64): string = {
+    if capacity == 0 {
+      ""
+    } else {
+      string { data: string_allocate(capacity), length: 0, storage_capacity: capacity }
+    }
+  }
+
+  /// Copies borrowed validated text into a new owning string.
+  let from_str(comptime r: region)(value: borrow(r)(str)): string = {
+    string_copy_from_str(value)
+  }
+
+  /// Encodes one Unicode scalar into a new owning string.
+  let from_unicode_scalar(value: unicode_scalar): string = {
+    let mut text = string.with_capacity(value.len_utf8())
+    text.push(value)
+    text
+  }
+
   /// Returns the number of UTF-8 bytes.
   let len_bytes(self: borrow(self))(): u64 = { self.length }
 
   /// Returns whether the string contains no bytes.
   let is_empty(self: borrow(self))(): bool = { self.length == 0 }
+
+  /// Returns the number of bytes that fit without reallocating.
+  let capacity(self: borrow(self))(): u64 = { self.storage_capacity }
+
+  /// Ensures space for at least `additional` more UTF-8 bytes.
+  let reserve(self: borrow(mut)(self))(additional: u64): () = {
+    string_reserve(self, additional)
+  }
 
   /// Borrows this string as immutable validated UTF-8.
   let as_str(comptime r: region)
@@ -315,6 +446,58 @@ extend(string) {
       let bytes = raw_slice(self.data, self.length, borrow(self))
       raw_str(bytes)
     }
+  }
+
+  /// Appends borrowed validated UTF-8 text.
+  let push_str(comptime r: region)
+    (self: borrow(mut)(self))
+    (value: borrow(r)(str)): () = {
+    let bytes = value.as_bytes()
+    let length = bytes.len()
+    string_reserve(self, length)
+    let mut index: u64 = 0
+    while { index < length } {
+      string_push_byte(self, byte_at(bytes, index))
+      index = index + 1
+    }
+  }
+
+  /// Appends one Unicode scalar in its canonical UTF-8 encoding.
+  let push(self: borrow(mut)(self))(value: unicode_scalar): () = {
+    let code = value.to_u32()
+    string_reserve(self, value.len_utf8())
+    if code <= 127 {
+      string_push_byte(self, scalar_byte(code))
+    } else if code <= 2047 {
+      string_push_byte(self, scalar_byte(192 | code >> 6))
+      string_push_byte(self, scalar_byte(128 | code & 63))
+    } else if code <= 65535 {
+      string_push_byte(self, scalar_byte(224 | code >> 12))
+      string_push_byte(self, scalar_byte(128 | code >> 6 & 63))
+      string_push_byte(self, scalar_byte(128 | code & 63))
+    } else {
+      string_push_byte(self, scalar_byte(240 | code >> 18))
+      string_push_byte(self, scalar_byte(128 | code >> 12 & 63))
+      string_push_byte(self, scalar_byte(128 | code >> 6 & 63))
+      string_push_byte(self, scalar_byte(128 | code & 63))
+    }
+  }
+
+  /// Truncates to `new_length` bytes when it is a UTF-8 boundary.
+  ///
+  /// Returns false without mutation for an out-of-bounds or interior offset.
+  let truncate(self: borrow(mut)(self))(new_length: u64): bool = {
+    if !string_is_char_boundary(self, new_length) {
+      false
+    } else {
+      self.length = new_length
+      true
+    }
+  }
+
+  /// Removes all text while retaining owned capacity.
+  let clear(self: borrow(mut)(self))(): () = {
+    self.length = 0
   }
 }
 
@@ -328,10 +511,8 @@ extend(string, core.cmp.eq(string)) {
 
 extend(string, core.marker.droppable) {
   let drop(self: borrow(mut)(self))(): () = {
-    if self.capacity != 0 {
-      unsafe {
-        raw_dealloc(self.data, self.capacity, 1)
-      }
+    if self.storage_capacity != 0 {
+      string_deallocate(self.data, self.storage_capacity)
     }
   }
 }

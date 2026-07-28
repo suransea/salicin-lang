@@ -8210,9 +8210,14 @@ let main(): i32 = { signed_div(84, 2) + signed_rem(85, 43) }
     assert!(ir.matches("call void @llvm.trap()").count() >= 4);
     assert!(ir.contains("icmp eq i32"));
     assert!(ir.contains("-2147483648"));
-    let zero_check = ir.find("icmp eq i32").unwrap();
-    let trap = ir.find("call void @llvm.trap()").unwrap();
-    let division = ir.find("sdiv i32").unwrap();
+    let symbol = function_symbol("signed_div");
+    let function_start = ir.find(&format!("define internal i32 @{symbol}")).unwrap();
+    let function_tail = &ir[function_start..];
+    let function_end = function_tail.find("\n}\n").unwrap() + 3;
+    let function = &function_tail[..function_end];
+    let zero_check = function.find("icmp eq i32").unwrap();
+    let trap = function.find("call void @llvm.trap()").unwrap();
+    let division = function.find("sdiv i32").unwrap();
     assert!(zero_check < trap && trap < division);
 }
 

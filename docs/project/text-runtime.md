@@ -100,6 +100,20 @@ subsequence. Success transfers non-empty vector storage into `string`; failure
 stores the unchanged vector in `from_utf8_error`. Consuming conversion back to
 bytes transfers heap storage and copies immutable static literal storage.
 
+## Construction and mutation
+
+`string.new` and zero-capacity construction reuse the immutable empty literal;
+positive capacity allocates owned uninitialized tail storage. Construction
+from `str` copies exactly its validated bytes, while construction and `push`
+from `unicode_scalar` write only the scalar's canonical UTF-8 encoding.
+`push_str` accepts only a validated shared view. A static literal detaches into
+uniquely owned storage before its first append.
+
+`reserve` checks byte-length overflow before allocation. `truncate` succeeds
+only at an in-bounds UTF-8 boundary and otherwise returns `false` without
+mutation. `clear` and successful truncation retain capacity. No safe operation
+exposes the uninitialized tail or a mutable byte view.
+
 ## Iteration
 
 Byte iteration yields copied `u8` values. Scalar iteration decodes forward and
@@ -141,6 +155,12 @@ even on error paths. The owned conversion mirrors that discipline directly:
 the input allocation moves into exactly one `result` payload, either the
 successful `string` or the recoverable error, and normal drop glue handles
 whichever branch the caller abandons.
+The 2026 revision of *Typestate via Revocable Capabilities* shows how a
+flow-sensitive capability may authorize a state transition while preventing
+aliases from observing an invalid intermediate state. Salicin applies the
+same boundary at a smaller scale: a unique mutable `string` borrow can reserve
+and initialize storage, but the safe surface accepts only already-valid `str`
+or `unicode_scalar` inputs and returns with the UTF-8 typestate restored.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
@@ -149,3 +169,4 @@ whichever branch the caller abandons.
 - [From Linearity to Borrowing (OOPSLA 2025)](https://johnm.li/from-linearity-to-borrowing.pdf)
 - [SafeFFI (2025 preprint)](https://arxiv.org/abs/2510.20688)
 - [Linear effects, exceptions, and resource safety (2025 preprint)](https://arxiv.org/abs/2510.23517)
+- [Typestate via Revocable Capabilities (2026 revision)](https://arxiv.org/abs/2510.08889)
