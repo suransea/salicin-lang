@@ -130,6 +130,10 @@ yields copied `unicode_scalar` values. Both iterators retain a shared source
 loan until they are destroyed. Safe iteration over a valid `str` has no
 invalid-input branch; internal decode failure is an invariant violation and
 traps. Early exit releases the loan exactly once.
+The implemented `str.bytes` and `str.scalars` iterators store the source
+borrow directly. `scalar_count` and `scalar_at` consume the same scalar
+iterator contract, so lookup is by scalar index while all slicing and search
+positions remain byte offsets.
 
 ## Non-goals
 
@@ -176,6 +180,11 @@ reasoning about clients of complex libraries. Salicin therefore defines
 ordering, matching, and search once over `str`; owning `string` methods borrow
 that view, and fixtures test boundary, empty-needle, and delegation contracts
 independently.
+Pure Borrow (PLDI 2026) demonstrates that non-local borrowers may be split and
+dropped without runtime communication back to the lender. Salicin's text
+iterators follow that discipline: each iterator owns one shared source borrow,
+yields only copied values, and releases the loan through ordinary lexical
+lifetime tracking even on early exit.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
@@ -186,3 +195,4 @@ independently.
 - [Linear effects, exceptions, and resource safety (2025 preprint)](https://arxiv.org/abs/2510.23517)
 - [Typestate via Revocable Capabilities (2026 revision)](https://arxiv.org/abs/2510.08889)
 - [Verification Modulo Tested Library Contracts (PLDI 2026)](https://doi.org/10.1145/3808305)
+- [Pure Borrow (PLDI 2026)](https://doi.org/10.1145/3808259)

@@ -480,6 +480,8 @@ Implemented `core` facilities include:
   prefix and suffix checks, containment, and first-match search. All range and
   search positions are UTF-8 byte offsets; substring endpoints and returned
   match offsets are scalar boundaries;
+- borrowed byte and Unicode-scalar iterators that retain the source text loan
+  and yield copied values, plus scalar counting and checked scalar lookup;
 - copyable `unicode_scalar` values with checked `u32` construction, numeric
   projection, code-point equality, and exact canonical UTF-8 byte length;
 - effects, handlers, and control contracts.
@@ -492,13 +494,12 @@ Implemented `alloc` facilities include:
   allocation, failure retains the original vector and its valid-prefix length,
   and static strings copy into owned bytes;
 
-The accepted [runtime text contract](text-runtime.md) defines the remaining
-iteration behavior. Safe `string` and `str` APIs preserve valid UTF-8 and do
-not expose mutable bytes. Borrowed-view
+Safe `string` and `str` APIs preserve valid UTF-8 and do not expose mutable
+bytes. Borrowed-view
 escape analysis follows reference loans through raw view casts, calls,
 `option` payloads, and matches, so a view cannot outlive local bytes or overlap
-a mutable write. Byte and scalar iteration, broader Unicode algorithms, and
-host I/O are not yet library features.
+a mutable write. Broader Unicode algorithms and host I/O are not yet library
+features.
 
 Borrowed `slice_iter(a)(t)` preserves shared or mutable source access and yields
 `borrow(a)(r)(t)`. `vec` iteration consumes elements and drops an unyielded suffix exactly once on

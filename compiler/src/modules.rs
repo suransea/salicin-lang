@@ -525,6 +525,8 @@ const CORE_SORT_EXPORTS: &[&str] = &[
 ];
 const CORE_STRING_EXPORTS: &[&str] = &[
     "str",
+    "str_bytes",
+    "str_scalars",
     "string",
     "string_from_raw_parts",
     "string_into_raw_parts",

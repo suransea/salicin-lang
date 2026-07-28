@@ -14,6 +14,16 @@ let byte_at(bytes: borrow(slice(u8)), index: u64): u8 = {
   read_byte(value)
 }
 
+let byte_u32(value: u8): u32 = {
+  let mut source = value
+  let mut output: u32 = 0
+  while { source != 0 } {
+    source = source - 1
+    output = output + 1
+  }
+  output
+}
+
 let is_continuation(byte: u8): bool = {
   let low: u8 = 128
   let high: u8 = 191
@@ -221,6 +231,76 @@ let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
   utf8_error_offset(bytes).is_none()
 }
 
+/// Copies UTF-8 bytes while retaining a shared loan on the source text.
+pub let str_bytes = struct {
+  value: borrow(str),
+  next_index: u64,
+}
+
+/// Decodes Unicode scalars while retaining a shared loan on the source text.
+pub let str_scalars = struct {
+  value: borrow(str),
+  next_index: u64,
+}
+
+extend(str_bytes, core.iter.iterator) {
+  let item = core.iter.owned_item(u8)
+  let next(comptime r: region)
+    (self: borrow(mut)(r)(self))(): core.option(u8) = {
+    let bytes = unsafe { raw_str_bytes(self.value) }
+    if self.next_index == bytes.len() {
+      core.option.none
+    } else {
+      let byte = byte_at(bytes, self.next_index)
+      self.next_index = self.next_index + 1
+      core.option.some(byte)
+    }
+  }
+}
+
+extend(str_bytes, core.iter.into_iterator) {
+  let iter = str_bytes
+  let into_iter(move self)(): str_bytes = { self }
+}
+
+extend(str_scalars, core.iter.iterator) {
+  let item = core.iter.owned_item(unicode_scalar)
+  let next(comptime r: region)
+    (self: borrow(mut)(r)(self))(): core.option(unicode_scalar) = {
+    let bytes = unsafe { raw_str_bytes(self.value) }
+    if self.next_index == bytes.len() {
+      return(core.option.none)
+    }
+    let first = byte_at(bytes, self.next_index)
+    let width: u64 = if first <= 127 { 1 }
+      else if first <= 223 { 2 }
+      else if first <= 239 { 3 }
+      else { 4 }
+    let mut code = if width == 1 {
+      byte_u32(first)
+    } else if width == 2 {
+      byte_u32(first & 31) << 6 |
+        byte_u32(byte_at(bytes, self.next_index + 1) & 63)
+    } else if width == 3 {
+      byte_u32(first & 15) << 12 |
+        byte_u32(byte_at(bytes, self.next_index + 1) & 63) << 6 |
+        byte_u32(byte_at(bytes, self.next_index + 2) & 63)
+    } else {
+      byte_u32(first & 7) << 18 |
+        byte_u32(byte_at(bytes, self.next_index + 1) & 63) << 12 |
+        byte_u32(byte_at(bytes, self.next_index + 2) & 63) << 6 |
+        byte_u32(byte_at(bytes, self.next_index + 3) & 63)
+    }
+    self.next_index = self.next_index + width
+    core.option.some(unicode_scalar { value: code })
+  }
+}
+
+extend(str_scalars, core.iter.into_iterator) {
+  let iter = str_scalars
+  let into_iter(move self)(): str_scalars = { self }
+}
+
 extend(str) {
   /// Validates borrowed bytes and returns a text view with the same region.
   let from_utf8(comptime r: region)
@@ -307,6 +387,40 @@ extend(str) {
   /// Returns whether `needle` occurs in this text.
   let contains(self: borrow(self))(needle: borrow(str)): bool = {
     self.find(needle).is_some()
+  }
+
+  /// Iterates over copied UTF-8 bytes while retaining this source loan.
+  let bytes(self: borrow(self))(): str_bytes = {
+    str_bytes { value: self, next_index: 0 }
+  }
+
+  /// Iterates over copied Unicode scalar values while retaining this source
+  /// loan.
+  let scalars(self: borrow(self))(): str_scalars = {
+    str_scalars { value: self, next_index: 0 }
+  }
+
+  /// Returns the number of Unicode scalar values.
+  let scalar_count(self: borrow(self))(): u64 = {
+    let mut values = self.scalars()
+    let mut count: u64 = 0
+    while { values.next().is_some() } {
+      count = count + 1
+    }
+    count
+  }
+
+  /// Returns the scalar at `index`, or `none` when out of range.
+  let scalar_at(self: borrow(self))(index: u64): core.option(unicode_scalar) = {
+    let mut values = self.scalars()
+    let mut current: u64 = 0
+    while { current < index } {
+      if values.next().is_none() {
+        return(core.option.none)
+      }
+      current = current + 1
+    }
+    values.next()
   }
 }
 

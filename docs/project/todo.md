@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Text and conversion
 
-- [ ] **TEXT-3 — Text iteration.** Add byte and Unicode-scalar iterators,
-  scalar counting and lookup, and forward search with exact invalid-boundary
-  behavior. Iterators must retain the source loan and never expose mutable
-  bytes from safe code.
-
 - [ ] **FMT-1 — Parsing and formatting protocols.** Define source-backed,
   statically dispatched parsing and formatting contracts for integers,
   booleans, Unicode scalars, borrowed text, and `string`, including overflow,

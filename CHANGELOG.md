@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.220.0 - 2026-07-28
+
+- Completed TEXT-3 with borrowed `str` byte and Unicode-scalar iterators,
+  scalar counting, and checked scalar lookup. Both iterators retain the source
+  loan and yield copied values, so safe iteration cannot expose writable bytes
+  or outlive its text.
+- Scalar iteration decodes the already-validated UTF-8 representation without
+  an invalid-input branch and advances by each scalar's canonical byte width.
+  Exhausted iterators and out-of-range scalar lookup return `none`.
+
 ## 0.219.0 - 2026-07-28
 
 - Completed TEXT-2 with checked owning `string.substring`, lexicographic

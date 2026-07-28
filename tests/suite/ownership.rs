@@ -80,6 +80,16 @@ fn string_ranges_ordering_and_search_share_utf8_boundaries() {
 }
 
 #[test]
+fn string_iterators_retain_the_source_and_yield_copied_values() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "string_iteration.sc"))
+        .output()
+        .expect("run string iteration fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
     let output = salic()
         .arg("run")

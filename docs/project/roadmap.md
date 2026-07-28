@@ -68,7 +68,8 @@ conversion with precise invalid-prefix offsets are implemented. Core `string`
 construction, capacity management, scalar/text append, and checked truncation
 are implemented. Checked owned ranges, ordering, prefix/suffix checks, and
 forward search complete the core `string` operations. Byte and Unicode-scalar
-iteration are the active text slice.
+iteration, scalar counting, and checked scalar lookup complete runtime text.
+Source-backed parsing and formatting protocols are the active text slice.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:
