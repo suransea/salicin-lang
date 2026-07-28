@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.213.0 - 2026-07-28
+
 - Added `core.numeric` with source-declared integer `min`, `max`, `clamp`, and
   three-way `sign`; total same-width unsigned `magnitude`; and explicit
   `checked_into(output: integer)()` conversion returning `option`. CTFE and
