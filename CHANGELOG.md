@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.215.0 - 2026-07-28
+
+- Added the dynamically sized immutable `str` core type, a shared fat-view ABI,
+  checked allocation-free UTF-8 validation, `string.as_str`, and
+  `str.as_bytes`, `len`, and `is_empty`. Validation covers the exact Unicode
+  well-formed sequence boundaries, including overlong, surrogate, truncated,
+  and above-`U+10FFFF` rejection.
+- Preserved reference origins and source loans across raw `slice(u8)`/`str`
+  view casts, reference-bearing `option` construction, and match payload
+  binding. Local text views cannot escape, live views block writes to their
+  bytes, and safe code cannot invoke the representation cast.
+
 ## 0.214.0 - 2026-07-28
 
 - Accepted the runtime text contract for immutable static literal linkage,

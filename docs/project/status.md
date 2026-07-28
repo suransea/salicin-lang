@@ -460,6 +460,11 @@ Implemented `core` facilities include:
 - zero-allocation runtime UTF-8 string literals backed by immutable private
   globals and owning `string` values that distinguish literal from allocated
   storage;
+- dynamically sized immutable `str` views represented through the same
+  `{address, byte length}` borrowed-view ABI as slices; checked
+  `borrow(slice(u8))` validation rejects malformed, truncated, overlong,
+  surrogate, and out-of-range UTF-8, while `string.as_str` and `str.as_bytes`
+  retain the source region and loan;
 - copyable `unicode_scalar` values with checked `u32` construction, numeric
   projection, code-point equality, and exact canonical UTF-8 byte length;
 - effects, handlers, and control contracts.
@@ -470,10 +475,12 @@ Implemented `alloc` facilities include:
 - `vec(t)` with mutation and consuming iteration;
 
 The accepted [runtime text contract](text-runtime.md) defines the remaining
-borrowed-view, validation, boundary, conversion, and iteration behavior. Safe
-`string` APIs preserve valid UTF-8 and do not expose mutable bytes. Borrowed
-`str`, text slicing, scalar iteration, broader Unicode algorithms, and host
-I/O are not yet library features.
+boundary, conversion, equality, and iteration behavior. Safe `string` and
+`str` APIs preserve valid UTF-8 and do not expose mutable bytes. Borrowed-view
+escape analysis follows reference loans through raw view casts, calls,
+`option` payloads, and matches, so a view cannot outlive local bytes or overlap
+a mutable write. Text slicing, scalar iteration, broader Unicode algorithms,
+and host I/O are not yet library features.
 
 Borrowed `slice_iter(a)(t)` preserves shared or mutable source access and yields
 `borrow(a)(r)(t)`. `vec` iteration consumes elements and drops an unyielded suffix exactly once on

@@ -404,7 +404,8 @@ pub(super) fn ty_contains_nominal(ty: &Ty, nominal: &str) -> bool {
         Ty::EffectRow { failure_error, .. } => failure_error
             .as_deref()
             .is_some_and(|error| ty_contains_nominal(error, nominal)),
-        Ty::I8
+        Ty::Str
+        | Ty::I8
         | Ty::I16
         | Ty::I32
         | Ty::I64

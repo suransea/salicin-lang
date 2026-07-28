@@ -123,6 +123,7 @@ impl Analyzer {
             HirExprKind::RawSliceAt { slice, .. } => {
                 self.reference_origin_for_hir_expr(slice, context)
             }
+            HirExprKind::RawStrCast(value) => self.reference_origin_for_hir_expr(value, context),
             HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
             HirExprKind::Field { base, .. } => self.reference_origin_for_hir_expr(base, context),
             HirExprKind::ConstructStruct { fields, .. }
@@ -248,6 +249,7 @@ impl Analyzer {
             HirExprKind::RawSliceAt { slice, .. } => {
                 self.reference_loans_for_hir_expr(slice, context)
             }
+            HirExprKind::RawStrCast(value) => self.reference_loans_for_hir_expr(value, context),
             HirExprKind::Read { place, .. } => context
                 .reference_loans
                 .get(&place.local)
@@ -269,6 +271,10 @@ impl Analyzer {
                 loans.extend(self.reference_loans_for_hir_expr(else_branch, context));
                 loans
             }
+            HirExprKind::Match { arms, .. } => arms
+                .iter()
+                .flat_map(|arm| self.reference_loans_for_hir_expr(&arm.body, context))
+                .collect(),
             HirExprKind::Call {
                 function,
                 arguments,
@@ -311,23 +317,37 @@ impl Analyzer {
         if value.ty == Ty::Error || self.is_uninhabited_type(&value.ty) {
             return;
         }
-        if !matches!(value.ty, Ty::Reference { .. }) {
+        let expected_requirements = self.type_reference_requirements(expected);
+        if expected_requirements.is_empty() {
             return;
         }
-        let Ty::Reference {
-            mutable: expected_mutable,
-            region: expected_region,
-            ..
-        } = expected
-        else {
+        let (expected_region, expected_mutable) = expected_requirements[0].clone();
+        if !expected_requirements
+            .iter()
+            .all(|requirement| *requirement == (expected_region.clone(), expected_mutable))
+        {
             return;
-        };
+        }
         let inferred_origin = self.reference_origin_for_hir_expr(value, context);
+        let has_local_reference_loan = self
+            .reference_loans_for_hir_expr(value, context)
+            .into_iter()
+            .any(|loan| {
+                context.flow.loans.get(&loan).is_some_and(|loan| {
+                    !context
+                        .borrowed_parameter_regions
+                        .contains_key(&loan.place.local)
+                })
+            });
+        if inferred_origin.is_none() && has_local_reference_loan {
+            self.error("cannot return a reference value whose source is local or cannot be proven");
+            return;
+        }
         let compatible_parameter_origin = || {
             context
                 .borrowed_parameter_regions
                 .values()
-                .filter(|(region, _)| expected_region.is_none() || region == expected_region)
+                .filter(|(region, _)| expected_region.is_none() || *region == expected_region)
                 .max_by_key(|(_, mutable)| *mutable)
                 .cloned()
         };
@@ -337,14 +357,14 @@ impl Analyzer {
             self.error("cannot return a reference value whose source is local or cannot be proven");
             return;
         };
-        if expected_region.is_some() && source_region != *expected_region {
+        if expected_region.is_some() && source_region != expected_region {
             self.error(format!(
                 "returned reference value region mismatch: expected {}, found {}",
                 display_region(expected_region.as_deref()),
                 display_region(source_region.as_deref())
             ));
         }
-        if *expected_mutable && !source_mutable {
+        if expected_mutable && !source_mutable {
             self.error("cannot return a mutable reference value through a shared source");
         }
     }
@@ -374,6 +394,7 @@ impl Analyzer {
             | HirExprKind::Field { base: value, .. }
             | HirExprKind::ReferenceRead(value)
             | HirExprKind::RawSliceLen(value)
+            | HirExprKind::RawStrCast(value)
             | HirExprKind::RawLoad(value)
             | HirExprKind::RawTake(value)
             | HirExprKind::Forget(value)

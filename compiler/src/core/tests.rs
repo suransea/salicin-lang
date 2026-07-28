@@ -72,6 +72,7 @@ pub let index(comptime key: type) = trait {
   let output: type
   let index(comptime a: access)(self: borrow(a)(self))(key: key): borrow(a)(output)
 }
+pub let str: type = builtin()
 "#,
     ]
     .concat()
@@ -124,7 +125,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 337);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 342);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -225,6 +226,7 @@ fn edition_2026_bundle_parses_and_validates() {
             | LangItemKind::AlignOf => {
                 format!("core::memory::{}", kind.source_name())
             }
+            LangItemKind::StrTypeForm => "core::string::str".to_owned(),
             LangItemKind::Continuation | LangItemKind::EffectCallable | LangItemKind::Handle => {
                 format!("core::effect::{}", kind.source_name())
             }
@@ -332,6 +334,7 @@ fn edition_2026_bundle_parses_and_validates() {
             | LangItemKind::PtrValueForm
             | LangItemKind::SizeOf
             | LangItemKind::AlignOf => vec!["memory"],
+            LangItemKind::StrTypeForm => vec!["string"],
             LangItemKind::Continuation | LangItemKind::EffectCallable | LangItemKind::Handle => {
                 vec!["effect"]
             }
@@ -1010,6 +1013,7 @@ pub let index(comptime key: type) = trait {
   let output: type
   let index(comptime a: access)(self: borrow(a)(self))(key: key): borrow(a)(output)
 }
+pub let str: type = builtin()
 "#;
     let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -1035,6 +1039,7 @@ pub let index(comptime key: type) = trait {
     assert_eq!(bundle.lang_items().shl().item_index(), 19);
     assert_eq!(bundle.lang_items().shr().item_index(), 20);
     assert_eq!(bundle.lang_items().index().item_index(), 21);
+    assert_eq!(bundle.lang_items().str_type_form().item_index(), 22);
     for kind in LangItemKind::ALL {
         let item = bundle.lang_items().get(kind);
         assert_eq!(
@@ -1110,6 +1115,7 @@ pub let shr(comptime rhs: type) = trait {
 pub let droppable = trait {
   let drop(self: borrow(mut)(self))(): ()
 }
+pub let str: type = builtin()
 "#;
     let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1192,6 +1198,7 @@ pub let shr(comptime rhs: type) = trait {
   let output: type
   let shr(self)(rhs: rhs): output
 }
+pub let str: type = builtin()
 "#;
     let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1348,6 +1355,7 @@ pub let index(comptime key: type) = trait {
   let output: type
   let index(comptime a: access)(self: borrow(a)(self))(key: key): borrow(a)(output)
 }
+pub let str: type = builtin()
 "#;
     let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 

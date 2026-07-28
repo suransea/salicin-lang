@@ -229,6 +229,7 @@ pub enum LangItemKind {
     BorrowValueForm,
     ArrayTypeForm,
     SliceTypeForm,
+    StrTypeForm,
     PtrTypeForm,
     PtrValueForm,
     SizeOf,
@@ -261,7 +262,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 103] = [
+    const ALL: [Self; 104] = [
         Self::Builtin,
         Self::Foreign,
         Self::Test,
@@ -336,6 +337,7 @@ impl LangItemKind {
         Self::BorrowValueForm,
         Self::ArrayTypeForm,
         Self::SliceTypeForm,
+        Self::StrTypeForm,
         Self::PtrTypeForm,
         Self::PtrValueForm,
         Self::SizeOf,
@@ -443,6 +445,7 @@ impl LangItemKind {
             Self::BorrowValueForm => "borrow",
             Self::ArrayTypeForm => "array",
             Self::SliceTypeForm => "slice",
+            Self::StrTypeForm => "str",
             Self::PtrTypeForm | Self::PtrValueForm => "ptr",
             Self::SizeOf => "size_of",
             Self::AlignOf => "align_of",
@@ -497,6 +500,7 @@ impl LangItemKind {
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::SliceTypeForm
+            | Self::StrTypeForm
             | Self::PtrTypeForm
             | Self::Continuation
             | Self::EffectCallable
@@ -654,6 +658,7 @@ impl LangItemKind {
             | Self::BorrowTypeForm
             | Self::BorrowValueForm
             | Self::ArrayTypeForm
+            | Self::StrTypeForm
             | Self::SliceTypeForm
             | Self::PtrTypeForm
             | Self::PtrValueForm
@@ -813,6 +818,7 @@ pub struct LangItems {
     borrow_value_form: LangItem,
     array_type_form: LangItem,
     slice_type_form: LangItem,
+    str_type_form: LangItem,
     ptr_type_form: LangItem,
     ptr_value_form: LangItem,
     size_of: LangItem,
@@ -1036,6 +1042,9 @@ impl LangItems {
     pub const fn slice_type_form(&self) -> &LangItem {
         &self.slice_type_form
     }
+    pub const fn str_type_form(&self) -> &LangItem {
+        &self.str_type_form
+    }
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
     }
@@ -1173,6 +1182,7 @@ impl LangItems {
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::ArrayTypeForm => &self.array_type_form,
             LangItemKind::SliceTypeForm => &self.slice_type_form,
+            LangItemKind::StrTypeForm => &self.str_type_form,
             LangItemKind::PtrTypeForm => &self.ptr_type_form,
             LangItemKind::PtrValueForm => &self.ptr_value_form,
             LangItemKind::SizeOf => &self.size_of,
@@ -1386,6 +1396,7 @@ impl CoreBundle {
             &mut lang_items.borrow_value_form,
             &mut lang_items.array_type_form,
             &mut lang_items.slice_type_form,
+            &mut lang_items.str_type_form,
             &mut lang_items.ptr_type_form,
             &mut lang_items.ptr_value_form,
             &mut lang_items.size_of,
@@ -1761,6 +1772,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         borrow_value_form: item(LangItemKind::BorrowValueForm),
         array_type_form: item(LangItemKind::ArrayTypeForm),
         slice_type_form: item(LangItemKind::SliceTypeForm),
+        str_type_form: item(LangItemKind::StrTypeForm),
         ptr_type_form: item(LangItemKind::PtrTypeForm),
         ptr_value_form: item(LangItemKind::PtrValueForm),
         size_of: item(LangItemKind::SizeOf),
@@ -1837,6 +1849,7 @@ fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut
             | LangItemKind::BorrowValueForm
             | LangItemKind::ArrayTypeForm
             | LangItemKind::SliceTypeForm
+            | LangItemKind::StrTypeForm
             | LangItemKind::PtrTypeForm
             | LangItemKind::PtrValueForm
             | LangItemKind::SizeOf
@@ -2181,6 +2194,13 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::SliceTypeForm, Item::TypeForm(definition)) => {
             validate_slice_type_form(definition, diagnostics)
+        }
+        (LangItemKind::StrTypeForm, Item::TypeForm(definition)) => {
+            if !definition.compile_groups.is_empty() || !definition.values.is_empty() {
+                diagnostics.push(
+                    "lang item `str` type form must have shape `pub let str: type`".to_owned(),
+                );
+            }
         }
         (LangItemKind::Bool, Item::Enum(definition)) => validate_closed_enum(
             "bool",

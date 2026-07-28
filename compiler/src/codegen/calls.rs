@@ -410,6 +410,9 @@ impl Analyzer {
             if name == "raw_slice_at" {
                 return self.lower_raw_slice_at(&groups, expected, context);
             }
+            if name == "raw_str" || name == "raw_str_bytes" {
+                return self.lower_raw_str_cast(name, &groups, expected, context);
+            }
             if name == "raw_trap" {
                 return self.lower_raw_trap(&groups, context);
             }
@@ -644,6 +647,22 @@ impl Analyzer {
                             return self.lower_generic_function_call(
                                 &canonical, &groups, expected, context,
                             );
+                        }
+                        if let Some(canonical) = (!self
+                            .collection
+                            .inherent_overloads
+                            .contains_key(&overload_key))
+                        .then(|| {
+                            self.collection
+                                .inherent_members
+                                .get(target_template)
+                                .and_then(|members| members.functions.get(variant_name))
+                                .cloned()
+                        })
+                        .flatten()
+                        {
+                            return self
+                                .lower_named_function_call(&canonical, &groups, expected, context);
                         }
                         if self
                             .collection

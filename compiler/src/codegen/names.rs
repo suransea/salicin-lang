@@ -147,6 +147,7 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
             push_canonical_component(&mut encoded, &canonical_type_encoding(element));
             encoded
         }
+        Ty::Str => "str".to_owned(),
         Ty::Struct(name) => {
             let mut encoded = String::from("struct");
             push_canonical_component(&mut encoded, name);
@@ -424,6 +425,7 @@ impl Analyzer {
             Ty::Array(element, length) => {
                 Ty::Array(Box::new(self.stable_abi_type(element)), *length)
             }
+            Ty::Str => Ty::Str,
             Ty::Slice(element) => Ty::Slice(Box::new(self.stable_abi_type(element))),
             Ty::Struct(name) => Ty::Struct(self.stable_abi_nominal_name(name)),
             Ty::Enum(name) => Ty::Enum(self.stable_abi_nominal_name(name)),

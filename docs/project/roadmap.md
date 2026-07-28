@@ -60,8 +60,10 @@ return only a boolean without standard assertions or structured failures.
 The accepted [runtime text contract](text-runtime.md) now fixes literal
 storage, scalar validity, borrowed-view regions, UTF-8 validation and
 boundaries, equality, conversion failure, and iteration behavior. Static
-literal storage and the checked Unicode scalar domain are implemented; the
-loan-retaining borrowed view is the active text slice.
+literal storage, the checked Unicode scalar domain, the loan-retaining
+borrowed view, and checked borrowed UTF-8 validation are implemented.
+Boundary-safe subviews, equality, and ownership-preserving conversion are the
+active text slice.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

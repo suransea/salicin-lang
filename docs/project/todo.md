@@ -32,8 +32,11 @@ status and changelog instead of remaining as a checked archive.
   and from existing byte slices. Compile-time test names and foreign symbols
   remain metadata rather than runtime allocations. The
   [runtime text contract](text-runtime.md), static literal representation, and
-  checked `unicode_scalar` domain are implemented; the next slice is the
-  loan-retaining `str` representation and checked borrowed UTF-8 validation.
+  checked `unicode_scalar` domain are implemented. The source-defined
+  loan-retaining `str` view, checked borrowed UTF-8 validation, `string.as_str`,
+  `str.as_bytes`, and composite-borrow escape/write-conflict enforcement are
+  implemented; the next slice is boundary-safe subviews, exact text equality,
+  and ownership-preserving byte/string conversions with invalid offsets.
 
 - [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
   text and scalars; borrowed text access; `push`, `push_str`, truncation,

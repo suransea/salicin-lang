@@ -276,7 +276,11 @@ impl Analyzer {
         } else {
             self.lower_expr(&body, signature.result.as_ref(), &mut context)
         };
-        if let Some(expected @ Ty::Reference { .. }) = signature.result.as_ref() {
+        if let Some(expected) = signature
+            .result
+            .as_ref()
+            .filter(|expected| !self.type_reference_requirements(expected).is_empty())
+        {
             self.validate_reference_escape_value(&lowered_body, expected, &context);
             self.validate_explicit_reference_returns(&lowered_body, expected, &context);
         }

@@ -1,4 +1,163 @@
 let ptr = core.memory.ptr
+let slice = core.memory.slice
+
+/// Dynamically sized immutable UTF-8 text.
+///
+/// Safe code can only use this type through a shared borrow constructed by
+/// checked UTF-8 validation or from an already-valid `string`.
+pub let str: type = builtin()
+
+let read_byte(value: borrow(u8)): u8 = { value }
+
+let byte_at(bytes: borrow(slice(u8)), index: u64): u8 = {
+  let value = bytes.at(index)
+  read_byte(value)
+}
+
+let is_continuation(byte: u8): bool = {
+  let low: u8 = 128
+  let high: u8 = 191
+  byte >= low && byte <= high
+}
+
+/// Validates the exact well-formed UTF-8 byte sequences from Unicode Table
+/// 3-7. The implementation is allocation-free and reads each byte at most a
+/// constant number of times.
+let is_valid_utf8(bytes: borrow(slice(u8))): bool = {
+  let length = bytes.len()
+  let mut index: u64 = 0
+  let one: u64 = 1
+  let two: u64 = 2
+  let three: u64 = 3
+  let four: u64 = 4
+  let ascii_max: u8 = 127
+  let two_min: u8 = 194
+  let two_max: u8 = 223
+  let e0: u8 = 224
+  let e0_second_min: u8 = 160
+  let continuation_min: u8 = 128
+  let continuation_max: u8 = 191
+  let e1: u8 = 225
+  let ec: u8 = 236
+  let ed: u8 = 237
+  let ed_second_max: u8 = 159
+  let ee: u8 = 238
+  let ef: u8 = 239
+  let f0: u8 = 240
+  let f0_second_min: u8 = 144
+  let f1: u8 = 241
+  let f3: u8 = 243
+  let f4: u8 = 244
+  let f4_second_max: u8 = 143
+  while { index < length } {
+    let first: u8 = byte_at(bytes, index)
+    if first <= ascii_max {
+      index = index + one
+    } else if first >= two_min && first <= two_max {
+      if index + one >= length ||
+        !is_continuation(byte_at(bytes, index + one)) {
+        return(false)
+      }
+      index = index + two
+    } else if first == e0 {
+      if index + two >= length {
+        return(false)
+      }
+      let second: u8 = byte_at(bytes, index + one)
+      if second < e0_second_min || second > continuation_max ||
+        !is_continuation(byte_at(bytes, index + two)) {
+        return(false)
+      }
+      index = index + three
+    } else if first >= e1 && first <= ec {
+      if index + two >= length ||
+        !is_continuation(byte_at(bytes, index + one)) ||
+        !is_continuation(byte_at(bytes, index + two)) {
+        return(false)
+      }
+      index = index + three
+    } else if first == ed {
+      if index + two >= length {
+        return(false)
+      }
+      let second: u8 = byte_at(bytes, index + one)
+      if second < continuation_min || second > ed_second_max ||
+        !is_continuation(byte_at(bytes, index + two)) {
+        return(false)
+      }
+      index = index + three
+    } else if first >= ee && first <= ef {
+      if index + two >= length ||
+        !is_continuation(byte_at(bytes, index + one)) ||
+        !is_continuation(byte_at(bytes, index + two)) {
+        return(false)
+      }
+      index = index + three
+    } else if first == f0 {
+      if index + three >= length {
+        return(false)
+      }
+      let second: u8 = byte_at(bytes, index + one)
+      if second < f0_second_min || second > continuation_max ||
+        !is_continuation(byte_at(bytes, index + two)) ||
+        !is_continuation(byte_at(bytes, index + three)) {
+        return(false)
+      }
+      index = index + four
+    } else if first >= f1 && first <= f3 {
+      if index + three >= length ||
+        !is_continuation(byte_at(bytes, index + one)) ||
+        !is_continuation(byte_at(bytes, index + two)) ||
+        !is_continuation(byte_at(bytes, index + three)) {
+        return(false)
+      }
+      index = index + four
+    } else if first == f4 {
+      if index + three >= length {
+        return(false)
+      }
+      let second: u8 = byte_at(bytes, index + one)
+      if second < continuation_min || second > f4_second_max ||
+        !is_continuation(byte_at(bytes, index + two)) ||
+        !is_continuation(byte_at(bytes, index + three)) {
+        return(false)
+      }
+      index = index + four
+    } else {
+      return(false)
+    }
+  }
+  true
+}
+
+extend(str) {
+  /// Validates borrowed bytes and returns a text view with the same region.
+  let from_utf8(comptime r: region)
+    (bytes: borrow(r)(slice(u8))): core.option(borrow(r)(str)) = {
+    if is_valid_utf8(bytes) {
+      core.option.some(unsafe { raw_str(bytes) })
+    } else {
+      core.option.none
+    }
+  }
+
+  /// Returns the number of UTF-8 bytes.
+  let len(self: borrow(self))(): u64 = {
+    let bytes = unsafe { raw_str_bytes(self) }
+    bytes.len()
+  }
+
+  /// Returns whether this view contains no bytes.
+  let is_empty(self: borrow(self))(): bool = { self.len() == 0 }
+
+  /// Exposes the validated bytes with the same source region.
+  let as_bytes(comptime r: region)
+    (self: borrow(r)(self))(): borrow(r)(slice(u8)) = {
+    unsafe {
+      raw_str_bytes(self)
+    }
+  }
+}
 
 /// One Unicode scalar value: any code point except U+D800..U+DFFF.
 ///
@@ -70,4 +229,12 @@ extend(string) {
   /// Returns whether the string contains no bytes.
   let is_empty(self: borrow(self))(): bool = { self.length == 0 }
 
+  /// Borrows this string as immutable validated UTF-8.
+  let as_str(comptime r: region)
+    (self: borrow(r)(self))(): borrow(r)(str) = {
+    unsafe {
+      let bytes = raw_slice(self.data, self.length, borrow(self))
+      raw_str(bytes)
+    }
+  }
 }

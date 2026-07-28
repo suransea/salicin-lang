@@ -1094,6 +1094,7 @@ impl Analyzer {
                         .map(|argument| self.nominal_type_complexity_with_seen(argument, seen))
                         .sum::<usize>()
             }
+            Ty::Str => 1,
             Ty::Pointer { pointee, .. }
             | Ty::Reference { pointee, .. }
             | Ty::Slice(pointee)

@@ -224,6 +224,7 @@ impl<'a> Emitter<'a> {
                     }
                 }
                 Ty::Array(element, _) | Ty::Slice(element) => collect(element, types),
+                Ty::Str => {}
                 Ty::Function(function) => {
                     for parameter in function.groups.iter().flatten() {
                         collect(parameter, types);
@@ -397,6 +398,7 @@ impl<'a> Emitter<'a> {
             | Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Reference { .. }
+            | Ty::Str
             | Ty::Slice(_)
             | Ty::Never
             | Ty::Function(_)
@@ -1648,6 +1650,13 @@ impl<'a> FunctionEmitter<'a> {
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(element_pointer),
+                })
+            }
+            HirExprKind::RawStrCast(source) => {
+                let source = self.emit_expr(source)?;
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: source.value,
                 })
             }
             HirExprKind::ReferenceRead(reference) => {
@@ -3947,13 +3956,13 @@ impl<'a> FunctionEmitter<'a> {
         &mut self,
         place: &HirPlace,
     ) -> Result<(String, String), Diagnostic> {
-        if matches!(place.ty, Ty::Slice(_))
+        if matches!(place.ty, Ty::Str | Ty::Slice(_))
             && place.projections.is_empty()
             && place.dynamic_index.is_none()
         {
             let storage = self.locals.get(&place.local).cloned().ok_or_else(|| {
                 Diagnostic::new(format!(
-                    "internal error: unknown Slice borrow local id {} in function `{}`",
+                    "internal error: unknown fat-view borrow local id {} in function `{}`",
                     place.local, self.function.name
                 ))
             })?;
@@ -4336,10 +4345,10 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
                 .join(", ")
         )),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
-        Ty::Slice(_) => Err(Diagnostic::new(
-            "internal error: unsized `slice` has no first-class LLVM representation",
-        )),
-        Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_)) => {
+        Ty::Str | Ty::Slice(_) => Err(Diagnostic::new(format!(
+            "internal error: unsized `{ty}` has no first-class LLVM representation",
+        ))),
+        Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Str | Ty::Slice(_)) => {
             Ok("{ ptr, i64 }".to_owned())
         }
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
@@ -4405,7 +4414,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<CtfeValue> {
                     .collect::<Option<Vec<_>>>()?,
             ),
         }),
-        Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => None,
+        Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Str | Ty::Slice(_) => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
             Some(CtfeValue {

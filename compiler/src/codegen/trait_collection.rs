@@ -43,6 +43,7 @@ impl Analyzer {
         for (kind, namespaces) in [
             (LangItemKind::ArrayTypeForm, &[TopLevelNamespace::Type][..]),
             (LangItemKind::SliceTypeForm, &[TopLevelNamespace::Type][..]),
+            (LangItemKind::StrTypeForm, &[TopLevelNamespace::Type][..]),
             (
                 LangItemKind::PtrTypeForm,
                 &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
@@ -65,6 +66,8 @@ impl Analyzer {
             "raw_slice",
             "raw_slice_len",
             "raw_slice_at",
+            "raw_str",
+            "raw_str_bytes",
             "raw_trap",
             "forget",
         ] {

@@ -243,6 +243,7 @@ impl Analyzer {
             } => Some(place.clone()),
             _ => None,
         };
+        let scrutinee_reference_loans = self.reference_loans_for_hir_expr(&scrutinee, context);
 
         for arm in arms {
             context.push_scope();
@@ -254,6 +255,15 @@ impl Analyzer {
                         context
                             .borrowed_parameter_regions
                             .insert(binding.id, origin.clone());
+                    }
+                }
+            }
+            if !scrutinee_reference_loans.is_empty() {
+                for binding in &bindings {
+                    if !self.type_reference_requirements(&binding.ty).is_empty() {
+                        context
+                            .reference_loans
+                            .insert(binding.id, scrutinee_reference_loans.clone());
                     }
                 }
             }

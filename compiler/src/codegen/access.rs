@@ -331,7 +331,8 @@ impl Analyzer {
                     }
                     restricted
                 }
-                Ty::I8
+                Ty::Str
+                | Ty::I8
                 | Ty::I16
                 | Ty::I32
                 | Ty::I64
@@ -376,6 +377,7 @@ impl Analyzer {
             Ty::Array(element, _) | Ty::Slice(element) => {
                 self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
             }
+            Ty::Str => {}
             Ty::Pointer { pointee, .. } => {
                 self.collect_type_api_leaks(pointee, exposed, description, visited, diagnostics)
             }

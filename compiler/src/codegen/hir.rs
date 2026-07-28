@@ -35,6 +35,7 @@ pub(super) enum Ty {
         mutable: bool,
         region: Option<String>,
     },
+    Str,
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
     Struct(String),
@@ -215,6 +216,7 @@ impl fmt::Display for Ty {
                     write!(f, "{qualifier} {pointee}")
                 }
             }
+            Self::Str => f.write_str("str"),
             Self::Slice(element) => write!(f, "slice({element})"),
             Self::Array(element, length) => write!(f, "array({element})({length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
@@ -279,7 +281,7 @@ impl fmt::Display for Ty {
 impl Ty {
     pub(super) fn is_sized_value(&self) -> bool {
         match self {
-            Self::Slice(_) => false,
+            Self::Str | Self::Slice(_) => false,
             Self::Array(element, _) => element.is_sized_value(),
             Self::Tuple(fields) => fields.iter().all(Self::is_sized_value),
             Self::Pointer { .. } | Self::Reference { .. } => true,
@@ -449,7 +451,7 @@ impl HirProgram {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
             Ty::Tuple(fields) => fields.iter().any(|field| self.needs_drop(field)),
-            Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => false,
+            Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Str | Ty::Slice(_) => false,
             Ty::Struct(name) => {
                 self.drop_methods.contains_key(ty)
                     || self.struct_layout(name).is_some_and(|layout| {
@@ -754,6 +756,7 @@ pub(super) enum HirExprKind {
         slice: Box<HirExpr>,
         index: Box<HirExpr>,
     },
+    RawStrCast(Box<HirExpr>),
     ReferenceRead(Box<HirExpr>),
     ReferenceAssign {
         reference: Box<HirExpr>,

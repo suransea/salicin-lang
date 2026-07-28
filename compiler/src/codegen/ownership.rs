@@ -86,7 +86,7 @@ impl Analyzer {
             | Ty::Never
             | Ty::Error => true,
             Ty::Reference { mutable, .. } => !mutable,
-            Ty::Slice(_) => false,
+            Ty::Str | Ty::Slice(_) => false,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Tuple(fields) => fields
                 .iter()
@@ -131,7 +131,7 @@ impl Analyzer {
             return true;
         }
         let result = match ty {
-            Ty::Slice(_) => false,
+            Ty::Str | Ty::Slice(_) => false,
             Ty::Array(element, _) => self.type_is_move_inner(element, visiting),
             Ty::Tuple(fields) => fields
                 .iter()
@@ -204,7 +204,7 @@ impl Analyzer {
                 Ty::Tuple(fields) => fields
                     .iter()
                     .any(|field| self.type_needs_drop_inner(field, visiting)),
-                Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => false,
+                Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Str | Ty::Slice(_) => false,
                 Ty::Struct(name) => {
                     self.collection
                         .struct_layouts

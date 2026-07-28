@@ -849,9 +849,9 @@ impl Analyzer {
             return;
         }
         let target_source = extension.target.clone();
-        let primitive_target = self
-            .probe_source_ty(&target_source)
-            .filter(primitive_scalar_type);
+        let probed_target = self.probe_source_ty(&target_source);
+        let primitive_target = probed_target.clone().filter(primitive_scalar_type);
+        let str_target = probed_target.as_ref() == Some(&Ty::Str);
         let target = match extension.target {
             Type::Named(name, arguments) if arguments.is_empty() => name,
             Type::Named(name, _) => {
@@ -869,9 +869,9 @@ impl Analyzer {
                 return;
             }
         };
-        if primitive_target.is_some() && origin.package != PackageId::CORE.0 {
+        if (primitive_target.is_some() || str_target) && origin.package != PackageId::CORE.0 {
             self.error(format!(
-                "inherent extension for primitive `{target}` must be declared in core"
+                "inherent extension for built-in `{target}` must be declared in core"
             ));
             return;
         }
@@ -884,6 +884,7 @@ impl Analyzer {
             return;
         }
         if primitive_target.is_none()
+            && !str_target
             && !self.collection.struct_defs.contains_key(&target)
             && !self.collection.enum_defs.contains_key(&target)
         {
@@ -891,6 +892,7 @@ impl Analyzer {
             return;
         }
         if primitive_target.is_none()
+            && !str_target
             && self
                 .collection
                 .nominal_accesses
@@ -902,15 +904,19 @@ impl Analyzer {
             ));
             return;
         }
-        let mut member_access = primitive_target.as_ref().map_or_else(
-            || self.nominal_access_or_internal(&target),
-            |_| AccessBoundary {
-                visibility: Visibility::Public,
-                origin: origin.clone(),
-            },
-        );
+        let mut member_access = (primitive_target.is_some() || str_target)
+            .then_some(())
+            .map_or_else(
+                || self.nominal_access_or_internal(&target),
+                |_| AccessBoundary {
+                    visibility: Visibility::Public,
+                    origin: origin.clone(),
+                },
+            );
         let target_ty = if let Some(target) = primitive_target {
             target
+        } else if str_target {
+            Ty::Str
         } else if self.collection.struct_defs.contains_key(&target) {
             Ty::Struct(target.clone())
         } else {

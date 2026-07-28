@@ -559,6 +559,7 @@ impl<'a> HirCleanupPlanner<'a> {
             | Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Reference { .. }
+            | Ty::Str
             | Ty::Slice(_)
             | Ty::Never
             | Ty::Function(_)
@@ -897,6 +898,13 @@ impl<'a> HirCleanupPlanner<'a> {
             }
             HirExprKind::RawSliceLen(slice) => {
                 let Some(cursor) = self.walk_expr(slice, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::RawStrCast(source) => {
+                let Some(cursor) = self.walk_expr(source, cursor, ResultUse::Discard)? else {
                     return Ok(None);
                 };
                 self.initialize_result(cursor, &result_use)?;

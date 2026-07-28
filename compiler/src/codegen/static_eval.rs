@@ -2849,6 +2849,7 @@ impl Analyzer {
                 }
                 Ty::Pointer { .. }
                 | Ty::Reference { .. }
+                | Ty::Str
                 | Ty::Slice(_)
                 | Ty::Function(_)
                 | Ty::Callable(_)

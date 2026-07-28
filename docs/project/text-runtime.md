@@ -56,6 +56,13 @@ view with the same region. A successful subview is tied to its source view's
 region. No safe conversion from a mutable byte slice yields a mutable text
 view; callers retain the byte loan while the shared view exists.
 
+The implemented `str.from_utf8` conversion validates before entering the
+unsafe representation boundary. The internal `raw_str`/`raw_str_bytes` casts
+change only the view invariant and pointee type: they preserve the original
+fat pointer, region, reference origin, and source loan. Composite values such
+as `option(borrow(r)(str))` retain that origin through construction and match
+payload binding.
+
 `str.as_bytes` returns a shared byte slice with the same region. It never
 returns mutable bytes. Borrow checking, rather than runtime ownership flags,
 prevents mutation or deallocation while a view or iterator is live.
@@ -106,8 +113,17 @@ D85, and D92. The checked byte-boundary rule matches the established UTF-8
 slice rule that the start and end are boundaries and an offset beyond the end
 is not. Swift's separate UTF-8 and Unicode-scalar views reinforce keeping byte
 and scalar iteration explicit rather than treating user-perceived characters
-as fixed-width values.
+as fixed-width values. The 2025 Place Capability Graph model makes stored
+borrows and their place/capability relationships explicit; Salicin therefore
+propagates the byte-source loan through the `slice`/`str` view cast and through
+an `option` payload rather than treating validation as a new ownership origin.
+The 2025 *From Linearity to Borrowing* calculus derives borrowing as a
+temporary restriction of owner permissions; correspondingly, a live `str`
+view blocks mutation of its underlying byte place and cannot escape a local
+owner.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
 - [Swift strings and characters](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/stringsandcharacters/)
+- [Place Capability Graphs (OOPSLA 2025)](https://pm.inf.ethz.ch/publications/GrannanBilaFialaGeerMedeirosMuellerSummers25.pdf)
+- [From Linearity to Borrowing (OOPSLA 2025)](https://johnm.li/from-linearity-to-borrowing.pdf)

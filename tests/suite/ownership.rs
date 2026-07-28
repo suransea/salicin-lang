@@ -1,6 +1,37 @@
 use crate::support::*;
 
 #[test]
+fn borrowed_utf8_str_preserves_validation_and_source_loans() {
+    let valid = salic()
+        .arg("run")
+        .arg(fixture("pass", "string_utf8.sc"))
+        .output()
+        .expect("run borrowed UTF-8 str fixture");
+    assert_eq!(valid.status.code(), Some(42), "{}", output_text(&valid));
+
+    for (name, expected) in [
+        (
+            "str_view_local_escape.sc",
+            "source is local or cannot be proven",
+        ),
+        ("str_view_write_conflict.sc", "already borrowed"),
+        ("raw_str_safe.sc", "requires an `unsafe` block"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid borrowed UTF-8 str fixture");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
     let output = salic()
         .arg("run")

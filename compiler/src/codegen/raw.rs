@@ -750,6 +750,77 @@ impl Analyzer {
         }
     }
 
+    pub(super) fn lower_raw_str_cast(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        _expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error(format!("`{name}` requires an `unsafe` block"));
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error(format!(
+                "`{name}` expects exactly one runtime argument group"
+            ));
+            return error_expr();
+        };
+        let argument_name = if name == "raw_str" { "bytes" } else { "text" };
+        let Some(arguments) =
+            self.ordered_call_arguments(name, 1, runtime, &[argument_name.to_owned()])
+        else {
+            return error_expr();
+        };
+        let source = match self.probe_expr_ty(&arguments[0].value, None, context) {
+            super::lower::TypeProbe::Known(source)
+            | super::lower::TypeProbe::KnownSource(source, _) => {
+                self.lower_reference_value_expr(&arguments[0].value, &source, context)
+            }
+            super::lower::TypeProbe::Defaultable(_) | super::lower::TypeProbe::Unsupported => {
+                self.lower_expr(&arguments[0].value, None, context)
+            }
+        };
+        let Ty::Reference {
+            pointee,
+            mutable: false,
+            region,
+        } = &source.ty
+        else {
+            self.error(format!(
+                "`{name}` requires a shared borrowed view, found `{}`",
+                source.ty
+            ));
+            return error_expr();
+        };
+        let valid_source = if name == "raw_str" {
+            matches!(pointee.as_ref(), Ty::Slice(element) if element.as_ref() == &Ty::U8)
+        } else {
+            pointee.as_ref() == &Ty::Str
+        };
+        if !valid_source {
+            self.error(format!(
+                "`{name}` cannot convert `{}`",
+                self.diagnostic_type_name(&source.ty)
+            ));
+            return error_expr();
+        }
+        let desired_pointee = if name == "raw_str" {
+            Ty::Str
+        } else {
+            Ty::Slice(Box::new(Ty::U8))
+        };
+        HirExpr {
+            ty: Ty::Reference {
+                pointee: Box::new(desired_pointee),
+                mutable: false,
+                region: region.clone(),
+            },
+            kind: HirExprKind::RawStrCast(Box::new(source)),
+        }
+    }
+
     pub(super) fn lower_raw_trap(
         &mut self,
         groups: &[&[CallArg]],

@@ -508,6 +508,7 @@ impl Analyzer {
             Ty::Slice(_) => self
                 .ensure_slice_inherent_extensions(&receiver_ty)
                 .expect("slice extension owner exists for slice receiver"),
+            Ty::Str => self.lang_item_name(LangItemKind::StrTypeForm).to_owned(),
             Ty::Array(_, _) => {
                 self.ensure_array_trait_extensions(&receiver_ty);
                 receiver_ty.to_string()

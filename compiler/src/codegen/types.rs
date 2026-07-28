@@ -291,6 +291,16 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::StrTypeForm) =>
+            {
+                if arguments.is_empty() {
+                    Ty::Str
+                } else {
+                    self.error(format!("type `{name}` does not accept type arguments"));
+                    Ty::Error
+                }
+            }
+            Type::Named(name, arguments)
                 if name == self.lang_item_name(LangItemKind::Continuation) =>
             {
                 if arguments.len() != 2 {
@@ -476,6 +486,10 @@ impl Analyzer {
                 self.lang_item_name(LangItemKind::SliceTypeForm).to_owned(),
                 vec![self.source_type_for_ty(element)?],
             )),
+            Ty::Str => Some(Type::Named(
+                self.lang_item_name(LangItemKind::StrTypeForm).to_owned(),
+                Vec::new(),
+            )),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if let Some(value) = usize_value_from_marker(name) {
                     return Some(Type::CompileUSize(value));
@@ -601,6 +615,7 @@ impl Analyzer {
             Ty::Array(element, length) => {
                 format!("array({})({length})", self.diagnostic_type_name(element))
             }
+            Ty::Str => "str".to_owned(),
             Ty::Slice(element) => format!("slice({})", self.diagnostic_type_name(element)),
             Ty::Pointer { pointee, mutable } => format!(
                 "{}({})",
@@ -1704,6 +1719,11 @@ impl Analyzer {
                     return None;
                 };
                 Some(Ty::Slice(Box::new(self.probe_source_ty(element)?)))
+            }
+            Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::StrTypeForm) =>
+            {
+                arguments.is_empty().then_some(Ty::Str)
             }
             Type::Named(name, arguments)
                 if arguments.is_empty()
