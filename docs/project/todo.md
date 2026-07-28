@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Text and conversion
 
-- [ ] **FMT-1 — Parsing and formatting protocols.** Define source-backed,
-  statically dispatched parsing and formatting contracts for integers,
-  booleans, Unicode scalars, borrowed text, and `string`, including overflow,
-  invalid input, allocation, and residual-effect behavior.
-
 - [ ] **FMT-2 — Formatting implementation.** Implement radix-aware integer
   parsing, decimal formatting, boolean and scalar formatting, a `string`
   writer/builder, and minimal display/debug output sufficient for I/O and test

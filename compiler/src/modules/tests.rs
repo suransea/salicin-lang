@@ -1743,6 +1743,7 @@ fn mounted_standard_exports_match_the_validated_bundles() {
         .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
         .chain(CORE_SORT_EXPORTS.iter().map(|name| ("sorts", *name)))
         .chain(CORE_STRING_EXPORTS.iter().map(|name| ("string", *name)))
+        .chain(CORE_FMT_EXPORTS.iter().map(|name| ("fmt", *name)))
         .chain(CORE_LITERAL_EXPORTS.iter().map(|name| ("literal", *name)))
         .chain(CORE_FOREIGN_EXPORTS.iter().map(|name| ("foreign", *name)))
         .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))

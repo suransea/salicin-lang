@@ -47,6 +47,7 @@ const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
 const EDITION_2026_LITERAL: &str = include_str!("../../library/core/src/literal.sc");
 const EDITION_2026_STRING: &str = include_str!("../../library/core/src/string.sc");
+const EDITION_2026_FMT: &str = include_str!("../../library/core/src/fmt.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("prelude", EDITION_2026_PRELUDE),
@@ -76,6 +77,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("memory", EDITION_2026_MEMORY),
     ("literal", EDITION_2026_LITERAL),
     ("string", EDITION_2026_STRING),
+    ("fmt", EDITION_2026_FMT),
 ];
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
@@ -87,6 +89,7 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "passing",
     "literal",
     "string",
+    "fmt",
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();

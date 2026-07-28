@@ -532,6 +532,7 @@ const CORE_STRING_EXPORTS: &[&str] = &[
     "string_into_raw_parts",
     "unicode_scalar",
 ];
+const CORE_FMT_EXPORTS: &[&str] = &["parse", "text_writer", "display", "debug"];
 const CORE_LITERAL_EXPORTS: &[&str] = &["array_literal", "string_literal"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];
@@ -1105,6 +1106,9 @@ fn install_standard_namespaces(
         for name in CORE_STRING_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.string.{name}"));
         }
+        for name in CORE_FMT_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.fmt.{name}"));
+        }
         for name in CORE_FOREIGN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.foreign.{name}"));
         }
@@ -1298,6 +1302,17 @@ fn install_core_namespace(
                 "prelude",
                 name,
                 canonical,
+                "<core>",
+            );
+        }
+        for name in CORE_FMT_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "fmt",
+                name,
+                &format!("core::fmt::{name}"),
                 "<core>",
             );
         }

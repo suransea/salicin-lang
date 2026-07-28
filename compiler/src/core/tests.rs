@@ -107,6 +107,7 @@ fn edition_2026_test_modules<'a>(overrides: &[(&str, &'a str)]) -> Vec<(&'static
         ("memory", EDITION_2026_MEMORY),
         ("numeric", EDITION_2026_NUMERIC),
         ("string", EDITION_2026_STRING),
+        ("fmt", EDITION_2026_FMT),
     ];
     for (module, source) in overrides {
         let Some((_, target)) = modules
@@ -125,7 +126,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 368);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 372);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);

@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.221.0 - 2026-07-28
+
+- Completed FMT-1 by accepting the source-backed parsing and formatting
+  contract and adding `core.fmt` declarations for pure `parse`,
+  effect-parameterized `text_writer`, and statically dispatched `display` and
+  `debug`.
+- Formatting forwards the writer's exact effect row and neither reflects on
+  values nor acquires implicit I/O. Parsing selects a structured associated
+  error and returns `result` without allocation or failure effects.
+
 ## 0.220.0 - 2026-07-28
 
 - Completed TEXT-3 with borrowed `str` byte and Unicode-scalar iterators,

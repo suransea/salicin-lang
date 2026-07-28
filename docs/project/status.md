@@ -457,6 +457,8 @@ Implemented `core` facilities include:
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
 - iteration, indexing, and flow protocols;
+- source-backed `parse`, effect-parameterized text writer, and statically
+  dispatched display/debug protocols in `core.fmt`;
 - zero-allocation runtime UTF-8 string literals backed by immutable private
   globals and owning `string` values that distinguish literal from allocated
   storage;
