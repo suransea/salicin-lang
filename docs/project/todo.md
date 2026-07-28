@@ -22,14 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Text and conversion
-
-- [ ] **FMT-2 — Formatting implementation.** Implement radix-aware integer
-  parsing, decimal formatting, boolean and scalar formatting, a `string`
-  writer/builder, and minimal display/debug output sufficient for I/O and test
-  failure messages. Do not introduce formatting syntax, macros, reflection,
-  locale rules, or implicit I/O.
-
 ### Arrays, slices, vectors, and iteration
 
 - [ ] **COLL-1 — Consistent contiguous access.** Give `array`, `slice`, and

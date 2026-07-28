@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.222.0 - 2026-07-28
+
+- Completed FMT-2 with strict radix-2-through-36 `u64`/`i64` parsing,
+  structured first-byte failure offsets, pre-operation overflow checks, and
+  exact support for both 64-bit extrema. Signs, prefixes, whitespace,
+  separators, and trailing bytes are accepted only where the concrete API
+  explicitly permits them.
+- Added effect-parameterized scalar/ASCII text writers and canonical decimal
+  display/debug implementations for 64-bit and 128-bit signed and unsigned
+  integers, lowercase booleans, Unicode scalars, `str`, and `string`.
+  Formatting remains source-defined and forwards writer effects without
+  reflection or implicit I/O.
+- Added allocation-backed `alloc.string.string_writer`, including capacity
+  reservation, incremental inspection, scalar-safe appends, and ownership
+  transfer on completion. Native coverage exercises radix parsing, overflow
+  offsets, integer extrema, booleans, and non-ASCII output.
+
 ## 0.221.0 - 2026-07-28
 
 - Completed FMT-1 by accepting the source-backed parsing and formatting

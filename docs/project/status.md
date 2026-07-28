@@ -457,8 +457,10 @@ Implemented `core` facilities include:
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
 - iteration, indexing, and flow protocols;
-- source-backed `parse`, effect-parameterized text writer, and statically
-  dispatched display/debug protocols in `core.fmt`;
+- source-backed `parse`, effect-parameterized scalar/ASCII text writers, strict
+  radix-2-through-36 `u64`/`i64` parsing with structured byte-offset errors,
+  and statically dispatched display/debug formatting for 64-bit and 128-bit
+  integers, booleans, Unicode scalars, and text in `core.fmt`;
 - zero-allocation runtime UTF-8 string literals backed by immutable private
   globals and owning `string` values that distinguish literal from allocated
   storage;
@@ -495,6 +497,8 @@ Implemented `alloc` facilities include:
 - ownership-preserving `vec(u8)`/`string` conversion: success transfers the
   allocation, failure retains the original vector and its valid-prefix length,
   and static strings copy into owned bytes;
+- `string_writer`, an allocation-backed pure formatting sink whose empty state
+  and ordered scalar/ASCII appends finish as one owning `string`;
 
 Safe `string` and `str` APIs preserve valid UTF-8 and do not expose mutable
 bytes. Borrowed-view

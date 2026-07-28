@@ -149,9 +149,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = crate::standard::naming_diagnostics(program, "alloc");
-    if program.items.len() != 52
-        || program.item_visibilities.len() != 52
-        || program.item_origins.len() != 52
+    if program.items.len() != 55
+        || program.item_visibilities.len() != 55
+        || program.item_origins.len() != 55
     {
         diagnostics.push(
             "embedded alloc must contain the fixed box, vec, and string bootstrap schema"
@@ -164,7 +164,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 12 | 39 | 47 | 50 | 51) {
+                    let expected = if matches!(index, 0 | 12 | 39 | 47 | 50 | 51 | 52) {
                         Visibility::Public
                     } else if matches!(index, 45 | 46) {
                         Visibility::Package
@@ -423,6 +423,29 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[51] {
             Item::Function(function) if function.name == "string_into_bytes" => {}
             _ => diagnostics.push("alloc string_into_bytes has an invalid shape".to_owned()),
+        }
+        match &program.items[52] {
+            Item::Struct(definition) if definition.name == "string_writer" => {}
+            _ => diagnostics.push("alloc string_writer has an invalid shape".to_owned()),
+        }
+        match &program.items[53] {
+            Item::Extend(extension)
+                if matches!(
+                    &extension.target,
+                    Type::Named(name, arguments)
+                        if name == "string_writer" && arguments.is_empty()
+                ) => {}
+            _ => diagnostics.push("alloc string_writer extension is missing".to_owned()),
+        }
+        match &program.items[54] {
+            Item::Extend(extension)
+                if matches!(
+                    &extension.target,
+                    Type::Named(name, arguments)
+                        if name == "string_writer" && arguments.is_empty()
+                ) => {}
+            _ => diagnostics
+                .push("alloc string_writer protocol implementation is missing".to_owned()),
         }
     }
     if diagnostics.is_empty() {
@@ -1376,7 +1399,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 52);
+        assert_eq!(bundle.program.items.len(), 55);
         assert!(bundle
             .program
             .item_origins
@@ -1388,7 +1411,7 @@ mod tests {
         assert!(bundle.program.item_origins[12..47]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
-        assert!(bundle.program.item_origins[47..52]
+        assert!(bundle.program.item_origins[47..55]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "string"]));
     }

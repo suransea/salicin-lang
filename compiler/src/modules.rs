@@ -419,6 +419,7 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
     ("string", "from_utf8_error"),
     ("string", "string_from_utf8"),
     ("string", "string_into_bytes"),
+    ("string", "string_writer"),
 ];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
@@ -532,7 +533,17 @@ const CORE_STRING_EXPORTS: &[&str] = &[
     "string_into_raw_parts",
     "unicode_scalar",
 ];
-const CORE_FMT_EXPORTS: &[&str] = &["parse", "text_writer", "display", "debug"];
+const CORE_FMT_EXPORTS: &[&str] = &[
+    "parse",
+    "text_writer",
+    "display",
+    "debug",
+    "parse_int_error_kind",
+    "parse_int_error",
+    "parse_u64_radix",
+    "parse_i64_radix",
+    "write_bool",
+];
 const CORE_LITERAL_EXPORTS: &[&str] = &["array_literal", "string_literal"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];

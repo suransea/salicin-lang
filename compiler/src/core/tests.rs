@@ -126,7 +126,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 372);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 409);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);

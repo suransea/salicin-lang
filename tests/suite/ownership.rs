@@ -90,6 +90,16 @@ fn string_iterators_retain_the_source_and_yield_copied_values() {
 }
 
 #[test]
+fn integer_parsing_and_source_backed_formatting_run_with_expected_result() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "formatting.sc"))
+        .output()
+        .expect("run parsing and formatting program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
     let output = salic()
         .arg("run")

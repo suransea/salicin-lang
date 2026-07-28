@@ -66,3 +66,53 @@ pub let string_into_bytes(
     }
   }
 }
+
+/// Allocation-backed UTF-8 writer used by display and debug formatting.
+pub let string_writer = struct {
+  value: core.string.string,
+}
+
+extend(string_writer) {
+  /// Creates an empty writer without allocating.
+  let new(): string_writer = {
+    string_writer { value: core.string.string.new() }
+  }
+
+  /// Creates an empty writer with reserved UTF-8 byte capacity.
+  let with_capacity(capacity: u64): string_writer = {
+    string_writer { value: core.string.string.with_capacity(capacity) }
+  }
+
+  /// Borrows the text written so far.
+  let as_str(comptime r: region)
+    (self: borrow(r)(self))(): borrow(r)(core.string.str) = {
+    self.value.as_str()
+  }
+
+  /// Returns the completed owned string.
+  let finish(move self)(): core.string.string = { self.value }
+}
+
+extend(string_writer, core.fmt.text_writer(pure)) {
+  let write_scalar(self: borrow(mut)(self))
+    (value: core.string.unicode_scalar): () = {
+    self.value.push(value)
+  }
+
+  let write_ascii(self: borrow(mut)(self))(value: u8): () = {
+    if value > 127 {
+      unsafe {
+        raw_trap()
+      }
+    }
+    let mut source = value
+    let mut code: u32 = 0
+    while { source != 0 } {
+      source = source - 1
+      code = code + 1
+    }
+    match core.string.unicode_scalar.from_u32(code)
+      { some(scalar) -> self.value.push(scalar) }
+      { none -> unsafe { raw_trap() } }
+  }
+}

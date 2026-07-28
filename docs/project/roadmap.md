@@ -69,9 +69,10 @@ construction, capacity management, scalar/text append, and checked truncation
 are implemented. Checked owned ranges, ordering, prefix/suffix checks, and
 forward search complete the core `string` operations. Byte and Unicode-scalar
 iteration, scalar counting, and checked scalar lookup complete runtime text.
-The accepted [parsing and formatting contract](formatting.md) fixes pure
-structured parsing and effect-polymorphic writer dispatch. Integer parsing and
-the first concrete display/debug implementations are the active text slice.
+The accepted [parsing and formatting contract](formatting.md) now has strict
+64-bit radix parsing, scalar/ASCII writer dispatch, an allocation-backed
+string writer, and the first concrete display/debug implementations. The
+active slice is consistent checked access across arrays, slices, and vectors.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:
