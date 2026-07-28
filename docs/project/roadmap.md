@@ -57,6 +57,11 @@ text, character iteration, search, and formatting. `array`, `slice`, and
 The source-backed `std` ownership layer and native target boundary are in place, but
 its host-facing modules are not yet implemented. `test("name")` registrations
 return only a boolean without standard assertions or structured failures.
+The accepted [runtime text contract](text-runtime.md) now fixes literal
+storage, scalar validity, borrowed-view regions, UTF-8 validation and
+boundaries, equality, conversion failure, and iteration behavior. Static
+literal storage and the checked Unicode scalar domain are implemented; the
+loan-retaining borrowed view is the active text slice.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:
@@ -78,6 +83,9 @@ Exit conditions:
 - the accepted [standard-library surface](standard-library-surface.md) records the initial module map,
   naming conventions, ownership modes, error types, trap-versus-`option` or
   `result` behavior, and portability boundary;
+- the accepted [runtime text contract](text-runtime.md) records literal
+  linkage, scalar validity, UTF-8 validation, borrow regions, byte boundaries,
+  conversion ownership, equality, iteration, and non-goals;
 - text has a zero-allocation runtime string literal, an invariant-preserving
   borrowed UTF-8 view, a Unicode scalar value, byte and scalar iteration,
   boundary-safe slicing, comparison, common search, and corresponding

@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.214.0 - 2026-07-28
+
+- Accepted the runtime text contract for immutable static literal linkage,
+  loan-retaining borrowed UTF-8 views, Unicode scalar validity, validation and
+  byte boundaries, exact byte equality, ownership-preserving conversion
+  failure, and byte/scalar iteration. Added source-backed `unicode_scalar`
+  with checked `u32` construction, numeric projection, code-point equality,
+  and exact one-to-four-byte canonical UTF-8 length.
+
 ## 0.213.0 - 2026-07-28
 
 - Added `core.numeric` with source-declared integer `min`, `max`, `clamp`, and

@@ -30,7 +30,10 @@ status and changelog instead of remaining as a checked archive.
   Specify escapes, storage/linkage, representation, region behavior,
   construction, equality, byte boundaries, invalid input, and conversions to
   and from existing byte slices. Compile-time test names and foreign symbols
-  remain metadata rather than runtime allocations.
+  remain metadata rather than runtime allocations. The
+  [runtime text contract](text-runtime.md), static literal representation, and
+  checked `unicode_scalar` domain are implemented; the next slice is the
+  loan-retaining `str` representation and checked borrowed UTF-8 validation.
 
 - [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
   text and scalars; borrowed text access; `push`, `push_str`, truncation,

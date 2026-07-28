@@ -517,7 +517,7 @@ const CORE_SORT_EXPORTS: &[&str] = &[
     "effects",
     "parameters",
 ];
-const CORE_STRING_EXPORTS: &[&str] = &["string"];
+const CORE_STRING_EXPORTS: &[&str] = &["string", "unicode_scalar"];
 const CORE_LITERAL_EXPORTS: &[&str] = &["array_literal", "string_literal"];
 const CORE_FOREIGN_EXPORTS: &[&str] = &["abi", "foreign"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move", "comptime"];

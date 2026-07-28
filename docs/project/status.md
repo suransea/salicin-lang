@@ -457,7 +457,11 @@ Implemented `core` facilities include:
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
 - iteration, indexing, and flow protocols;
-- owning UTF-8 `string` and recoverable UTF-8 validation errors;
+- zero-allocation runtime UTF-8 string literals backed by immutable private
+  globals and owning `string` values that distinguish literal from allocated
+  storage;
+- copyable `unicode_scalar` values with checked `u32` construction, numeric
+  projection, code-point equality, and exact canonical UTF-8 byte length;
 - effects, handlers, and control contracts.
 
 Implemented `alloc` facilities include:
@@ -465,8 +469,11 @@ Implemented `alloc` facilities include:
 - `box(t)`;
 - `vec(t)` with mutation and consuming iteration;
 
-Safe `string` APIs preserve valid UTF-8 and do not expose mutable bytes. Text slicing, character
-iteration, Unicode algorithms, and host I/O are not yet library features.
+The accepted [runtime text contract](text-runtime.md) defines the remaining
+borrowed-view, validation, boundary, conversion, and iteration behavior. Safe
+`string` APIs preserve valid UTF-8 and do not expose mutable bytes. Borrowed
+`str`, text slicing, scalar iteration, broader Unicode algorithms, and host
+I/O are not yet library features.
 
 Borrowed `slice_iter(a)(t)` preserves shared or mutable source access and yields
 `borrow(a)(r)(t)`. `vec` iteration consumes elements and drops an unyielded suffix exactly once on

@@ -308,19 +308,19 @@ fn core_string_literals_preserve_utf8_and_representation_privacy() {
         output_text(&output)
     );
 
-    for (name, expected) in [("string_private_fields.sc", "is private")] {
-        let output = salic()
-            .arg("check")
-            .arg(fixture("fail", name))
-            .output()
-            .expect("check invalid String fixture");
-        assert!(!output.status.success(), "{name} unexpectedly compiled");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "{name} did not report `{expected}`:\n{}",
-            output_text(&output)
-        );
-    }
+    let name = "string_private_fields.sc";
+    let expected = "is private";
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", name))
+        .output()
+        .expect("check invalid String fixture");
+    assert!(!output.status.success(), "{name} unexpectedly compiled");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(expected),
+        "{name} did not report `{expected}`:\n{}",
+        output_text(&output)
+    );
 }
 
 #[test]
