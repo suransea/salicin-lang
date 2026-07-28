@@ -114,6 +114,15 @@ only at an in-bounds UTF-8 boundary and otherwise returns `false` without
 mutation. `clear` and successful truncation retain capacity. No safe operation
 exposes the uninitialized tail or a mutable byte view.
 
+## Ordering and search
+
+`str` and `string` ordering is lexicographic over their canonical UTF-8 bytes,
+which preserves Unicode scalar-value order. Prefix, suffix, containment, and
+first-match search operate on exact bytes without normalization or locale
+rules. Search reports the first UTF-8 byte offset, returns zero for an empty
+needle, and only considers scalar boundaries. `string.substring` applies the
+same checked endpoint contract as `str.get` before copying a new owner.
+
 ## Iteration
 
 Byte iteration yields copied `u8` values. Scalar iteration decodes forward and
@@ -161,6 +170,12 @@ aliases from observing an invalid intermediate state. Salicin applies the
 same boundary at a smaller scale: a unique mutable `string` borrow can reserve
 and initialize storage, but the safe surface accepts only already-valid `str`
 or `unicode_scalar` inputs and returns with the UTF-8 typestate restored.
+The PLDI 2026 work on verification modulo tested library contracts treats
+small modular method contracts, checked against tests, as the bridge for
+reasoning about clients of complex libraries. Salicin therefore defines
+ordering, matching, and search once over `str`; owning `string` methods borrow
+that view, and fixtures test boundary, empty-needle, and delegation contracts
+independently.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
@@ -170,3 +185,4 @@ or `unicode_scalar` inputs and returns with the UTF-8 typestate restored.
 - [SafeFFI (2025 preprint)](https://arxiv.org/abs/2510.20688)
 - [Linear effects, exceptions, and resource safety (2025 preprint)](https://arxiv.org/abs/2510.23517)
 - [Typestate via Revocable Capabilities (2026 revision)](https://arxiv.org/abs/2510.08889)
+- [Verification Modulo Tested Library Contracts (PLDI 2026)](https://doi.org/10.1145/3808305)

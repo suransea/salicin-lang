@@ -67,7 +67,8 @@ Boundary-safe subviews, exact text equality, and ownership-preserving byte
 conversion with precise invalid-prefix offsets are implemented. Core `string`
 construction, capacity management, scalar/text append, and checked truncation
 are implemented. Checked owned ranges, ordering, prefix/suffix checks, and
-forward search are the active text slice.
+forward search complete the core `string` operations. Byte and Unicode-scalar
+iteration are the active text slice.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

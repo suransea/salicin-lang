@@ -70,6 +70,16 @@ fn string_construction_and_mutation_preserve_utf8() {
 }
 
 #[test]
+fn string_ranges_ordering_and_search_share_utf8_boundaries() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "string_search.sc"))
+        .output()
+        .expect("run string range and search fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn option_and_result_helpers_preserve_borrows_and_lazy_fallbacks() {
     let output = salic()
         .arg("run")

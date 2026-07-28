@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.219.0 - 2026-07-28
+
+- Completed TEXT-2 with checked owning `string.substring`, lexicographic
+  `str`/`string` ordering, prefix and suffix checks, containment, and
+  first-match search. Owning extraction copies only after both byte endpoints
+  pass the shared UTF-8 boundary contract.
+- Search returns UTF-8 byte offsets, matches an empty needle at zero, and
+  returns only scalar boundaries. The owning APIs delegate to the same
+  allocation-free `str` contracts instead of maintaining parallel search
+  behavior.
+- Scoped the built-in division LLVM regression assertion to its target
+  function body, so unrelated library trap paths cannot perturb its
+  instruction-order check.
+
 ## 0.218.0 - 2026-07-28
 
 - Added owning `string` construction through `new`, `with_capacity`,

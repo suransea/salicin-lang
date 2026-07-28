@@ -24,12 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Text and conversion
 
-- [ ] **TEXT-2 — Complete core `string` operations.** Add checked owned
-  byte-range extraction, ordering, prefix/suffix checks, and forward search.
-  Reuse the implemented borrowed view, constructors, capacity management,
-  scalar/text append, checked truncation, exact equality, and
-  ownership-preserving conversion without exposing mutable UTF-8 bytes.
-
 - [ ] **TEXT-3 — Text iteration.** Add byte and Unicode-scalar iterators,
   scalar counting and lookup, and forward search with exact invalid-boundary
   behavior. Iterators must retain the source loan and never expose mutable

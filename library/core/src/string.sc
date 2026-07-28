@@ -37,6 +37,76 @@ let text_equal(left: borrow(str), right: borrow(str)): bool = {
   true
 }
 
+let text_compare(
+  left: borrow(str),
+  right: borrow(str),
+): core.cmp.partial_ordering = {
+  let left_bytes = left.as_bytes()
+  let right_bytes = right.as_bytes()
+  let shared_length = left_bytes.len().min(right_bytes.len())
+  let mut index: u64 = 0
+  while { index < shared_length } {
+    let left_byte = byte_at(left_bytes, index)
+    let right_byte = byte_at(right_bytes, index)
+    if left_byte < right_byte {
+      return(less)
+    }
+    if left_byte > right_byte {
+      return(greater)
+    }
+    index = index + 1
+  }
+  if left_bytes.len() < right_bytes.len() {
+    less
+  } else if left_bytes.len() > right_bytes.len() {
+    greater
+  } else {
+    equal
+  }
+}
+
+let text_matches_at(
+  value: borrow(str),
+  needle: borrow(str),
+  start: u64,
+): bool = {
+  let value_bytes = value.as_bytes()
+  let needle_bytes = needle.as_bytes()
+  if start > value_bytes.len() ||
+    needle_bytes.len() > value_bytes.len() - start {
+    return(false)
+  }
+  let mut index: u64 = 0
+  while { index < needle_bytes.len() } {
+    if byte_at(value_bytes, start + index) != byte_at(needle_bytes, index) {
+      return(false)
+    }
+    index = index + 1
+  }
+  true
+}
+
+let text_find(value: borrow(str), needle: borrow(str)): core.option(u64) = {
+  let value_length = value.len()
+  let needle_length = needle.len()
+  if needle_length == 0 {
+    return(core.option.some(0))
+  }
+  if needle_length > value_length {
+    return(core.option.none)
+  }
+  let last_start = value_length - needle_length
+  let mut start: u64 = 0
+  while { start <= last_start } {
+    if value.is_char_boundary(start) &&
+      text_matches_at(value, needle, start) {
+      return(core.option.some(start))
+    }
+    start = start + 1
+  }
+  core.option.none
+}
+
 /// Validates the exact well-formed UTF-8 byte sequences from Unicode Table
 /// 3-7. The implementation is allocation-free and reads each byte at most a
 /// constant number of times.
@@ -211,11 +281,46 @@ extend(str) {
       core.option.some(unsafe { raw_subview(self, start, end - start) })
     }
   }
+
+  /// Returns whether this text begins with `prefix`.
+  let starts_with(self: borrow(self))(prefix: borrow(str)): bool = {
+    text_matches_at(self, prefix, 0)
+  }
+
+  /// Returns whether this text ends with `suffix`.
+  let ends_with(self: borrow(self))(suffix: borrow(str)): bool = {
+    if suffix.len() > self.len() {
+      false
+    } else {
+      text_matches_at(self, suffix, self.len() - suffix.len())
+    }
+  }
+
+  /// Returns the first matching UTF-8 byte offset.
+  ///
+  /// The empty needle matches at zero. Every returned offset is a scalar
+  /// boundary in this text.
+  let find(self: borrow(self))(needle: borrow(str)): core.option(u64) = {
+    text_find(self, needle)
+  }
+
+  /// Returns whether `needle` occurs in this text.
+  let contains(self: borrow(self))(needle: borrow(str)): bool = {
+    self.find(needle).is_some()
+  }
 }
 
 extend(str, core.cmp.eq(str)) {
   let eq(self: borrow(self))(other: borrow(str)): bool = {
     text_equal(self, other)
+  }
+}
+
+extend(str, core.cmp.partial_ord(str)) {
+  let partial_cmp(
+    self: borrow(self),
+  )(other: borrow(str)): core.cmp.partial_ordering = {
+    text_compare(self, other)
   }
 }
 
@@ -499,6 +604,37 @@ extend(string) {
   let clear(self: borrow(mut)(self))(): () = {
     self.length = 0
   }
+
+  /// Copies a checked UTF-8 byte range into a new owning string.
+  let substring(self: borrow(self))(start: u64, end: u64): core.option(string) = {
+    let view = self.as_str()
+    match view.get(start, end)
+      { some(part) -> core.option.some(string_copy_from_str(part)) }
+      { none -> core.option.none }
+  }
+
+  /// Returns whether this string begins with `prefix`.
+  let starts_with(self: borrow(self))(prefix: borrow(str)): bool = {
+    let view = self.as_str()
+    view.starts_with(prefix)
+  }
+
+  /// Returns whether this string ends with `suffix`.
+  let ends_with(self: borrow(self))(suffix: borrow(str)): bool = {
+    let view = self.as_str()
+    view.ends_with(suffix)
+  }
+
+  /// Returns the first matching UTF-8 byte offset.
+  let find(self: borrow(self))(needle: borrow(str)): core.option(u64) = {
+    let view = self.as_str()
+    view.find(needle)
+  }
+
+  /// Returns whether `needle` occurs in this string.
+  let contains(self: borrow(self))(needle: borrow(str)): bool = {
+    self.find(needle).is_some()
+  }
 }
 
 extend(string, core.cmp.eq(string)) {
@@ -506,6 +642,16 @@ extend(string, core.cmp.eq(string)) {
     let left = self.as_str()
     let right = other.as_str()
     text_equal(left, right)
+  }
+}
+
+extend(string, core.cmp.partial_ord(string)) {
+  let partial_cmp(
+    self: borrow(self),
+  )(other: borrow(string)): core.cmp.partial_ordering = {
+    let left = self.as_str()
+    let right = other.as_str()
+    text_compare(left, right)
   }
 }
 
