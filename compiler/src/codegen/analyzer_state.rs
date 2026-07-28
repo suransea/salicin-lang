@@ -32,6 +32,13 @@ pub(super) struct CollectionState {
     pub(super) function_instance_names: HashMap<FunctionInstanceKey, String>,
     pub(super) function_instances: HashMap<String, FunctionInstanceInfo>,
     pub(super) function_type_substitutions: HashMap<String, HashMap<String, Type>>,
+    /// Generic core primitive methods whose instances perform a checked
+    /// representation-changing integer conversion.
+    pub(super) integer_conversion_templates: HashMap<String, Ty>,
+    /// Instantiated checked conversion method -> (source, destination).
+    pub(super) integer_conversion_intrinsics: HashMap<String, (Ty, Ty)>,
+    /// Signed magnitude method -> (signed source, unsigned result).
+    pub(super) integer_magnitude_intrinsics: HashMap<String, (Ty, Ty)>,
     pub(super) abstract_type_parameters: HashMap<String, String>,
     pub(super) transparent_parameter_modifiers: HashSet<String>,
     pub(super) globals: HashMap<String, Binding>,

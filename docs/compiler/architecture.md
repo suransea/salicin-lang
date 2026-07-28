@@ -31,8 +31,8 @@ The implementation lives under `compiler/src`:
   preserve resolved provider identities, and resolve names.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library
   sources. `standard.rs` admits ordinary unprivileged `std` definitions,
-  allows private lower-layer implementation aliases, rejects public mirror
-  aliases, and enforces the native target boundary.
+  rejects mirror aliases so each declaration retains one canonical module
+  identity, and enforces the native target boundary.
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.

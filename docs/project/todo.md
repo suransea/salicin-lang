@@ -22,14 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Common values
-
-- [ ] **VALUE-2 — Numeric utilities and conversions.** Add min/max/clamp,
-  sign and magnitude helpers where defined, and explicit checked or fallible
-  conversions between integer widths. Preserve the language's overflow and
-  signed-boundary rules and never lower a failing conversion to backend
-  undefined behavior.
-
 ### Text and conversion
 
 - [ ] **TEXT-1 — Runtime literals, borrowed text, and scalars.** Define a

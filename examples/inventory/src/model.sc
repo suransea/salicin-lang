@@ -1,4 +1,4 @@
-let string = alloc.string.string
+let string = core.string.string
 
 /// Product data owns its validated UTF-8 name.
 pub(package) let product = struct {

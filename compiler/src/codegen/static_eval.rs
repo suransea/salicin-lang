@@ -9,6 +9,7 @@ use crate::core::LangItemKind;
 use super::ctfe_value::{CtfeValue, CtfeValueKind, IntegerEvalError};
 use super::hir::{LayoutQueryKind, Ty};
 use super::lower::{flatten_call, InferredTypeArgument};
+use super::target::NATIVE_TARGET;
 use super::Analyzer;
 
 const STATIC_EVALUATION_FUEL: usize = 16_384;
@@ -1198,10 +1199,11 @@ impl Analyzer {
                     let receiver =
                         self.evaluate_static_body(base, None, locals, fuel, active_calls)?;
                     let target = match &receiver.ty {
-                        Ty::Struct(name) | Ty::Enum(name) => name,
+                        Ty::Struct(name) | Ty::Enum(name) => name.clone(),
+                        ty if ty.is_integer() => ty.to_string(),
                         _ => {
                             return Err(format!(
-                            "ctfe method `{member}` requires a concrete struct or enum receiver, found `{}`",
+                            "ctfe method `{member}` requires an extendable receiver, found `{}`",
                             receiver.ty
                         ));
                         }
@@ -1231,7 +1233,7 @@ impl Analyzer {
                         let inherent = self
                             .collection
                             .inherent_members
-                            .get(target)
+                            .get(&target)
                             .and_then(|members| members.methods.get(member))
                             .cloned();
                         if let Some(inherent) = inherent {
@@ -1286,13 +1288,82 @@ impl Analyzer {
             }
         };
         let display_name = self.diagnostic_function_name(&function_name);
+        let runtime_groups = &groups[runtime_start..];
+        if let Some((source, target)) = self
+            .collection
+            .integer_conversion_intrinsics
+            .get(&function_name)
+            .cloned()
+        {
+            let receiver = receiver.ok_or_else(|| {
+                format!("ctfe integer conversion `{display_name}` requires a receiver")
+            })?;
+            if runtime_groups.iter().any(|group| !group.is_empty()) {
+                return Err(format!(
+                    "ctfe integer conversion `{display_name}` accepts no runtime arguments"
+                ));
+            }
+            let option = self
+                .lowering
+                .signatures
+                .get(&function_name)
+                .and_then(|signature| signature.result.as_ref())
+                .ok_or_else(|| {
+                    format!("ctfe integer conversion `{display_name}` has no result type")
+                })?
+                .clone();
+            let result =
+                self.evaluate_checked_integer_conversion(receiver, &source, &target, &option)?;
+            return if let Some(expected) = expected {
+                Self::expect_static_type(
+                    result,
+                    expected,
+                    &format!("ctfe call `{display_name}` result"),
+                )
+            } else {
+                Ok(result)
+            };
+        }
+        if let Some((source, target)) = self
+            .collection
+            .integer_magnitude_intrinsics
+            .get(&function_name)
+            .cloned()
+        {
+            let receiver = receiver.ok_or_else(|| {
+                format!("ctfe integer magnitude `{display_name}` requires a receiver")
+            })?;
+            if runtime_groups.iter().any(|group| !group.is_empty()) {
+                return Err(format!(
+                    "ctfe integer magnitude `{display_name}` accepts no runtime arguments"
+                ));
+            }
+            let receiver = Self::expect_static_type(
+                receiver,
+                &source,
+                &format!("ctfe integer magnitude `{display_name}` receiver"),
+            )?;
+            let magnitude = receiver
+                .signed_integer_value()
+                .ok_or_else(|| format!("`{source}` has no signed magnitude intrinsic"))?
+                .unsigned_abs();
+            let result = CtfeValue::integer_bits(target, magnitude);
+            return if let Some(expected) = expected {
+                Self::expect_static_type(
+                    result,
+                    expected,
+                    &format!("ctfe call `{display_name}` result"),
+                )
+            } else {
+                Ok(result)
+            };
+        }
         let function = self
             .collection
             .functions
             .get(&function_name)
             .cloned()
             .ok_or_else(|| format!("unknown function `{display_name}` in static expression"))?;
-        let runtime_groups = &groups[runtime_start..];
         let arguments = self.evaluate_static_call_arguments(
             &function_name,
             &function,
@@ -1312,6 +1383,84 @@ impl Analyzer {
         } else {
             Ok(result)
         }
+    }
+
+    fn evaluate_checked_integer_conversion(
+        &self,
+        value: CtfeValue,
+        source: &Ty,
+        target: &Ty,
+        option: &Ty,
+    ) -> Result<CtfeValue, String> {
+        let value = Self::expect_static_type(value, source, "ctfe integer conversion receiver")?;
+        let converted = if source.is_signed() {
+            let signed = value
+                .signed_integer_value()
+                .ok_or_else(|| format!("`{source}` is not a signed integer"))?;
+            if target.is_signed() {
+                let minimum = NATIVE_TARGET
+                    .signed_min(target)
+                    .expect("signed integer target has a minimum");
+                let maximum = NATIVE_TARGET
+                    .signed_max(target)
+                    .expect("signed integer target has a maximum");
+                (minimum..=maximum)
+                    .contains(&signed)
+                    .then(|| CtfeValue::integer_bits(target.clone(), signed as u128))
+            } else {
+                u128::try_from(signed).ok().and_then(|unsigned| {
+                    (unsigned <= NATIVE_TARGET.unsigned_max(target)?)
+                        .then(|| CtfeValue::integer_bits(target.clone(), unsigned))
+                })
+            }
+        } else {
+            let unsigned = value
+                .unsigned_integer_value()
+                .ok_or_else(|| format!("`{source}` is not an unsigned integer"))?;
+            let maximum = if target.is_signed() {
+                NATIVE_TARGET
+                    .signed_max(target)
+                    .map(|maximum| maximum as u128)
+            } else {
+                NATIVE_TARGET.unsigned_max(target)
+            };
+            maximum
+                .filter(|maximum| unsigned <= *maximum)
+                .map(|_| CtfeValue::integer_bits(target.clone(), unsigned))
+        };
+        self.integer_conversion_option(option, target, converted)
+    }
+
+    fn integer_conversion_option(
+        &self,
+        option: &Ty,
+        target: &Ty,
+        converted: Option<CtfeValue>,
+    ) -> Result<CtfeValue, String> {
+        let Ty::Enum(name) = option else {
+            return Err(format!(
+                "checked integer conversion has non-option result `{option}`"
+            ));
+        };
+        let layout = self
+            .collection
+            .enum_layouts
+            .get(name)
+            .ok_or_else(|| format!("missing `option({target})` layout during ctfe"))?;
+        let variant_name = if converted.is_some() { "some" } else { "none" };
+        let variant = layout
+            .variants
+            .iter()
+            .position(|candidate| candidate.name == variant_name)
+            .ok_or_else(|| format!("missing `{variant_name}` option variant during ctfe"))?;
+        Ok(CtfeValue {
+            ty: option.clone(),
+            kind: CtfeValueKind::Enum {
+                name: name.clone(),
+                variant,
+                fields: converted.into_iter().collect(),
+            },
+        })
     }
 
     fn evaluate_inferred_static_function_call(

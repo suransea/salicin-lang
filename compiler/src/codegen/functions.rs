@@ -485,6 +485,11 @@ impl Analyzer {
         }
 
         let template = self.collection.function_templates[template_name].clone();
+        let integer_conversion_source = self
+            .collection
+            .integer_conversion_templates
+            .get(template_name)
+            .cloned();
         let compile_parameters: Vec<_> = template.compile_groups.iter().flatten().collect();
         if compile_parameters.len() != source_arguments.len() {
             self.error(format!(
@@ -573,6 +578,43 @@ impl Analyzer {
             .return_type
             .as_ref()
             .map(|ty| self.lower_source_type(ty));
+        let integer_conversion_target = if let Some(source) = integer_conversion_source.as_ref() {
+            let Some(target) = substitutions
+                .get("output")
+                .map(|target| self.lower_source_type(target))
+                .filter(Ty::is_integer)
+            else {
+                self.error(
+                    "`checked_into` requires an integer `output` type such as `u8` or `i64`",
+                );
+                return None;
+            };
+            let valid_result = result.as_ref().is_some_and(|result| {
+                let Ty::Enum(name) = result else {
+                    return false;
+                };
+                self.collection
+                    .enum_layouts
+                    .get(name)
+                    .is_some_and(|layout| {
+                        layout.variants.iter().any(|variant| {
+                            variant.name == "some"
+                                && variant.fields.len() == 1
+                                && variant.fields[0].ty == target
+                        }) && layout
+                            .variants
+                            .iter()
+                            .any(|variant| variant.name == "none" && variant.fields.is_empty())
+                    })
+            });
+            if !valid_result {
+                self.error("internal error: `checked_into` must return `option(output)`");
+                return None;
+            }
+            Some((source.clone(), target))
+        } else {
+            None
+        };
         let failure_error = function
             .effects
             .failure
@@ -595,7 +637,13 @@ impl Analyzer {
             canonical.clone(),
             self.collection.function_template_origins[template_name].clone(),
         );
-        self.collection.function_order.push(canonical.clone());
+        if let Some(intrinsic) = integer_conversion_target {
+            self.collection
+                .integer_conversion_intrinsics
+                .insert(canonical.clone(), intrinsic);
+        } else {
+            self.collection.function_order.push(canonical.clone());
+        }
         Some(canonical)
     }
 }

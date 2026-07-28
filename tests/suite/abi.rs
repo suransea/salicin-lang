@@ -50,7 +50,9 @@ fn tuple_diagnostics_are_source_level_and_specific() {
 
 #[test]
 fn primitive_scalar_widths_and_boundaries_run_natively() {
-    for (name, output) in batched_native_fixture_outputs(&["primitive_scalar_widths.sc"]) {
+    for (name, output) in
+        batched_native_fixture_outputs(&["primitive_scalar_widths.sc", "numeric_utilities.sc"])
+    {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -86,6 +88,10 @@ fn primitive_scalar_overflows_and_conversions_are_diagnosed() {
         (
             "primitive_no_implicit_widening.sc",
             "type mismatch for argument for parameter `value`: expected `i16`, found `i8`",
+        ),
+        (
+            "numeric_checked_into_non_integer.sc",
+            "`checked_into` requires an integer `output` type",
         ),
     ];
     for (name, expected) in cases {

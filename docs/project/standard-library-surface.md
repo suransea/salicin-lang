@@ -23,14 +23,18 @@ The surface follows six rules.
    made safe merely by living in the standard library.
 5. `io` is visible host authority, not an error-transport mechanism. Host
    failures are values returned in `result(io_error)(t)`.
-6. Each ordinary operation has one canonical name. Overloads may share a name
+6. Each declaration has one canonical definition module. Library source uses
+   that path directly; mirror aliases and per-module re-export facades are
+   forbidden in `std`. The deliberately small `core.lib`, `core.prelude`, and
+   operator-oriented `core.ops` facades are explicit exceptions.
+7. Each ordinary operation has one canonical name. Overloads may share a name
    only when they have the same semantics and are unambiguous from their
    inputs; return-type-only overloads are forbidden.
 
 Names prioritize clarity at the call site. Boolean queries use `is_` or
 `has_`; mutating operations use imperative verbs; consuming transformations
-use `into_`; borrowed projections use `as_`; checked conversions use
-`to_` or `try_`; unchecked operations end in `_unchecked`.
+use `into_`; borrowed projections use `as_`; checked integer conversions use
+`checked_into`; unchecked operations end in `_unchecked`.
 
 ### Naming by semantic category
 
@@ -87,8 +91,8 @@ allocator or host symbol.
 | `core.ops` | arithmetic, bit, assignment, and indexing protocols |
 | `core.flow` | chaining, fallback, unwrap, and typed raising protocols |
 | `core.iter` | iterator protocols and allocation-free algorithms |
-| `core.convert` | checked scalar and numeric conversion protocols |
-| `core.text` | borrowed UTF-8 `str`, `unicode_scalar`, validation, and iteration |
+| `core.numeric` | integer bounds, sign/magnitude helpers, and checked width conversion |
+| `core.string` | canonical UTF-8 `string`, literals, borrowed views, scalars, validation, and iteration |
 | `core.fmt` | allocation-free parse, display, debug, and writer protocols |
 | `core.effect` | effect-handler machinery |
 | `core.error` | typed failure effect machinery |
@@ -109,7 +113,7 @@ added when a declaration moves.
 | --- | --- |
 | `alloc.boxed` | the owning `box(t)` allocation |
 | `alloc.vec` | `vec(t)` and consuming vector iteration |
-| `alloc.string` | owning UTF-8 `string` and ownership-preserving conversion errors |
+| `alloc.string` | allocating `string` construction/mutation helpers and ownership-preserving conversion errors |
 | `alloc.fmt` | `string_writer` and allocation-backed formatting helpers |
 
 `alloc.raw` remains package-private. Safe source cannot call the allocator or
@@ -134,8 +138,8 @@ policy-bearing and host-facing facilities without mirroring lower layers.
 
 The compiler embeds the edition-matched `library/std` sources. Public
 definitions receive ordinary `std` identities and no compiler authority;
-private lower-layer aliases may support implementation without expanding the
-mounted surface. Mirror re-exports are forbidden by policy. Duplicate
+library implementations reference lower-layer declarations by their canonical
+qualified paths. Private and public mirror aliases are forbidden. Duplicate
 exports, dependencies outside the three standard layers, and unsupported
 native targets are rejected. A user module or dependency cannot claim
 `core`, `alloc`, or `std`.
@@ -150,9 +154,10 @@ protocols, cold futures, and the executor protocol remain in `core`;
 `semigroup`, `monoid`, `functor`, `applicative`, `monad`, their standard
 implementations, and the concrete `spin` executor belong to `std`.
 Text, conversion, and formatting do not acquire parallel `std` modules:
-allocation-free protocols and operations use `core.text`, `core.convert`, and
-`core.fmt`, while owning strings and allocating format builders use
-`alloc.string` and `alloc.fmt`.
+the canonical string type and allocation-free operations use `core.string`,
+numeric operations use `core.numeric`, and formatting protocols use
+`core.fmt`; allocation-backed string helpers and format builders use
+`alloc.string` and `alloc.fmt` without defining a second string type.
 
 This boundary follows current freestanding-library practice rather than file
 size or conceptual generality. Rust 1.97 describes `core` as dependency-free,

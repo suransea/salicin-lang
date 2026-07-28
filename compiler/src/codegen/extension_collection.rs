@@ -848,6 +848,10 @@ impl Analyzer {
             self.collect_trait_extension(extension, origin);
             return;
         }
+        let target_source = extension.target.clone();
+        let primitive_target = self
+            .probe_source_ty(&target_source)
+            .filter(primitive_scalar_type);
         let target = match extension.target {
             Type::Named(name, arguments) if arguments.is_empty() => name,
             Type::Named(name, _) => {
@@ -856,11 +860,21 @@ impl Analyzer {
                 ));
                 return;
             }
+            _ if primitive_target.is_some() => primitive_target
+                .as_ref()
+                .expect("primitive target was detected")
+                .to_string(),
             _ => {
                 self.error("extend target must be a non-generic nominal type in M1");
                 return;
             }
         };
+        if primitive_target.is_some() && origin.package != PackageId::CORE.0 {
+            self.error(format!(
+                "inherent extension for primitive `{target}` must be declared in core"
+            ));
+            return;
+        }
         if self.collection.struct_templates.contains_key(&target)
             || self.collection.enum_templates.contains_key(&target)
         {
@@ -869,25 +883,35 @@ impl Analyzer {
             ));
             return;
         }
-        if !self.collection.struct_defs.contains_key(&target)
+        if primitive_target.is_none()
+            && !self.collection.struct_defs.contains_key(&target)
             && !self.collection.enum_defs.contains_key(&target)
         {
             self.error(format!("unknown extension target `{target}`"));
             return;
         }
-        if self
-            .collection
-            .nominal_accesses
-            .get(&target)
-            .is_some_and(|access| access.origin.package != origin.package)
+        if primitive_target.is_none()
+            && self
+                .collection
+                .nominal_accesses
+                .get(&target)
+                .is_some_and(|access| access.origin.package != origin.package)
         {
             self.error(format!(
                 "inherent extension for `{target}` must be declared in the package that defines the type"
             ));
             return;
         }
-        let mut member_access = self.nominal_access_or_internal(&target);
-        let target_ty = if self.collection.struct_defs.contains_key(&target) {
+        let mut member_access = primitive_target.as_ref().map_or_else(
+            || self.nominal_access_or_internal(&target),
+            |_| AccessBoundary {
+                visibility: Visibility::Public,
+                origin: origin.clone(),
+            },
+        );
+        let target_ty = if let Some(target) = primitive_target {
+            target
+        } else if self.collection.struct_defs.contains_key(&target) {
             Ty::Struct(target.clone())
         } else {
             Ty::Enum(target.clone())
@@ -993,8 +1017,7 @@ impl Analyzer {
                     };
 
                     let mut self_substitution = HashMap::new();
-                    self_substitution
-                        .insert("self".to_owned(), Type::Named(target.clone(), Vec::new()));
+                    self_substitution.insert("self".to_owned(), target_source.clone());
                     substitute_function_types(&mut function, &self_substitution);
                     if !is_method {
                         if let Some(body) = &mut function.body {
@@ -1015,7 +1038,16 @@ impl Analyzer {
                             .push(canonical.clone());
                     }
                     function.name = canonical.clone();
+                    let checked_integer_conversion =
+                        target_ty.is_integer() && short_name == "checked_into" && function.builtin;
+                    let integer_magnitude =
+                        target_ty.is_signed() && short_name == "magnitude" && function.builtin;
                     if generic_member {
+                        if checked_integer_conversion {
+                            self.collection
+                                .integer_conversion_templates
+                                .insert(canonical.clone(), target_ty.clone());
+                        }
                         self.collection
                             .function_template_order
                             .push(canonical.clone());
@@ -1044,6 +1076,22 @@ impl Analyzer {
                             .return_type
                             .as_ref()
                             .map(|result| self.lower_source_type(result));
+                        if integer_magnitude {
+                            let Some(result) = result.as_ref().filter(|result| {
+                                result.is_integer()
+                                    && !result.is_signed()
+                                    && super::target::NATIVE_TARGET.integer_width(result)
+                                        == super::target::NATIVE_TARGET.integer_width(&target_ty)
+                            }) else {
+                                self.error(format!(
+                                    "primitive `{target}.magnitude` must return the same-width unsigned integer"
+                                ));
+                                continue;
+                            };
+                            self.collection
+                                .integer_magnitude_intrinsics
+                                .insert(canonical.clone(), (target_ty.clone(), result.clone()));
+                        }
                         let failure_error = function
                             .effects
                             .failure
@@ -1060,7 +1108,9 @@ impl Analyzer {
                                 result,
                             },
                         );
-                        self.collection.function_order.push(canonical.clone());
+                        if !integer_magnitude {
+                            self.collection.function_order.push(canonical.clone());
+                        }
                         self.collection
                             .functions
                             .insert(canonical.clone(), function);

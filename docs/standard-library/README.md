@@ -35,6 +35,7 @@ library/
     string.sc
     borrow.sc
     memory.sc
+    numeric.sc
     control.sc
     iter.sc
   alloc/src/
@@ -79,6 +80,10 @@ let string = core.string.string
 The compiler validates and embeds the matching `library/std` source bundle
 alongside the lower-level `core` and `alloc` namespaces. `std` contains only
 its own declarations; it does not manufacture duplicate lower-layer paths.
+Its source uses canonical qualified paths internally: private shortcuts and
+public re-exports are both rejected as mirrors. Re-export facades are reserved
+for the explicitly documented `core.lib`, `core.prelude`, and `core.ops`
+surfaces.
 No declaration can obtain compiler authority by copying a privileged name or
 shape.
 Unsupported hosts are rejected before semantic analysis. The initial
@@ -117,9 +122,9 @@ must come from the matching `core`, while user declarations with the same spelli
 declarations. `std`, `core`, and `alloc` are reserved top-level namespaces, not manifest
 dependencies.
 
-The complete [`examples/inventory`](../../examples/inventory) package exercises file modules,
-validated owning strings, recoverable byte conversion, a vector of non-`copyable` values, consuming
-iteration, and user trait dispatch.
+The complete [`examples/inventory`](../../examples/inventory) package exercises
+file modules, canonical runtime string literals across module boundaries, a
+vector of non-`copyable` values, consuming iteration, and user trait dispatch.
 
 The accepted [initial surface contract](../project/standard-library-surface.md) defines the next
 modules, host boundary, failure policy, and minimum API matrix.

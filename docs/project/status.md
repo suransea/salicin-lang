@@ -120,6 +120,15 @@ at that width. The static expression IR excludes runtime-only operations,
 substitutes generic `usize` values before evaluation, and diagnoses
 nontermination through a bounded evaluator.
 
+Every primitive integer has source-declared `min`, `max`, `clamp`, and `sign`
+methods. Signed integers expose a total same-width unsigned `magnitude`, so
+the signed minimum is representable. Explicit
+`checked_into(output: target)()` conversion accepts only integer targets and
+returns `option(target)` without truncating on failure. CTFE and LLVM lowering
+share the same signed and width boundaries; LLVM uses defined comparisons,
+extensions, and truncations without overflow flags or backend undefined
+behavior.
+
 Dependent-expression evaluation and global constant normalization now share
 one recursive typed CTFE value. It retains the exact integer type,
 distinguishes tuples from arrays, records canonical struct and enum identity,
@@ -415,8 +424,9 @@ The source library is split into:
   host facilities still to be added.
 
 The compiler embeds `library/std`. Ordinary public definitions receive `std`
-identities; private lower-layer aliases may support implementation, while
-public mirror aliases are rejected. The bundle participates in incremental
+identities, while both private shortcuts and public re-exports of another
+canonical path are rejected as mirrors. Standard-library implementations use
+qualified lower-layer paths directly. The bundle participates in incremental
 fingerprints and semantic preprocessing. It cannot define language items or
 acquire authority by name, and ordinary source cannot reserve the `std`,
 `core`, or `alloc` namespaces. Host-library loading is accepted only on
@@ -440,19 +450,20 @@ are not subjected to this library-only naming gate.
 Implemented `core` facilities include:
 
 - primitive declarations and compile-time sorts;
+- primitive integer bounds, sign and total magnitude helpers, and checked
+  conversions in `core.numeric`;
 - `borrow`, `ptr`, `array`, `slice`, `size_of`, and `align_of`;
 - ownership markers and operator traits;
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
 - iteration, indexing, and flow protocols;
+- owning UTF-8 `string` and recoverable UTF-8 validation errors;
 - effects, handlers, and control contracts.
 
 Implemented `alloc` facilities include:
 
 - `box(t)`;
 - `vec(t)` with mutation and consuming iteration;
-- owning UTF-8 `string`;
-- recoverable UTF-8 validation errors.
 
 Safe `string` APIs preserve valid UTF-8 and do not expose mutable bytes. Text slicing, character
 iteration, Unicode algorithms, and host I/O are not yet library features.

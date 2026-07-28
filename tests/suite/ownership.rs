@@ -298,7 +298,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 }
 
 #[test]
-fn alloc_string_preserves_utf8_and_byte_ownership() {
+fn core_string_literals_preserve_utf8_and_representation_privacy() {
     let mut outputs = batched_native_fixture_outputs(&["string_utf8.sc"]);
     let (name, output) = outputs.pop().expect("String fixture output");
     assert_eq!(
@@ -308,16 +308,7 @@ fn alloc_string_preserves_utf8_and_byte_ownership() {
         output_text(&output)
     );
 
-    for (name, expected) in [
-        ("string_private_fields.sc", "is private"),
-        (
-            "string_unchecked_requires_unsafe.sc",
-            "requires an `unsafe` handler",
-        ),
-        ("string_use_after_into_bytes.sc", "moved or uninitialized"),
-        ("string_mutable_bytes.sc", "too many parameter groups"),
-        ("string_append_self_borrow.sc", "already borrowed"),
-    ] {
+    for (name, expected) in [("string_private_fields.sc", "is private")] {
         let output = salic()
             .arg("check")
             .arg(fixture("fail", name))

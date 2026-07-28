@@ -17,7 +17,8 @@ use super::hir::{
     type_is_assignable, AccessBoundary, AccessKind, CallableKind, ClosureCaptureMode,
     ClosureCapturePolicy, ClosureCaptureUse, ClosureEffectContext, FunctionSig, FunctionTy,
     HirArgument, HirBinding, HirExpr, HirExprKind, HirPlace, HirReadKind, HirStmt, LoanId,
-    LocalCapability, ParamSig, Ty,
+    LocalCapability, ParamSig, Ty, CHECKED_INTEGER_CONVERSION_INTRINSIC,
+    INTEGER_MAGNITUDE_INTRINSIC,
 };
 use super::lower::{
     contextual_reference_result, error_expr, flatten_call, partial_callable_ty,
@@ -511,6 +512,7 @@ impl Analyzer {
                 self.ensure_array_trait_extensions(&receiver_ty);
                 receiver_ty.to_string()
             }
+            ty if ty.is_integer() => ty.to_string(),
             ty => {
                 self.error(format!(
                     "method call requires an extendable receiver, found `{ty}`"
@@ -909,6 +911,21 @@ impl Analyzer {
         }
         self.release_loans(&temporary_loans, context);
         let call = if complete {
+            let lowered_function = if self
+                .collection
+                .integer_conversion_intrinsics
+                .contains_key(&canonical)
+            {
+                CHECKED_INTEGER_CONVERSION_INTRINSIC.to_owned()
+            } else if self
+                .collection
+                .integer_magnitude_intrinsics
+                .contains_key(&canonical)
+            {
+                INTEGER_MAGNITUDE_INTRINSIC.to_owned()
+            } else {
+                canonical.clone()
+            };
             let call = HirExpr {
                 ty: if function_ty.failure_error.is_some() {
                     (*function_ty.result).clone()
@@ -916,7 +933,7 @@ impl Analyzer {
                     contextual_reference_result(&function_ty.result, expected)
                 },
                 kind: HirExprKind::Call {
-                    function: canonical,
+                    function: lowered_function,
                     arguments: arguments.clone(),
                     consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),

@@ -24,6 +24,7 @@ const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.
 const EDITION_2026_NEVER: &str = include_str!("../../library/core/src/never.sc");
 const EDITION_2026_MARKER: &str = include_str!("../../library/core/src/marker.sc");
 const EDITION_2026_PRIMITIVES: &str = include_str!("../../library/core/src/primitives.sc");
+const EDITION_2026_NUMERIC: &str = include_str!("../../library/core/src/numeric.sc");
 const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
 const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
 const EDITION_2026_ERROR: &str = include_str!("../../library/core/src/error.sc");
@@ -52,6 +53,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("never", EDITION_2026_NEVER),
     ("marker", EDITION_2026_MARKER),
     ("primitives", EDITION_2026_PRIMITIVES),
+    ("numeric", EDITION_2026_NUMERIC),
     ("option", EDITION_2026_OPTION),
     ("result", EDITION_2026_RESULT),
     ("error", EDITION_2026_ERROR),
@@ -78,6 +80,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "primitives",
+    "numeric",
     "effect",
     "control",
     "iter",

@@ -470,6 +470,15 @@ impl Analyzer {
                 .cloned()
                 .map(Box::new);
             let template = self.collection.function_templates[&template_name].clone();
+            if self
+                .collection
+                .integer_conversion_templates
+                .contains_key(&template_name)
+            {
+                // Every concrete `checked_into` instance is validated against
+                // its selected integer target when it is instantiated.
+                continue;
+            }
             if [LangItemKind::DoWhile, LangItemKind::For]
                 .into_iter()
                 .any(|kind| {

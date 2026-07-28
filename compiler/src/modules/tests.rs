@@ -1753,6 +1753,7 @@ fn mounted_standard_exports_match_the_validated_bundles() {
                 .map(|name| ("borrow", *name)),
         )
         .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
+        .chain(CORE_NUMERIC_EXPORTS.iter().map(|name| ("numeric", *name)))
         .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
         .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
         .collect::<BTreeSet<_>>();

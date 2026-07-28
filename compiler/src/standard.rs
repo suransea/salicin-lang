@@ -162,7 +162,7 @@ impl StdBundle {
                     target,
                 });
             }
-            for import in parsed.uses {
+            if let Some(import) = parsed.uses.into_iter().next() {
                 let Some(name) = import.alias else {
                     return Err(StdBundleError::new(
                         edition,
@@ -192,13 +192,10 @@ impl StdBundle {
                         )],
                     ));
                 }
-                if import.visibility != Visibility::Public {
-                    continue;
-                }
                 return Err(StdBundleError::new(
                     edition,
                     vec![format!(
-                        "embedded std alias `{}` is a public mirror; reference its canonical lower-layer path directly",
+                        "embedded std alias `{}` mirrors another canonical path; reference the target directly",
                         display_export(module, &name)
                     )],
                 ));
@@ -360,17 +357,21 @@ mod tests {
     }
 
     #[test]
-    fn std_bundle_accepts_definitions_and_private_implementation_aliases() {
+    fn std_bundle_accepts_definitions_and_rejects_mirror_aliases() {
         StdBundle::from_modules(
             Edition::Edition2026,
-            &[(
-                "owned",
-                "let option = core.option.option\npub let service = trait {}\n",
-            )],
+            &[("owned", "pub let service = trait {}\n")],
         )
         .unwrap();
         for (source, expected) in [
-            ("pub let option = core.option.option", "is a public mirror"),
+            (
+                "let option = core.option.option",
+                "mirrors another canonical path",
+            ),
+            (
+                "pub let option = core.option.option",
+                "mirrors another canonical path",
+            ),
             (
                 "pub let forged = dependency.value",
                 "may target only `core`, `alloc`, or `std`",

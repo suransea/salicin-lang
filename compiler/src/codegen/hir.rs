@@ -5,6 +5,10 @@ use crate::ast::{BinaryOp, ItemOrigin, PassMode, StructRepresentation, Type, Una
 
 use super::ctfe_value::CtfeValue;
 
+pub(super) const CHECKED_INTEGER_CONVERSION_INTRINSIC: &str =
+    "$intrinsic$checked_integer_conversion";
+pub(super) const INTEGER_MAGNITUDE_INTRINSIC: &str = "$intrinsic$integer_magnitude";
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Ty {
     I8,

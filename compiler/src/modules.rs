@@ -506,6 +506,7 @@ const CORE_ASYNC_EXPORTS: &[&str] = &["suspension", "poll", "future", "executor"
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
+const CORE_NUMERIC_EXPORTS: &[&str] = &["sign"];
 const CORE_SORT_EXPORTS: &[&str] = &[
     "sort",
     "sort_of",
@@ -1102,6 +1103,9 @@ fn install_standard_namespaces(
         for name in CORE_MEMORY_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.memory.{name}"));
         }
+        for name in CORE_NUMERIC_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.numeric.{name}"));
+        }
         for name in CORE_ITER_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
         }
@@ -1465,6 +1469,17 @@ fn install_core_namespace(
                 "primitives",
                 name,
                 &format!("core::primitives::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_NUMERIC_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "numeric",
+                name,
+                &format!("core::numeric::{name}"),
                 "<core>",
             );
         }

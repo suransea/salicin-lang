@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+- Added `core.numeric` with source-declared integer `min`, `max`, `clamp`, and
+  three-way `sign`; total same-width unsigned `magnitude`; and explicit
+  `checked_into(output: integer)()` conversion returning `option`. CTFE and
+  LLVM lowering agree on every signed and width boundary without overflow
+  flags, implicit truncation, or backend undefined behavior.
+- Tightened the canonical-module rule for embedded `std`: both private
+  shortcut aliases and public mirror re-exports are rejected, and
+  `std.async` now references its `core.async` contracts directly.
+- Unified the runtime owning `string` under `core.string`, added explicit sort
+  universes, and made array and string literal construction dispatch through
+  source-declared traits.
+- Split oversized compiler phases into focused parser, cleanup, async,
+  expression, call, extension, and trait modules without changing their
+  semantic boundaries, and parallelized the heaviest compiler corpus checks.
+
 ## 0.212.0 - 2026-07-27
 
 - Reworked the embedded library dependency architecture as

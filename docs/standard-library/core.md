@@ -52,6 +52,18 @@ pub let result(comptime e: type)
 Naming `option` or `result` requires an ordinary root alias such as
 `let option = core.option` or `let result = core.result`.
 
+`core.numeric` extends every primitive integer with `min`, `max`, `clamp`,
+and `sign`. Signed integers return a same-width unsigned value from
+`magnitude`, including at the signed minimum; unsigned magnitude is the
+identity. `value.checked_into(output: target)()` returns
+`core.option(target)` and accepts only another integer type. A value outside
+the target range produces `none`; there is no implicit, wrapping, or
+truncating fallback. Invalid `clamp` bounds trap.
+
+These methods have one canonical owner and are not mirrored through `std`.
+Their compiler intrinsics preserve the source contract in CTFE and native
+code, including `isize`/`usize` at the compiler's explicit target width.
+
 Their inherent helper surface is allocation-free:
 
 | Type | Inspection/view | Transform | Fallback/conversion |

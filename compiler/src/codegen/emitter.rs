@@ -1,6 +1,8 @@
 use std::fmt;
 
 use super::ctfe_value::{CtfeValue, CtfeValueKind};
+use super::hir::{CHECKED_INTEGER_CONVERSION_INTRINSIC, INTEGER_MAGNITUDE_INTRINSIC};
+use super::target::NATIVE_TARGET;
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
@@ -1203,6 +1205,223 @@ impl<'a> FunctionEmitter<'a> {
         Ok(())
     }
 
+    fn emit_integer_intrinsic_operand(
+        &mut self,
+        arguments: &[HirArgument],
+        name: &str,
+    ) -> Result<Operand, Diagnostic> {
+        let [HirArgument::Copy(expression) | HirArgument::Move(expression)] = arguments else {
+            return Err(Diagnostic::new(format!(
+                "internal error: `{name}` requires exactly one integer value argument"
+            )));
+        };
+        let operand = self.emit_expr(expression)?;
+        if !operand.ty.is_integer() {
+            return Err(Diagnostic::new(format!(
+                "internal error: `{name}` received non-integer `{}`",
+                operand.ty
+            )));
+        }
+        Ok(operand)
+    }
+
+    fn emit_integer_magnitude(
+        &mut self,
+        arguments: &[HirArgument],
+        result: &Ty,
+    ) -> Result<Operand, Diagnostic> {
+        let operand = self.emit_integer_intrinsic_operand(arguments, "integer magnitude")?;
+        if !operand.ty.is_signed()
+            || result.is_signed()
+            || NATIVE_TARGET.integer_width(&operand.ty) != NATIVE_TARGET.integer_width(result)
+        {
+            return Err(Diagnostic::new(format!(
+                "internal error: invalid magnitude conversion from `{}` to `{result}`",
+                operand.ty
+            )));
+        }
+        let llvm_ty = llvm_value_type(&operand.ty)?;
+        let value = operand.value()?;
+        let negative = self.fresh_register();
+        self.instruction(format!("{negative} = icmp slt {llvm_ty} {value}, 0"));
+        let negated = self.fresh_register();
+        self.instruction(format!("{negated} = sub {llvm_ty} 0, {value}"));
+        let magnitude = self.fresh_register();
+        self.instruction(format!(
+            "{magnitude} = select i1 {negative}, {llvm_ty} {negated}, {llvm_ty} {value}"
+        ));
+        Ok(Operand {
+            ty: result.clone(),
+            value: Some(magnitude),
+        })
+    }
+
+    fn emit_checked_integer_conversion(
+        &mut self,
+        arguments: &[HirArgument],
+        result: &Ty,
+    ) -> Result<Operand, Diagnostic> {
+        let operand =
+            self.emit_integer_intrinsic_operand(arguments, "checked integer conversion")?;
+        let Ty::Enum(option_name) = result else {
+            return Err(Diagnostic::new(format!(
+                "internal error: checked integer conversion returns `{result}`, expected option"
+            )));
+        };
+        let layout = self.program.enum_layout(option_name).ok_or_else(|| {
+            Diagnostic::new(format!(
+                "internal error: missing option layout `{option_name}`"
+            ))
+        })?;
+        let (some_index, some) = layout
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| {
+                variant.name == "some"
+                    && variant.fields.len() == 1
+                    && variant.fields[0].ty.is_integer()
+            })
+            .ok_or_else(|| {
+                Diagnostic::new("internal error: checked conversion option lacks `some(integer)`")
+            })?;
+        let target = &some.fields[0].ty;
+        let none_index = layout
+            .variants
+            .iter()
+            .position(|variant| variant.name == "none" && variant.fields.is_empty())
+            .ok_or_else(|| {
+                Diagnostic::new("internal error: checked conversion option lacks `none`")
+            })?;
+        let source_width = NATIVE_TARGET
+            .integer_width(&operand.ty)
+            .expect("integer intrinsic operand has width");
+        let target_width = NATIVE_TARGET
+            .integer_width(target)
+            .expect("integer conversion target has width");
+        let source_ty = llvm_value_type(&operand.ty)?;
+        let target_ty = llvm_value_type(target)?;
+        let value = operand.value()?.to_owned();
+        let fits = self.emit_integer_conversion_fit(
+            &value,
+            &source_ty,
+            &operand.ty,
+            source_width,
+            target,
+            target_width,
+        );
+        let converted = if source_width == target_width {
+            value
+        } else {
+            let converted = self.fresh_register();
+            let operation = if source_width > target_width {
+                "trunc"
+            } else if operand.ty.is_signed() {
+                "sext"
+            } else {
+                "zext"
+            };
+            self.instruction(format!(
+                "{converted} = {operation} {source_ty} {value} to {target_ty}"
+            ));
+            converted
+        };
+        let aggregate_ty = llvm_value_type(result)?;
+        let some_tag = self.fresh_register();
+        self.instruction(format!(
+            "{some_tag} = insertvalue {aggregate_ty} zeroinitializer, i32 {some_index}, 0"
+        ));
+        let some_value = self.fresh_register();
+        let payload_index = 1 + some.payload_offset;
+        self.instruction(format!(
+            "{some_value} = insertvalue {aggregate_ty} {some_tag}, {target_ty} {converted}, {payload_index}"
+        ));
+        let none_value = self.fresh_register();
+        self.instruction(format!(
+            "{none_value} = insertvalue {aggregate_ty} zeroinitializer, i32 {none_index}, 0"
+        ));
+        let selected = self.fresh_register();
+        self.instruction(format!(
+            "{selected} = select i1 {fits}, {aggregate_ty} {some_value}, {aggregate_ty} {none_value}"
+        ));
+        Ok(Operand {
+            ty: result.clone(),
+            value: Some(selected),
+        })
+    }
+
+    fn emit_integer_conversion_fit(
+        &mut self,
+        value: &str,
+        source_llvm_ty: &str,
+        source: &Ty,
+        source_width: u32,
+        target: &Ty,
+        target_width: u32,
+    ) -> String {
+        if source.is_signed() == target.is_signed() && target_width >= source_width {
+            return "true".to_owned();
+        }
+        if !source.is_signed() && target.is_signed() && target_width > source_width {
+            return "true".to_owned();
+        }
+        if source.is_signed() && !target.is_signed() {
+            let nonnegative = self.fresh_register();
+            self.instruction(format!(
+                "{nonnegative} = icmp sge {source_llvm_ty} {value}, 0"
+            ));
+            if target_width >= source_width {
+                return nonnegative;
+            }
+            let maximum = NATIVE_TARGET
+                .unsigned_max(target)
+                .expect("unsigned integer target has a maximum");
+            let bounded = self.fresh_register();
+            self.instruction(format!(
+                "{bounded} = icmp sle {source_llvm_ty} {value}, {maximum}"
+            ));
+            let fits = self.fresh_register();
+            self.instruction(format!("{fits} = and i1 {nonnegative}, {bounded}"));
+            return fits;
+        }
+        if target.is_signed() {
+            let maximum = NATIVE_TARGET
+                .signed_max(target)
+                .expect("signed integer target has a maximum");
+            if source.is_signed() {
+                let minimum = NATIVE_TARGET
+                    .signed_min(target)
+                    .expect("signed integer target has a minimum");
+                let above_minimum = self.fresh_register();
+                self.instruction(format!(
+                    "{above_minimum} = icmp sge {source_llvm_ty} {value}, {minimum}"
+                ));
+                let below_maximum = self.fresh_register();
+                self.instruction(format!(
+                    "{below_maximum} = icmp sle {source_llvm_ty} {value}, {maximum}"
+                ));
+                let fits = self.fresh_register();
+                self.instruction(format!("{fits} = and i1 {above_minimum}, {below_maximum}"));
+                fits
+            } else {
+                let fits = self.fresh_register();
+                self.instruction(format!(
+                    "{fits} = icmp ule {source_llvm_ty} {value}, {maximum}"
+                ));
+                fits
+            }
+        } else {
+            let maximum = NATIVE_TARGET
+                .unsigned_max(target)
+                .expect("unsigned integer target has a maximum");
+            let fits = self.fresh_register();
+            self.instruction(format!(
+                "{fits} = icmp ule {source_llvm_ty} {value}, {maximum}"
+            ));
+            fits
+        }
+    }
+
     fn emit_expr(&mut self, expression: &HirExpr) -> Result<Operand, Diagnostic> {
         if self.terminated {
             return Ok(Operand::never());
@@ -1908,6 +2127,12 @@ impl<'a> FunctionEmitter<'a> {
                 arguments,
                 ..
             } => {
+                if function == CHECKED_INTEGER_CONVERSION_INTRINSIC {
+                    return self.emit_checked_integer_conversion(arguments, &expression.ty);
+                }
+                if function == INTEGER_MAGNITUDE_INTRINSIC {
+                    return self.emit_integer_magnitude(arguments, &expression.ty);
+                }
                 let cleanup_depth = self.drop_slots.len();
                 let mut emitted_arguments = Vec::new();
                 for argument in arguments {
