@@ -66,6 +66,7 @@ impl Analyzer {
             "raw_slice",
             "raw_slice_len",
             "raw_slice_at",
+            "raw_subview",
             "raw_str",
             "raw_str_bytes",
             "raw_trap",
@@ -2085,7 +2086,8 @@ impl Analyzer {
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
             Type::Named(name, arguments) if arguments.is_empty() => {
-                self.collection.struct_defs.contains_key(name)
+                self.is_lang_item_name(name, LangItemKind::StrTypeForm)
+                    || self.collection.struct_defs.contains_key(name)
                     || self.collection.enum_defs.contains_key(name)
             }
             Type::Named(name, arguments) => {
@@ -2148,6 +2150,7 @@ impl Analyzer {
             }
             Type::Named(name, arguments) if arguments.is_empty() => {
                 self.collection.abstract_type_parameters.contains_key(name)
+                    || self.is_lang_item_name(name, LangItemKind::StrTypeForm)
                     || self.collection.struct_defs.contains_key(name)
                     || self.collection.enum_defs.contains_key(name)
             }
@@ -2229,6 +2232,9 @@ impl Analyzer {
             self.error("trait implementation target must be a nominal type");
             return None;
         };
+        if arguments.is_empty() && self.is_lang_item_name(name, LangItemKind::StrTypeForm) {
+            return Some(Ty::Str);
+        }
         if (self.collection.struct_templates.contains_key(name)
             || self.collection.enum_templates.contains_key(name))
             && (arguments.is_empty() || !self.source_type_is_concrete(source))
@@ -2247,7 +2253,7 @@ impl Analyzer {
         }
         let target = self.lower_source_type(source);
         match target {
-            Ty::Struct(_) | Ty::Enum(_) | Ty::Slice(_) | Ty::Array(_, _) => Some(target),
+            Ty::Struct(_) | Ty::Enum(_) | Ty::Str | Ty::Slice(_) | Ty::Array(_, _) => Some(target),
             _ if primitive_scalar_type(&target) => Some(target),
             Ty::Error => None,
             _ => {

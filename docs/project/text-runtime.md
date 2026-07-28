@@ -121,9 +121,16 @@ The 2025 *From Linearity to Borrowing* calculus derives borrowing as a
 temporary restriction of owner permissions; correspondingly, a live `str`
 view blocks mutation of its underlying byte place and cannot escape a local
 owner.
+The 2025 SafeFFI work similarly identifies conversion from unchecked raw
+pointers into safe typed pointers as the point where dynamic checks should be
+concentrated, after which the type system propagates spatial and temporal
+guarantees. Salicin therefore checks range and UTF-8 endpoints in `str.get`
+before crossing one small unsafe `raw_subview` boundary; the resulting view
+then carries the source loan without repeating those checks at each access.
 
 - [Unicode 17, Chapter 3](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/)
 - [Rust `str` boundary contract](https://doc.rust-lang.org/std/primitive.str.html)
 - [Swift strings and characters](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/stringsandcharacters/)
 - [Place Capability Graphs (OOPSLA 2025)](https://pm.inf.ethz.ch/publications/GrannanBilaFialaGeerMedeirosMuellerSummers25.pdf)
 - [From Linearity to Borrowing (OOPSLA 2025)](https://johnm.li/from-linearity-to-borrowing.pdf)
+- [SafeFFI (2025 preprint)](https://arxiv.org/abs/2510.20688)

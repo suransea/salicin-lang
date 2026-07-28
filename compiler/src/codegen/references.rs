@@ -123,6 +123,9 @@ impl Analyzer {
             HirExprKind::RawSliceAt { slice, .. } => {
                 self.reference_origin_for_hir_expr(slice, context)
             }
+            HirExprKind::RawSubview { source, .. } => {
+                self.reference_origin_for_hir_expr(source, context)
+            }
             HirExprKind::RawStrCast(value) => self.reference_origin_for_hir_expr(value, context),
             HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
             HirExprKind::Field { base, .. } => self.reference_origin_for_hir_expr(base, context),
@@ -248,6 +251,9 @@ impl Analyzer {
             }
             HirExprKind::RawSliceAt { slice, .. } => {
                 self.reference_loans_for_hir_expr(slice, context)
+            }
+            HirExprKind::RawSubview { source, .. } => {
+                self.reference_loans_for_hir_expr(source, context)
             }
             HirExprKind::RawStrCast(value) => self.reference_loans_for_hir_expr(value, context),
             HirExprKind::Read { place, .. } => context
@@ -414,6 +420,15 @@ impl Analyzer {
             HirExprKind::RawSliceAt { slice, index } => {
                 self.validate_explicit_reference_returns(slice, expected, context);
                 self.validate_explicit_reference_returns(index, expected, context);
+            }
+            HirExprKind::RawSubview {
+                source,
+                start,
+                length,
+            } => {
+                self.validate_explicit_reference_returns(source, expected, context);
+                self.validate_explicit_reference_returns(start, expected, context);
+                self.validate_explicit_reference_returns(length, expected, context);
             }
             HirExprKind::InvokeContinuation {
                 continuation,

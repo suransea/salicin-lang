@@ -15,7 +15,13 @@ fn borrowed_utf8_str_preserves_validation_and_source_loans() {
             "source is local or cannot be proven",
         ),
         ("str_view_write_conflict.sc", "already borrowed"),
+        (
+            "str_subview_local_escape.sc",
+            "source is local or cannot be proven",
+        ),
+        ("str_subview_write_conflict.sc", "already borrowed"),
         ("raw_str_safe.sc", "requires an `unsafe` block"),
+        ("raw_subview_safe.sc", "requires an `unsafe` block"),
     ] {
         let output = salic()
             .arg("check")

@@ -1652,6 +1652,62 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(element_pointer),
                 })
             }
+            HirExprKind::RawSubview {
+                source,
+                start,
+                length,
+            } => {
+                let source = self.emit_expr(source)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let start = self.emit_expr(start)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let length = self.emit_expr(length)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer} = extractvalue {{ ptr, i64 }} {}, 0",
+                    source.value()?
+                ));
+                let Ty::Reference { pointee, .. } = &expression.ty else {
+                    return Err(Diagnostic::new(
+                        "internal error: raw subview result is not a reference",
+                    ));
+                };
+                let element = match pointee.as_ref() {
+                    Ty::Str => Ty::U8,
+                    Ty::Slice(element) => element.as_ref().clone(),
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "internal error: raw subview result is not a view",
+                        ));
+                    }
+                };
+                let subview_pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{subview_pointer} = getelementptr {}, ptr {pointer}, i64 {}",
+                    llvm_value_type(&element)?,
+                    start.value()?
+                ));
+                let pointer_value = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer_value} = insertvalue {{ ptr, i64 }} poison, ptr {subview_pointer}, 0"
+                ));
+                let subview = self.fresh_register();
+                self.instruction(format!(
+                    "{subview} = insertvalue {{ ptr, i64 }} {pointer_value}, i64 {}, 1",
+                    length.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(subview),
+                })
+            }
             HirExprKind::RawStrCast(source) => {
                 let source = self.emit_expr(source)?;
                 Ok(Operand {

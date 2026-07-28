@@ -35,8 +35,9 @@ status and changelog instead of remaining as a checked archive.
   checked `unicode_scalar` domain are implemented. The source-defined
   loan-retaining `str` view, checked borrowed UTF-8 validation, `string.as_str`,
   `str.as_bytes`, and composite-borrow escape/write-conflict enforcement are
-  implemented; the next slice is boundary-safe subviews, exact text equality,
-  and ownership-preserving byte/string conversions with invalid offsets.
+  implemented. Boundary queries, checked loan-retaining subviews, and exact
+  byte-wise `str`/`string` equality are also implemented; the next slice is
+  ownership-preserving byte/string conversion with the first invalid offset.
 
 - [ ] **TEXT-2 — Core `string` operations.** Add construction from borrowed
   text and scalars; borrowed text access; `push`, `push_str`, truncation,

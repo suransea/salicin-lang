@@ -756,6 +756,11 @@ pub(super) enum HirExprKind {
         slice: Box<HirExpr>,
         index: Box<HirExpr>,
     },
+    RawSubview {
+        source: Box<HirExpr>,
+        start: Box<HirExpr>,
+        length: Box<HirExpr>,
+    },
     RawStrCast(Box<HirExpr>),
     ReferenceRead(Box<HirExpr>),
     ReferenceAssign {

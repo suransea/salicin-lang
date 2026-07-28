@@ -147,7 +147,9 @@ impl Analyzer {
                         &right_probe,
                         TypeProbe::Known(Ty::Reference { pointee, .. })
                             | TypeProbe::KnownSource(Ty::Reference { pointee, .. }, _)
-                            if pointee.as_ref() == rhs && self.is_copy_type(rhs)
+                            if pointee.as_ref() == rhs
+                                && (operator_trait.parameter_mode == PassMode::Borrow
+                                    || self.is_copy_type(rhs))
                     );
                 matches_rhs.then(|| BinaryOperatorCandidate {
                     method: method.clone(),

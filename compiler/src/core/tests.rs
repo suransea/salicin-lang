@@ -125,7 +125,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 342);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 345);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -502,7 +502,7 @@ fn derived_primitive_operations_are_source_defined() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
     let expected = BTreeMap::from([
         ("not", 1),
-        ("eq", 2),
+        ("eq", 4),
         ("neg", 6),
         ("add_assign", 12),
         ("sub_assign", 12),

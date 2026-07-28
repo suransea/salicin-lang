@@ -116,13 +116,90 @@ let string_view_checks(): bool = {
   view.len() == 3 && !view.is_empty() && encoded.len() == 3
 }
 
+let subview_checks(): bool = {
+  let text: string = "A柳𐀀"
+  let ascii_expected: string = "A"
+  let three_byte_expected: string = "柳"
+  let four_byte_expected: string = "𐀀"
+  let empty_text: string = ""
+  let view = text.as_str()
+  let ascii_expected_view = ascii_expected.as_str()
+  let three_byte_expected_view = three_byte_expected.as_str()
+  let four_byte_expected_view = four_byte_expected.as_str()
+  let empty_view = empty_text.as_str()
+  let boundaries =
+    view.is_char_boundary(0) &&
+    view.is_char_boundary(1) &&
+    !view.is_char_boundary(2) &&
+    !view.is_char_boundary(3) &&
+    view.is_char_boundary(4) &&
+    !view.is_char_boundary(5) &&
+    !view.is_char_boundary(6) &&
+    !view.is_char_boundary(7) &&
+    view.is_char_boundary(8) &&
+    !view.is_char_boundary(9)
+  let valid = match view.get(0, 8)
+    { some(whole) ->
+      match view.get(0, 1)
+      { some(ascii) ->
+        match view.get(1, 4)
+        { some(three_byte) ->
+          match view.get(4, 8)
+          { some(four_byte) ->
+            match view.get(8, 8)
+            { some(empty) ->
+              whole == view &&
+                ascii == ascii_expected_view &&
+                three_byte == three_byte_expected_view &&
+                four_byte == four_byte_expected_view &&
+                empty.is_empty()
+            }
+            { none -> false }
+          }
+          { none -> false }
+        }
+        { none -> false }
+      }
+      { none -> false }
+    }
+    { none -> false }
+  boundaries &&
+    valid &&
+    view.get(2, 4).is_none() &&
+    view.get(1, 5).is_none() &&
+    view.get(9, 9).is_none() &&
+    view.get(4, 1).is_none() &&
+    match empty_view.get(0, 0)
+    { some(empty) -> empty.is_empty() }
+    { none -> false }
+}
+
+let text_equality_checks(): bool = {
+  let composed: string = "é"
+  let same: string = "é"
+  let decomposed: string = "é"
+  let longer: string = "é!"
+  let same_length_different: string = "ê"
+  let view = composed.as_str()
+  let same_view = same.as_str()
+  let decomposed_view = decomposed.as_str()
+    composed == same &&
+    composed != decomposed &&
+    composed != longer &&
+    composed != same_length_different &&
+    view == same_view &&
+    view != decomposed_view
+}
+
 let main(): i32 = {
   let text = runtime_text()
   if text.len_bytes() == 7 &&
     greeting.len_bytes() == 3 &&
     scalar_checks() &&
     borrowed_text_checks() &&
-    string_view_checks() {
+    string_view_checks() &&
+    subview_checks() &&
+    text_equality_checks() {
     42
   } else {
     0

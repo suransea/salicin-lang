@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.216.0 - 2026-07-28
+
+- Added `str.is_char_boundary` and checked `str.get(start, end)` subviews,
+  including empty and one-past-end views. Successful subviews preserve the
+  source region and loan; invalid, reversed, out-of-range, or continuation-byte
+  endpoints return `none` before a view is formed.
+- Added exact byte-wise `str` and `string` equality without normalization,
+  case folding, or allocation. Extended operator dispatch and trait
+  implementation collection so borrowed dynamically sized `str` operands use
+  the source-defined equality protocol.
+- Introduced the unsafe internal `raw_subview` projection shared by text and
+  ordinary slices. It offsets the existing fat view while preserving its
+  element type, access, region, and source loans; UTF-8 validation remains in
+  the safe `str` wrapper.
+
 ## 0.215.0 - 2026-07-28
 
 - Added the dynamically sized immutable `str` core type, a shared fat-view ABI,

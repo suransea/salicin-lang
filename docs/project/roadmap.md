@@ -51,9 +51,10 @@ history remains in the changelog.
 
 The language core can already express ownership-sensitive containers and
 effectful programs, but the library surface is not yet sufficient for ordinary
-command-line applications. `string` owns validated UTF-8 but lacks borrowed
-text, character iteration, search, and formatting. `array`, `slice`, and
-`vec` do not yet share a consistent safe-access and algorithm vocabulary.
+command-line applications. `string` owns validated UTF-8 and exposes borrowed
+text, but lacks mutation, character iteration, search, and formatting.
+`array`, `slice`, and `vec` do not yet share a consistent safe-access and
+algorithm vocabulary.
 The source-backed `std` ownership layer and native target boundary are in place, but
 its host-facing modules are not yet implemented. `test("name")` registrations
 return only a boolean without standard assertions or structured failures.
@@ -62,7 +63,8 @@ storage, scalar validity, borrowed-view regions, UTF-8 validation and
 boundaries, equality, conversion failure, and iteration behavior. Static
 literal storage, the checked Unicode scalar domain, the loan-retaining
 borrowed view, and checked borrowed UTF-8 validation are implemented.
-Boundary-safe subviews, equality, and ownership-preserving conversion are the
+Boundary-safe subviews and exact text equality are implemented.
+Ownership-preserving conversion with precise invalid-byte offsets is the
 active text slice.
 
 This milestone fills those gaps before adding more language features. It is

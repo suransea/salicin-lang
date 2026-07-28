@@ -821,6 +821,59 @@ impl Analyzer {
         }
     }
 
+    pub(super) fn lower_raw_subview(
+        &mut self,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_subview` requires an `unsafe` block");
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error("`raw_subview` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["source".to_owned(), "start".to_owned(), "length".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_subview", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let source = match self.probe_expr_ty(&arguments[0].value, None, context) {
+            super::lower::TypeProbe::Known(source)
+            | super::lower::TypeProbe::KnownSource(source, _) => {
+                self.lower_reference_value_expr(&arguments[0].value, &source, context)
+            }
+            super::lower::TypeProbe::Defaultable(_) | super::lower::TypeProbe::Unsupported => {
+                self.lower_expr(&arguments[0].value, None, context)
+            }
+        };
+        let Ty::Reference { pointee, .. } = &source.ty else {
+            self.error(format!(
+                "`raw_subview` requires a borrowed view, found `{}`",
+                source.ty
+            ));
+            return error_expr();
+        };
+        if !matches!(pointee.as_ref(), Ty::Str | Ty::Slice(_)) {
+            self.error(format!(
+                "`raw_subview` cannot project `{}`",
+                self.diagnostic_type_name(&source.ty)
+            ));
+            return error_expr();
+        }
+        let result_ty = source.ty.clone();
+        let start = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        let length = self.lower_expr(&arguments[2].value, Some(&Ty::U64), context);
+        HirExpr {
+            ty: result_ty,
+            kind: HirExprKind::RawSubview {
+                source: Box::new(source),
+                start: Box::new(start),
+                length: Box::new(length),
+            },
+        }
+    }
+
     pub(super) fn lower_raw_trap(
         &mut self,
         groups: &[&[CallArg]],

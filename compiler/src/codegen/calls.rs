@@ -410,6 +410,9 @@ impl Analyzer {
             if name == "raw_slice_at" {
                 return self.lower_raw_slice_at(&groups, expected, context);
             }
+            if name == "raw_subview" {
+                return self.lower_raw_subview(&groups, context);
+            }
             if name == "raw_str" || name == "raw_str_bytes" {
                 return self.lower_raw_str_cast(name, &groups, expected, context);
             }

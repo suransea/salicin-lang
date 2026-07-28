@@ -20,6 +20,23 @@ let is_continuation(byte: u8): bool = {
   byte >= low && byte <= high
 }
 
+let text_equal(left: borrow(str), right: borrow(str)): bool = {
+  let left_bytes = left.as_bytes()
+  let right_bytes = right.as_bytes()
+  let length = left_bytes.len()
+  if length != right_bytes.len() {
+    return(false)
+  }
+  let mut index: u64 = 0
+  while { index < length } {
+    if byte_at(left_bytes, index) != byte_at(right_bytes, index) {
+      return(false)
+    }
+    index = index + 1
+  }
+  true
+}
+
 /// Validates the exact well-formed UTF-8 byte sequences from Unicode Table
 /// 3-7. The implementation is allocation-free and reads each byte at most a
 /// constant number of times.
@@ -157,6 +174,39 @@ extend(str) {
       raw_str_bytes(self)
     }
   }
+
+  /// Returns whether `index` is a UTF-8 code-point boundary.
+  let is_char_boundary(self: borrow(self))(index: u64): bool = {
+    let length = self.len()
+    if index == 0 || index == length {
+      true
+    } else if index > length {
+      false
+    } else {
+      let bytes = self.as_bytes()
+      !is_continuation(byte_at(bytes, index))
+    }
+  }
+
+  /// Returns the byte range as a view when both endpoints are UTF-8
+  /// boundaries. The returned view retains this view's source region.
+  let get(comptime r: region)
+    (self: borrow(r)(self))
+    (start: u64, end: u64): core.option(borrow(r)(str)) = {
+    if start > end ||
+      !self.is_char_boundary(start) ||
+      !self.is_char_boundary(end) {
+      core.option.none
+    } else {
+      core.option.some(unsafe { raw_subview(self, start, end - start) })
+    }
+  }
+}
+
+extend(str, core.cmp.eq(str)) {
+  let eq(self: borrow(self))(other: borrow(str)): bool = {
+    text_equal(self, other)
+  }
 }
 
 /// One Unicode scalar value: any code point except U+D800..U+DFFF.
@@ -236,5 +286,13 @@ extend(string) {
       let bytes = raw_slice(self.data, self.length, borrow(self))
       raw_str(bytes)
     }
+  }
+}
+
+extend(string, core.cmp.eq(string)) {
+  let eq(self: borrow(self))(other: borrow(string)): bool = {
+    let left = self.as_str()
+    let right = other.as_str()
+    text_equal(left, right)
   }
 }

@@ -941,6 +941,23 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawSubview {
+                source,
+                start,
+                length,
+            } => {
+                let Some(cursor) = self.walk_expr(source, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(start, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(length, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::EraseContinuation { binding, .. } => {
                 let cleanup_local = self.hir_locals.get(binding).copied().ok_or_else(|| {
                     self.diagnostic(format!(
