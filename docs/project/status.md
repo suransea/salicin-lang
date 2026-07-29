@@ -512,9 +512,12 @@ escape analysis follows reference loans through raw view casts, calls,
 a mutable write. Broader Unicode algorithms and host I/O are not yet library
 features.
 
-Borrowed `slice_iter(a)(t)` preserves shared or mutable source access and yields
-`borrow(a)(r)(t)`. `vec` iteration consumes elements and drops an unyielded suffix exactly once on
-early exit.
+Borrowed `array.iter` and `slice.iter` both produce `slice_iter(a)(t)` without
+a `copyable` element bound. The iterator preserves shared or mutable source
+access and yields `borrow(a)(r)(t)` tied to one mutable `next` borrow, so a
+yielded mutable element must end before the iterator advances. Resource
+elements remain in place and are dropped by their owner. `vec` iteration
+consumes elements and drops an unyielded suffix exactly once on early exit.
 
 ## Quality Gates
 

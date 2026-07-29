@@ -73,8 +73,9 @@ The accepted [parsing and formatting contract](formatting.md) now has strict
 64-bit radix parsing, scalar/ASCII writer dispatch, an allocation-backed
 string writer, and the first concrete display/debug implementations. The
 accepted [contiguous-access contract](contiguous-access.md) is implemented for
-arrays, slices, and vectors. The active slice is shared and mutable array and
-slice iteration.
+arrays, slices, and vectors. The accepted
+[borrowed-iteration contract](borrowed-iteration.md) is implemented for arrays
+and slices. The active slice is common array and slice mutation.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

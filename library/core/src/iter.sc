@@ -56,12 +56,15 @@ where t: core.marker.copyable {
 
 /// Access-preserving iterator over a borrowed slice.
 pub let slice_iter(comptime a: access)(comptime t: type) = struct {
+  /// Source view retained for the complete iterator lifetime.
   values: borrow(a)(slice(t)),
+  /// Index of the next element to yield.
   next_index: u64,
 }
 
 extend(slice_iter(a)(t), iterator) {
   let item = borrowed_item(a, t)
+  /// Yields one access-preserving borrow tied to this `next` borrow.
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(item(r)) = {
     if self.next_index == unsafe { raw_slice_len(self.values) } {
       none
@@ -82,7 +85,16 @@ extend(slice_iter(a)(t), into_iterator) {
 
 extend(slice(t)) {
   /// Iterates over borrowed values while retaining source access.
-  let iter(comptime a: access)(self: borrow(a)(self))(): slice_iter(a)(t) = {
+  let iter(comptime a: access = shared)
+    (self: borrow(a)(self))(): slice_iter(a)(t) = {
     slice_iter(a)(t) { values: self, next_index: 0 }
+  }
+}
+
+extend(array(t)(l)) {
+  /// Iterates over borrowed elements without requiring them to be copyable.
+  let iter(comptime a: access = shared)
+    (self: borrow(a)(self))(): slice_iter(a)(t) = {
+    slice_iter(a)(t) { values: self.as_slice(a)(), next_index: 0 }
   }
 }

@@ -299,6 +299,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_into_iterator.sc",
         "vec_into_iterator_break_cleanup.sc",
         "array_into_iterator.sc",
+        "array_iterator_resource.sc",
+        "array_iterator_mut.sc",
         "slice_iterator.sc",
         "slice_iterator_mut.sc",
         "slice_iterator_resource.sc",
@@ -391,6 +393,27 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("borrowed"),
             "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    for (name, expected) in [
+        ("array_iterator_keeps_source_borrowed.sc", "borrowed"),
+        ("array_iterator_mut_yield_overlap.sc", "already borrowed"),
+        (
+            "array_iterator_yield_escape.sc",
+            "source is local or cannot be proven",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid borrowed array iterator fixture");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
             output_text(&output)
         );
     }

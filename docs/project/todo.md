@@ -24,10 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Arrays, slices, vectors, and iteration
 
-- [ ] **COLL-2 — `slice` and `array` iteration.** Complete shared and mutable
-  iteration for arrays and slices, remove the current copy-only limitation
-  from borrowed array traversal, and preserve exclusive yielded-borrow rules.
-
 - [ ] **COLL-3 — `array` and `slice` mutation.** Add swap, reverse, copy/fill
   where element bounds permit, and overlap-safe copy behavior for mutable
   arrays and slices. Validate bounds before mutation and define partial

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.224.0 - 2026-07-29
+
+- Completed COLL-2 with direct shared and mutable borrowed iteration for
+  arrays as well as slices. `array.iter` reuses the access-preserving slice
+  iterator and no longer requires elements to be copyable.
+- Bound every yielded element borrow to the corresponding mutable `next`
+  borrow. A live yield prevents another advance, each iterator retains its
+  source loan, and no yielded borrow can escape a local array.
+- Added native resource and mutable-array iteration coverage plus negative
+  coverage for source mutation, overlapping mutable yields, and local escape.
+
 ## 0.223.0 - 2026-07-28
 
 - Completed COLL-1 with a common `len`, `is_empty`, checked `get`, trapping
