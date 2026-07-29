@@ -341,7 +341,7 @@ mod tests {
     fn edition_2026_std_bundle_owns_policy_without_mirrors() {
         let bundle = StdBundle::for_edition(Edition::Edition2026).unwrap();
         assert!(!bundle.program().items.is_empty());
-        assert_eq!(bundle.exports().len(), 27);
+        assert_eq!(bundle.exports().len(), 33);
         assert!(bundle.exports().iter().any(|export| {
             export.module == "algebra"
                 && export.name == "semigroup"

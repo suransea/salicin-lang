@@ -84,8 +84,9 @@ slice extension, and copy mutation for vectors. The accepted
 common source-backed search, predicates, membership, and folds across arrays,
 slices, and vectors. The accepted
 [effect-callable syntax](effect-callable-syntax.md) and the accepted
-[synchronous host I/O contract](host-io.md) and its console/process slice are
-implemented. The active slice is now filesystem basics.
+[synchronous host I/O contract](host-io.md), including console, process, and
+filesystem basics, is implemented. The active slice is now structured test
+failure.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

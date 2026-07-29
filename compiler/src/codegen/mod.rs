@@ -447,6 +447,10 @@ impl Analyzer {
                         | ("std::io::host_argument_count", "sali_host_argument_count")
                         | ("std::io::host_argument_length", "sali_host_argument_length")
                         | ("std::io::host_argument_byte", "sali_host_argument_byte")
+                        | ("std::io::host_open", "sali_host_open")
+                        | ("std::io::host_close", "sali_host_close")
+                        | ("std::io::host_flush", "sali_host_flush")
+                        | ("std::io::host_seek", "sali_host_seek")
                 );
             self.current_origin = origin;
             if name == "main" {

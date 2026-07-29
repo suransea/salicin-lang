@@ -14,6 +14,10 @@ fn is_host_runtime_symbol(name: &str) -> bool {
             | "sali_host_argument_count"
             | "sali_host_argument_length"
             | "sali_host_argument_byte"
+            | "sali_host_open"
+            | "sali_host_close"
+            | "sali_host_flush"
+            | "sali_host_seek"
     )
 }
 
@@ -21,6 +25,23 @@ fn is_host_runtime_symbol(name: &str) -> bool {
 const ERRNO_LOCATION_SYMBOL: &str = "__errno_location";
 #[cfg(target_os = "macos")]
 const ERRNO_LOCATION_SYMBOL: &str = "__error";
+
+#[cfg(target_os = "linux")]
+const HOST_OPEN_CREATE: i32 = 64;
+#[cfg(target_os = "macos")]
+const HOST_OPEN_CREATE: i32 = 512;
+#[cfg(target_os = "linux")]
+const HOST_OPEN_EXCLUSIVE: i32 = 128;
+#[cfg(target_os = "macos")]
+const HOST_OPEN_EXCLUSIVE: i32 = 2048;
+#[cfg(target_os = "linux")]
+const HOST_OPEN_TRUNCATE: i32 = 512;
+#[cfg(target_os = "macos")]
+const HOST_OPEN_TRUNCATE: i32 = 1024;
+#[cfg(target_os = "linux")]
+const HOST_OPEN_APPEND: i32 = 1024;
+#[cfg(target_os = "macos")]
+const HOST_OPEN_APPEND: i32 = 8;
 
 #[cfg(target_os = "linux")]
 const HOST_ERROR_CASES: &[(i32, i32)] = &[
@@ -277,6 +298,10 @@ impl<'a> Emitter<'a> {
              declare i64 @read(i32, ptr, i64)\n\
              declare i64 @write(i32, ptr, i64)\n\
              declare i64 @strlen(ptr)\n\
+             declare i32 @open(ptr, i32, ...)\n\
+             declare i32 @close(i32)\n\
+             declare i32 @fsync(i32)\n\
+             declare i64 @lseek(i32, i64, i32)\n\
              declare ptr @{ERRNO_LOCATION_SYMBOL}()\n\
              declare ptr @signal(i32, ptr)\n\n\
              define linkonce_odr i32 @sali_host_error_kind(i32 %error) {{\n\
@@ -359,6 +384,85 @@ impl<'a> Emitter<'a> {
                ret i8 %byte\n\
              }\n\n",
         );
+        output.push_str(&format!(
+            "define linkonce_odr i32 @sali_host_open(ptr %path, i32 %portable_flags, ptr %kind, ptr %raw) {{\n\
+             entry:\n\
+               %access = and i32 %portable_flags, 3\n\
+               %create_bit = and i32 %portable_flags, 4\n\
+               %create_set = icmp ne i32 %create_bit, 0\n\
+               %create = select i1 %create_set, i32 {HOST_OPEN_CREATE}, i32 0\n\
+               %exclusive_bit = and i32 %portable_flags, 8\n\
+               %exclusive_set = icmp ne i32 %exclusive_bit, 0\n\
+               %exclusive = select i1 %exclusive_set, i32 {HOST_OPEN_EXCLUSIVE}, i32 0\n\
+               %truncate_bit = and i32 %portable_flags, 16\n\
+               %truncate_set = icmp ne i32 %truncate_bit, 0\n\
+               %truncate = select i1 %truncate_set, i32 {HOST_OPEN_TRUNCATE}, i32 0\n\
+               %append_bit = and i32 %portable_flags, 32\n\
+               %append_set = icmp ne i32 %append_bit, 0\n\
+               %append = select i1 %append_set, i32 {HOST_OPEN_APPEND}, i32 0\n\
+               %flags.0 = or i32 %access, %create\n\
+               %flags.1 = or i32 %flags.0, %exclusive\n\
+               %flags.2 = or i32 %flags.1, %truncate\n\
+               %flags = or i32 %flags.2, %append\n\
+               %descriptor = call i32 (ptr, i32, ...) @open(ptr %path, i32 %flags, i32 438)\n\
+               %failed = icmp slt i32 %descriptor, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n\
+               %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n\
+               %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i32 -1\n\
+             success:\n\
+               ret i32 %descriptor\n\
+             }}\n\n\
+             define linkonce_odr i32 @sali_host_close(i32 %descriptor, ptr %kind, ptr %raw) {{\n\
+             entry:\n\
+               %status = call i32 @close(i32 %descriptor)\n\
+               %failed = icmp ne i32 %status, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n\
+               %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n\
+               %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i32 -1\n\
+             success:\n\
+               ret i32 0\n\
+             }}\n\n\
+             define linkonce_odr i32 @sali_host_flush(i32 %descriptor, ptr %kind, ptr %raw) {{\n\
+             entry:\n\
+               %status = call i32 @fsync(i32 %descriptor)\n\
+               %failed = icmp ne i32 %status, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n\
+               %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n\
+               %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i32 -1\n\
+             success:\n\
+               ret i32 0\n\
+             }}\n\n\
+             define linkonce_odr i64 @sali_host_seek(i32 %descriptor, i64 %offset, i32 %origin, ptr %kind, ptr %raw) {{\n\
+             entry:\n\
+               %position = call i64 @lseek(i32 %descriptor, i64 %offset, i32 %origin)\n\
+               %failed = icmp slt i64 %position, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n\
+               %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n\
+               %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i64 -1\n\
+             success:\n\
+               ret i64 %position\n\
+             }}\n\n"
+        ));
         output
     }
 

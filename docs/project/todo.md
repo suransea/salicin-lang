@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Synchronous host I/O
-
-- [ ] **IO-3 — Filesystem basics.** Implement owned file handles with
-  deterministic cleanup, open/create options, read, write, flush, seek where
-  supported, and whole-file convenience functions with bounded allocation and
-  recoverable path/permission/encoding errors.
-
 ### Test support
 
 - [ ] **TEST-1 — Structured test failure.** Replace boolean-only failure as

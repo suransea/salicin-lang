@@ -171,6 +171,8 @@ progress and interruption, while bounded helpers define retry, EOF,
 
 Current research and specifications:
 
+- [Typestate via Revocable Capabilities (PLDI 2026)](https://doi.org/10.1145/3808323)
+- [Pure Borrow (PLDI 2026)](https://doi.org/10.1145/3808259)
 - [Toka: Explicit Resource Semantics (2026)](https://arxiv.org/abs/2606.01974)
 - [Safe Coding (2026)](https://doi.org/10.1145/3795888)
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
@@ -179,6 +181,7 @@ Current research and specifications:
 - [WASI Capabilities](https://github.com/WebAssembly/WASI/blob/main/docs/Capabilities.md)
 - [Rust 1.97 `Read`](https://doc.rust-lang.org/std/io/trait.Read.html)
 - [Rust 1.97 `Write`](https://doc.rust-lang.org/std/io/trait.Write.html)
+- [POSIX.1-2024 Issue 8](https://standards.ieee.org/ieee/1003.1/7700/)
 
 ## Review Gate
 

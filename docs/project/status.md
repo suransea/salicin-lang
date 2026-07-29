@@ -36,8 +36,7 @@ is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`
 public naming, prelude exclusions, ownership modes, failure policy, error
 families, explicit `io` authority, initial native target matrix, and minimum
 text, collection, conversion, I/O, and test APIs. Its source-backed canonical
-layers, target boundary, and console/process APIs are implemented; filesystem
-APIs remain planned work.
+layers, target boundary, and console/process/filesystem APIs are implemented.
 The accepted [synchronous host I/O contract](host-io.md) now fixes authority,
 entry handling, errors, byte/text boundaries, partial progress, interruption,
 resource cleanup, close behavior, and the two supported native targets.
@@ -46,6 +45,11 @@ operations, byte-exact text helpers, line input with checked UTF-8, explicit
 flush points, and lossless-byte plus checked-text process arguments. The
 launcher captures `argc`/`argv`, ignores `SIGPIPE`, and maps native failures
 to portable `io_error_kind` values without exposing raw FFI authority.
+Filesystem support provides validated open/create options, unique
+deterministically dropped file owners, consuming close, short and exact/all
+reads and writes, `fsync`, three-origin seek, and bounded whole-file helpers.
+Paths are existing UTF-8 `str` views passed byte-exactly after embedded-NUL
+validation.
 
 The command-line surface is:
 

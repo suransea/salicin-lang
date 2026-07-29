@@ -4,7 +4,7 @@ Status: accepted for Edition 2026
 
 This contract fixes the authority, error, byte/text, progress, ownership,
 cleanup, and target rules used by the first synchronous host APIs.
-Console/process operations are implemented; filesystem operations are IO-3.
+Console, process, and filesystem-basics operations are implemented.
 
 ## Authority and the native boundary
 
@@ -66,8 +66,8 @@ The initial closed `io_error_kind` set is:
   `broken_pipe`;
 - `unsupported`, `out_of_memory`, and `other`.
 
-IO-2 and IO-3 must map every native failure into this set and include
-target-specific mapping tables in tests. Adding portable distinctions is an
+IO-2 and IO-3 map native failures into this set through target-specific
+tables. Adding portable distinctions is an
 edition-visible API change; callers must retain an `other` branch.
 
 ## Bytes, text, and paths
@@ -140,8 +140,21 @@ Deterministic destruction uses the same once-only state transition and ignores
 an unreportable close error. Explicit close prevents the destructor from
 closing again, including when close reports an error. Every early return,
 effect transfer, handler abort, and ordinary scope exit must run this cleanup
-exactly once. IO-3 must test successful close, close failure, explicit-close
-then drop, and non-local exits.
+exactly once.
+
+The implemented `file` stores its descriptor behind private uniquely owned
+state. `close(move self)` invalidates that state before its one host close
+attempt; its subsequent destructor only releases the state allocation.
+Implicit destruction performs the same invalidation and ignores the close
+result. Neither path retries `EINTR`.
+
+`open_options` exposes validated presets and consuming option modifiers.
+Reading or writing without the matching access, `create_new` without create,
+and append combined with truncate are `invalid_input`. `open` rejects embedded
+NUL before crossing the native boundary. `file` provides short `read`/`write`,
+exact/all helpers, `flush`, and start/current/end seek. `read_file(path)(limit)`
+never grows beyond the caller's limit; exceeding it is `invalid_data`.
+`write_file` creates or truncates, writes all bytes, and reports close failure.
 
 ## Blocking and target matrix
 
@@ -178,6 +191,10 @@ IO-2 evidence covers byte-exact stdout/stderr, stdin line input, EOF from
 `read_stdin_exact`, non-UTF-8 argv preservation and checked rejection, and
 `EPIPE` recovery with `SIGPIPE` ignored. Primitive calls expose native short
 progress; all/exact helpers loop until completion or the specified error.
+IO-3 evidence covers create/truncate/append, create-new collision, missing
+paths, embedded NUL, invalid option combinations, byte-exact whole-file
+round-trips, allocation limits, seek origins, flush, explicit consuming close,
+non-copyability, and static `io` authority.
 
 ## Research and specification basis
 
@@ -187,6 +204,11 @@ The contract combines static effect authority with runtime resource handles:
   supports keeping effect authority distinct from particular runtime handles.
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
   motivates a once-only destructor obligation across exceptional control.
+- [Typestate via Revocable Capabilities (PLDI 2026)](https://doi.org/10.1145/3808323)
+  supports invalidating resource authority independently of lexical scope.
+- [Pure Borrow (PLDI 2026)](https://doi.org/10.1145/3808259)
+  supplies current formal evidence for leak-free linear ownership with
+  Rust-style borrowing.
 - [Securing Agents With Tracked Capabilities (ACM CAIS 2026)](https://doi.org/10.1145/3786335.3813127)
   provides current evidence that type-tracked capabilities and local purity
   prevent untracked library effects in practical code.
@@ -196,3 +218,5 @@ The contract combines static effect authority with runtime resource handles:
   [Rust `Write`](https://doc.rust-lang.org/std/io/trait.Write.html) define the
   partial-progress, EOF, interruption, `write_all`, and `write_zero` behavior
   used here.
+- [POSIX.1-2024](https://standards.ieee.org/ieee/1003.1/7700/) defines the
+  active Unix system interfaces and error-recovery domain lowered here.

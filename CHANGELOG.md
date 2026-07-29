@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.231.0 - 2026-07-30
+
+- Implemented validated file open/create options, unique owned file handles,
+  consuming close, deterministic once-only cleanup, short and exact/all
+  reads/writes, flush, and start/current/end seek under `std.io.io`.
+- Added byte-exact UTF-8 path handling with embedded-NUL rejection plus bounded
+  `read_file` and complete `write_file` helpers.
+- Added native coverage for create, truncate, append, create-new collision,
+  missing and invalid paths, allocation limits, seek, flush, static authority,
+  non-copyability, and explicit close.
+
 ## 0.230.0 - 2026-07-30
 
 - Implemented synchronous stdin, stdout, and stderr byte primitives plus
