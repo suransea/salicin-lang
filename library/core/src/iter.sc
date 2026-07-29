@@ -33,7 +33,7 @@ pub let array_into_iter(comptime t: type)
 }
 
 extend(array_into_iter(t)(l), iterator)
-where t: core.marker.copyable {
+(requires: t is core.marker.copyable) {
   let item = owned_item(t)
   let next(comptime r: region)(self: borrow(mut)(r)(self))(): core.option(t) = {
     if self.next_index == l {
@@ -47,7 +47,7 @@ where t: core.marker.copyable {
 }
 
 extend(array(t)(l), into_iterator)
-where t: core.marker.copyable {
+(requires: t is core.marker.copyable) {
   let iter = array_into_iter(t)(l)
   let into_iter(move self)(): array_into_iter(t)(l) = {
     array_into_iter(t)(l) { values: self, next_index: 0 }

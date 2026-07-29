@@ -1,7 +1,7 @@
 let resource = struct { value: i32 }
 
 let duplicate(comptime t: type)(copy value: t): t
-where t: copyable = {
+= requires(t is copyable) {
   let first = value
   value
 }

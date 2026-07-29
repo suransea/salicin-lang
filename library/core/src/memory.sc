@@ -81,7 +81,7 @@ extend(array(t)(l)) {
 
 /// Provides copy-based mutation for fixed-size arrays.
 extend(array(t)(l))
-where t: core.marker.copyable {
+(requires: t is core.marker.copyable) {
   /// Replaces every element with a copy of `value`.
   let fill(self: borrow(mut)(self))(copy value: t): () = {
     let values = self.as_slice(mut)()
@@ -199,7 +199,7 @@ extend(slice(t)) {
 
 /// Provides copy-based mutation for borrowed contiguous sequences.
 extend(slice(t))
-where t: core.marker.copyable {
+(requires: t is core.marker.copyable) {
   /// Replaces every element with a copy of `value`.
   let fill(self: borrow(mut)(self))(copy value: t): () = {
     let length = self.len(mut)()

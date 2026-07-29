@@ -1312,7 +1312,7 @@ fn rejects_traits_that_are_narrower_than_public_where_predicates() {
         "src/lib.sc",
         &[],
         "let hidden = trait {}\n\
-             pub let expose(comptime t: type)(value: t): t where t: hidden = { value }\n",
+             pub let expose(comptime t: type)(value: t): t = requires(t is hidden) { value }\n",
         true,
     )])
     .unwrap_err();
@@ -1333,7 +1333,7 @@ fn rejects_traits_that_are_narrower_than_constrained_extension_members() {
         &[],
         "let hidden = trait {}\n\
              pub let cell(comptime t: type) = struct { pub value: t }\n\
-             extend(cell(t)) where t: hidden {\n\
+             extend(cell(t))(requires: t is hidden) {\n\
                let take(move self)(): t = { self.value }\n\
              }\n",
         true,

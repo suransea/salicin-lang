@@ -83,7 +83,7 @@ evaluated values; the `_else` forms evaluate their callback only on `none` or
 `err`. All consuming helpers evaluate and move each payload at most once.
 
 `movable` is an automatically satisfied structural marker for relocatable values. `copyable` has the
-supertrait constraint `where self: movable`, while `droppable` remains independent: an owning resource may
+supertrait constraint `trait(requires: self is movable)`, while `droppable` remains independent: an owning resource may
 be movable without being copyable. Source code does not need handwritten `movable` implementations
 for ordinary aggregates.
 Operators and syntax that lower through these identities use the validated standard-library
@@ -239,10 +239,17 @@ pub let region: sort(2)
 pub let effect: sort(2)
 pub let effects: sort(2)
 pub let parameters: sort(2)
+pub let constraint: sort(2)
 pub let abi = sort(1) {
   c
 }
 ```
+
+Inside a compiler-owned `requires(...)` guard, `left is right` selects the `is`
+relation between the classifiers of its operands. `type` implements
+`is(constraint)`, allowing function guards such as
+`requires(t is copyable)` and extension requirement groups such as
+`(requires: t is copyable)`.
 
 `effect` classifies one nominal effect identity; `effects` classifies a normalized zero-or-more
 effect row. `string` currently classifies compiler-consumed UTF-8 metadata, and `abi` is a finite
@@ -404,9 +411,13 @@ pub let match(comptime input: type, comptime output: type, comptime e: effects, 
   ...cases: output with(e)
 pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
   (move iterable: iterable)
-  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)
-where iterable: core.iter.into_iterator(into_iter = iter),
-  iter: core.iter.iterator(item = item)
+  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) =
+requires(
+  iterable is core.iter.into_iterator &&
+  iterable.iter == iter &&
+  iter is core.iter.iterator &&
+  iter.item == item
+)
 ```
 
 Here `try` removes only `throwing(e)`, `unsafe` removes only the `unsafety` requirement, and both forward
@@ -490,8 +501,9 @@ pub let semigroup = trait {
   let combine(left: self, right: self): self
 }
 
-pub let monoid = trait
-where self: semigroup{let empty(): self}
+pub let monoid = trait(requires: self is semigroup) {
+  let empty(): self
+}
 ```
 
 The compiler does not prove algebraic laws.
@@ -506,8 +518,7 @@ pub let functor = trait(self: (comptime value: type): type) {
     (transform: (a): b with(e)): self(b) with(e)
 }
 
-pub let applicative = trait(self: (comptime value: type): type)
-where self: functor {
+pub let applicative = trait(self: (comptime value: type): type)(requires: self is functor) {
   let pure(comptime a: type)
     (value: a): self(a)
 
@@ -516,8 +527,7 @@ where self: functor {
     (value: self(a)): self(b) with(e)
 }
 
-pub let monad = trait(self: (comptime value: type): type)
-where self: applicative {
+pub let monad = trait(self: (comptime value: type): type)(requires: self is applicative) {
   let flat_map(comptime e: effects, comptime a: type, comptime b: type)
     (self: self(a))
     (next: (a): self(b) with(e)): self(b) with(e)

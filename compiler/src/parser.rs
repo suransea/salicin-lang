@@ -524,10 +524,12 @@ impl Parser {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
 
-        let where_predicates = self.where_clause()?;
-        if !where_predicates.is_empty() && compile_groups.is_empty() {
-            return Err(self.error_here("`where` requires compile-time parameters"));
+        if self.at(&TokenKind::Where) {
+            return Err(self.error_here(
+                "colon-style `where` predicates were removed; write `= requires(t is trait) ...`",
+            ));
         }
+        let mut where_predicates = Vec::new();
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
 
         if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
@@ -545,6 +547,24 @@ impl Parser {
         }
 
         self.expect(&TokenKind::Equal, "`=`")?;
+
+        if self.at_context_ident("requires") {
+            self.advance();
+            where_predicates.extend(self.constraint_arguments("`(` after `requires`")?);
+            if self.at_separator() || self.at(&TokenKind::Eof) {
+                return Ok(Item::Function(Function {
+                    name,
+                    foreign: None,
+                    builtin: false,
+                    compile_groups,
+                    groups,
+                    return_type: annotation,
+                    effects,
+                    where_predicates,
+                    body: None,
+                }));
+            }
+        }
 
         if self.at_context_ident("builtin") {
             if mutable {
@@ -1138,8 +1158,16 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::RParen, "`)` after extend arguments")?;
-        self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
-        let where_predicates = self.where_clause()?;
+        self.take_newlines_if_followed_by(&[TokenKind::LParen, TokenKind::LBrace]);
+        let where_predicates = if self.at(&TokenKind::LParen) {
+            self.requires_parameter_group()?
+        } else if self.at(&TokenKind::Where) {
+            return Err(self.error_here(
+                "`where` extension predicates were removed; write `(requires: t is trait)`",
+            ));
+        } else {
+            Vec::new()
+        };
         self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
         self.expect(
             &TokenKind::LBrace,
@@ -1200,7 +1228,12 @@ impl Parser {
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
-        let where_predicates = self.where_clause()?;
+        if self.at(&TokenKind::Where) {
+            return Err(self.error_here(
+                "colon-style extension-member predicates were removed; write `= requires(t is trait) ...`",
+            ));
+        }
+        let where_predicates = Vec::new();
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Ok(ExtendMember::Function(Function {
@@ -1216,6 +1249,25 @@ impl Parser {
             }));
         }
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
+
+        let mut where_predicates = where_predicates;
+        if self.at_context_ident("requires") {
+            self.advance();
+            where_predicates.extend(self.constraint_arguments("`(` after `requires`")?);
+            if self.at_separator() || self.at(&TokenKind::RBrace) {
+                return Ok(ExtendMember::Function(Function {
+                    name,
+                    foreign: None,
+                    builtin: false,
+                    compile_groups,
+                    groups,
+                    return_type: annotation,
+                    effects,
+                    where_predicates,
+                    body: None,
+                }));
+            }
+        }
 
         if self.at_context_ident("builtin") {
             if compile_groups.is_empty() && groups.is_empty() {
@@ -1276,30 +1328,105 @@ impl Parser {
         }
     }
 
-    fn where_clause(&mut self) -> Result<Vec<WherePredicate>, ParseError> {
-        if !self.take(&TokenKind::Where) {
-            return Ok(Vec::new());
+    fn constraint_arguments(
+        &mut self,
+        opening_description: &str,
+    ) -> Result<Vec<WherePredicate>, ParseError> {
+        self.expect(&TokenKind::LParen, opening_description)?;
+        self.constraint_expressions_until_rparen()
+    }
+
+    fn requires_parameter_group(&mut self) -> Result<Vec<WherePredicate>, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` before `requires:`")?;
+        let label = self.expect_ident("`requires` constraint parameter label")?;
+        if label != "requires" {
+            return Err(self.error_here(format!(
+                "expected constraint parameter label `requires`, found `{label}`"
+            )));
         }
+        self.expect(&TokenKind::Colon, "`:` after `requires`")?;
+        self.constraint_expressions_until_rparen()
+    }
+
+    fn constraint_expressions_until_rparen(&mut self) -> Result<Vec<WherePredicate>, ParseError> {
         let mut predicates = Vec::new();
         loop {
-            self.layout.where_predicates.push(self.current().start_byte);
-            let subject = self.type_expr()?;
-            self.expect(&TokenKind::Colon, "`:` in where predicate")?;
+            self.constraint_expression(&mut predicates)?;
+            if self.take(&TokenKind::AndAnd) || self.take(&TokenKind::Comma) {
+                if self.at(&TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(&TokenKind::RParen, "`)` after compile-time constraints")?;
+        Ok(predicates)
+    }
+
+    fn constraint_expression(
+        &mut self,
+        predicates: &mut Vec<WherePredicate>,
+    ) -> Result<(), ParseError> {
+        self.layout.where_predicates.push(self.current().start_byte);
+        let mut path = vec![self.expect_path_start("a constraint subject type")?];
+        while self.at(&TokenKind::Dot) {
+            self.advance();
+            path.push(
+                self.expect_path_continuation(
+                    &path,
+                    "a constraint subject path segment after `.`",
+                )?,
+            );
+        }
+
+        if self.at_context_ident("is") {
+            self.advance();
             let (trait_ref, associated_types) = self.where_trait_ref()?;
+            if !associated_types.is_empty() {
+                return Err(self.error_here(
+                    "associated type constraints are separate projection equalities; write `t is trait && t.item == type`",
+                ));
+            }
             predicates.push(WherePredicate {
-                subject,
+                subject: Type::Named(path.join("."), Vec::new()),
                 trait_ref,
                 associated_types,
             });
-            if !self.take(&TokenKind::Comma) {
-                break;
-            }
-            while self.take(&TokenKind::Newline) {}
-            if self.at(&TokenKind::Equal) || self.at(&TokenKind::LBrace) {
-                break;
-            }
+            return Ok(());
         }
-        Ok(predicates)
+
+        if path.len() < 2 {
+            return Err(self.error_here(
+                "expected compile-time `is` or an associated type projection equality",
+            ));
+        }
+        let name = path.pop().expect("projection path has a member");
+        let mut compile_groups = Vec::new();
+        while self.group_starts_with_compile_parameter() {
+            compile_groups.push(self.compile_parameter_group()?);
+        }
+        self.expect(
+            &TokenKind::EqualEqual,
+            "`==` in associated type projection equality",
+        )?;
+        let ty = self.type_expr()?;
+        let subject = Type::Named(path.join("."), Vec::new());
+        let Some(predicate) = predicates
+            .iter_mut()
+            .rev()
+            .find(|predicate| predicate.subject == subject)
+        else {
+            return Err(self.error_here(
+                "an associated type projection equality must follow an `is` constraint for the same subject",
+            ));
+        };
+        predicate.associated_types.push(AssociatedTypeBinding {
+            name,
+            compile_groups,
+            ty,
+        });
+        Ok(())
     }
 
     fn where_trait_ref(&mut self) -> Result<(Type, Vec<AssociatedTypeBinding>), ParseError> {
@@ -2388,22 +2515,25 @@ impl Parser {
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<TraitDef, ParseError> {
         self.expect(&TokenKind::Trait, "`trait`")?;
-        let self_parameter = if self.at(&TokenKind::LParen) {
-            let group = self.compile_parameter_group()?;
-            let [parameter] = group.as_slice() else {
-                return Err(
-                    self.error_here("trait self sort must declare exactly one `self` parameter")
-                );
+        let self_parameter =
+            if self.at(&TokenKind::LParen) && self.at_offset(1, &TokenKind::Comptime) {
+                let group = self.compile_parameter_group()?;
+                let [parameter] = group.as_slice() else {
+                    return Err(self
+                        .error_here("trait self sort must declare exactly one `self` parameter"));
+                };
+                if parameter.name != "self" {
+                    return Err(self.error_here("trait self sort parameter must be named `self`"));
+                }
+                parameter.clone()
+            } else {
+                default_trait_self_parameter()
             };
-            if parameter.name != "self" {
-                return Err(self.error_here("trait self sort parameter must be named `self`"));
-            }
-            parameter.clone()
+        let where_predicates = if self.at(&TokenKind::LParen) {
+            self.requires_parameter_group()?
         } else {
-            default_trait_self_parameter()
+            Vec::new()
         };
-        self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
-        let where_predicates = self.where_clause()?;
         self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
         self.expect(&TokenKind::LBrace, "`{` after `trait`")?;
         self.skip_separators();
@@ -2509,20 +2639,44 @@ impl Parser {
         }
 
         self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
-        let where_predicates = self.where_clause()?;
+        if self.at(&TokenKind::Where) {
+            return Err(self.error_here(
+                "colon-style trait-member predicates were removed; write `= requires(t is trait)`",
+            ));
+        }
+        let mut where_predicates = Vec::new();
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         let body = if self.take(&TokenKind::Equal) {
-            if self.at_context_ident("builtin") {
-                return Err(
-                    self.error_here("trait requirements are abstract and cannot use `builtin()`")
-                );
-            }
-            if !self.at(&TokenKind::LBrace) {
-                return Err(self.error_here(
+            if self.at_context_ident("requires") {
+                self.advance();
+                where_predicates.extend(self.constraint_arguments("`(` after `requires`")?);
+                if self.at_separator() || self.at(&TokenKind::RBrace) {
+                    None
+                } else {
+                    if self.at_context_ident("builtin") {
+                        return Err(self.error_here(
+                            "trait requirements are abstract and cannot use `builtin()`",
+                        ));
+                    }
+                    if !self.at(&TokenKind::LBrace) {
+                        return Err(self.error_here(
+                            "trait default closure declarations require a braced body after `requires(...)`",
+                        ));
+                    }
+                    Some(self.block()?)
+                }
+            } else {
+                if self.at_context_ident("builtin") {
+                    return Err(self
+                        .error_here("trait requirements are abstract and cannot use `builtin()`"));
+                }
+                if !self.at(&TokenKind::LBrace) {
+                    return Err(self.error_here(
                     "trait default closure declarations require a braced body; write `= { expression }`",
                 ));
+                }
+                Some(self.block()?)
             }
-            Some(self.block()?)
         } else {
             None
         };

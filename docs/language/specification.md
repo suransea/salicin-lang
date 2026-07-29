@@ -613,33 +613,66 @@ values without a separate compile-time parameter header.
 Trait dispatch is static. Implementations are selected by the concrete subject and trait
 arguments; no runtime dictionary or implicit open-world dispatch is introduced.
 
-Where predicates constrain generic declarations:
+`constraint` is the compile-time sort of trait requirements. `is` is a
+compile-time operator trait over values classified by sorts, and `type`
+implements its relation to `constraint`:
 
 ```sc fragment
-let duplicate(comptime t: type)(value: t): (t, t)
-where t: core.marker.copyable = {
+pub let constraint: sort(2)
+
+pub let is(comptime right: sort(2)) = trait(comptime self: sort(2)) {
+  let is(comptime left: self, comptime right: right): bool
+}
+
+extend(type, is(constraint)) {
+  let is(
+    comptime left: type,
+    comptime right: constraint,
+  ): bool = builtin()
+}
+```
+
+An extension may guard its target pattern after that pattern binds its inferred
+compile-time parameters:
+
+```sc fragment
+extend(cell(t), copyable)
+(requires: t is copyable) {}
+```
+
+A function applies the compiler-owned `requires` guard to its body:
+
+```sc fragment
+let duplicate(comptime t: type)(value: t): (t, t) = requires(t is copyable) {
   (value, value)
 }
 ```
 
-Associated type equalities refine a bound:
+The compiler retains an abstract query until instantiation and checks the body
+under the query's proof. A false concrete query rejects the instantiation.
+
+Associated type equalities are written as separate projection constraints:
 
 ```sc fragment
-let produce(comptime t: type)(value: t): i32
-where t: produce(item = i32) = {
+let produce(comptime t: type)(value: t): i32 =
+requires(t is produce && t.item == i32) {
   value.produce()
 }
 ```
 
+Trait and extension prerequisites use a labeled compile-time parameter group,
+for example `let copyable = trait(requires: self is movable) {}` and
+`extend(cell(t), copyable)(requires: t is copyable) {}`.
+
 Generic associated constructors retain their parameter groups and sorts. Their receiver region can
 determine a yielded type, as in `iterator.item(r)`.
 
-Where predicates can equate a generic associated constructor with a type expression by declaring
-alpha-renamable binders on the left:
+Projection constraints can equate a generic associated constructor with a
+type expression by declaring alpha-renamable binders on the projection:
 
 ```sc fragment
-let borrow_item(comptime t: type)(value: t): ()
-where t: iterator(item(comptime r: region) = borrow(r)(i32)) = { ... }
+let borrow_item(comptime t: type)(value: t): () =
+requires(t is iterator && t.item(comptime r: region) == borrow(r)(i32)) { ... }
 ```
 
 The binder groups and sorts must exactly match the associated declaration. The right side may use

@@ -126,7 +126,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 414);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 417);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -507,6 +507,26 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
 }
 
 #[test]
+fn constraint_query_contracts_are_explicit_and_bounded() {
+    for malformed in [
+        EDITION_2026_SORTS.replace("pub let constraint: sort(2)", "pub let constraint: sort(1)"),
+        EDITION_2026_SORTS.replace("comptime right: constraint", "comptime right: type"),
+        EDITION_2026_SORTS.replace("): bool = builtin()", "): usize = builtin()"),
+    ] {
+        let modules = edition_2026_test_modules(&[("sorts", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("constraint")),
+            "{:?}",
+            error.diagnostics()
+        );
+    }
+}
+
+#[test]
 fn derived_primitive_operations_are_source_defined() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
     let expected = BTreeMap::from([
@@ -702,8 +722,8 @@ fn rejects_malformed_control_contracts() {
             (
                 "for",
                 EDITION_2026_CONTROL.replace(
-                    "  iter: core.iter.iterator(item = item)",
-                    "  iter: core.iter.iterator",
+                    "  iter.item == item",
+                    "  iter.item == bool",
                 ),
             ),
         ] {
@@ -823,7 +843,10 @@ fn rejects_malformed_async_contracts() {
         ("poll", EDITION_2026_ASYNC.replace("  pending,\n", "")),
         (
             "future",
-            EDITION_2026_ASYNC.replace("where self: movable", "where self: copyable"),
+            EDITION_2026_ASYNC.replace(
+                "trait(requires: self is movable)",
+                "trait(requires: self is copyable)",
+            ),
         ),
         (
             "executor",
@@ -959,8 +982,7 @@ pub let rem(comptime rhs: type) = trait {
   let rem(self)(rhs: rhs): output
 }
 pub let movable = trait {}
-pub let copyable = trait
-where self: movable {}
+pub let copyable = trait(requires: self is movable) {}
 pub let droppable = trait {
   let drop(self: borrow(mut)(self))(): ()
 }
@@ -1135,14 +1157,14 @@ pub let str: type = builtin()
                 "unexpected declaration `extra` at item 7",
                 "lang item `result` must be enum, found struct",
                 "lang item `never` must have shape `pub let never = enum {}`",
-                "lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`",
+                "lang item `copyable` must have shape `pub let copyable = trait(requires: self is movable) {}`",
                 "lang item `add` must have shape `pub let add(comptime rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`",
                 "missing lang item `index`",
             ]
         );
     assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `option` must be `pub`, found private visibility\n- unexpected declaration `extra` at item 7\n- lang item `result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`\n- lang item `add` must have shape `pub let add(comptime rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`\n- missing lang item `index`"
+            "invalid embedded core bundle for edition 2026\n- lang item `option` must be `pub`, found private visibility\n- unexpected declaration `extra` at item 7\n- lang item `result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `copyable` must have shape `pub let copyable = trait(requires: self is movable) {}`\n- lang item `add` must have shape `pub let add(comptime rhs: type) = trait { let output: type; let add(self)(rhs: rhs): output }`\n- missing lang item `index`"
         );
 }
 
@@ -1238,7 +1260,7 @@ fn rejects_copy_compile_parameters_associated_types_and_methods() {
 
         assert_eq!(
                 error.diagnostics(),
-                ["lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`"],
+                ["lang item `copyable` must have shape `pub let copyable = trait(requires: self is movable) {}`"],
                 "unexpected diagnostic for `{declaration}`"
             );
     }
@@ -1249,10 +1271,11 @@ fn rejects_malformed_move_traits_and_copy_without_move_supertrait() {
     for malformed in [
         "pub let movable(comptime t: type) = trait {}",
         "pub let movable = trait { let item: type }",
-        "pub let movable = trait where self: copyable {}",
+        "pub let movable = trait(requires: self is copyable) {}",
     ] {
-        let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
-            .replacen("pub let movable = trait {}", malformed, 1);
+        let source =
+            core_source_with_copy("pub let copyable = trait(requires: self is movable) {}")
+                .replacen("pub let movable = trait {}", malformed, 1);
         let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
         assert_eq!(
             error.diagnostics(),
@@ -1264,9 +1287,9 @@ fn rejects_malformed_move_traits_and_copy_without_move_supertrait() {
     let source = core_source_with_copy("pub let copyable = trait {}");
     let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
     assert_eq!(
-            error.diagnostics(),
-            ["lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`"]
-        );
+        error.diagnostics(),
+        ["lang item `copyable` must have shape `pub let copyable = trait(requires: self is movable) {}`"]
+    );
 }
 
 #[test]
@@ -1279,12 +1302,13 @@ fn rejects_malformed_drop_traits() {
     ];
 
     for declaration in malformed_declarations {
-        let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
-            .replacen(
-                "pub let droppable = trait {\n  let drop(self: borrow(mut)(self))(): ()\n}",
-                declaration,
-                1,
-            );
+        let source =
+            core_source_with_copy("pub let copyable = trait(requires: self is movable) {}")
+                .replacen(
+                    "pub let droppable = trait {\n  let drop(self: borrow(mut)(self))(): ()\n}",
+                    declaration,
+                    1,
+                );
         let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
         assert_eq!(
                 error.diagnostics(),
@@ -1301,8 +1325,7 @@ pub let option(comptime t: type) = enum { some(t), none }
 pub let result(comptime e: type)(comptime t: type) = enum { ok(t), err(e) }
 pub let never = enum {}
 pub let movable = trait {}
-pub let copyable = trait
-where self: movable {}
+pub let copyable = trait(requires: self is movable) {}
 pub let droppable = trait {
   let drop(self: borrow(mut)(self))(): ()
 }
@@ -1388,12 +1411,13 @@ fn rejects_malformed_partial_ordering() {
         "pub let partial_ordering = enum { less, equal, greater }",
         "pub let partial_ordering = enum { less, equal, greater, unknown }",
     ] {
-        let source = core_source_with_copy("pub let copyable = trait\nwhere self: movable {}")
-            .replacen(
-                "pub let partial_ordering = enum { less, equal, greater, unordered }",
-                declaration,
-                1,
-            );
+        let source =
+            core_source_with_copy("pub let copyable = trait(requires: self is movable) {}")
+                .replacen(
+                    "pub let partial_ordering = enum { less, equal, greater, unordered }",
+                    declaration,
+                    1,
+                );
         let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
         assert_eq!(
                 error.diagnostics(),
@@ -1418,7 +1442,7 @@ fn rejects_malformed_unary_operator_traits() {
             ),
         ] {
             let source =
-                core_source_with_copy("pub let copyable = trait\nwhere self: movable {}").replacen(
+                core_source_with_copy("pub let copyable = trait(requires: self is movable) {}").replacen(
                 original,
                 malformed,
                 1,
@@ -1443,7 +1467,7 @@ fn rejects_malformed_bitwise_operator_traits() {
             ),
         ] {
             let source =
-                core_source_with_copy("pub let copyable = trait\nwhere self: movable {}").replacen(
+                core_source_with_copy("pub let copyable = trait(requires: self is movable) {}").replacen(
                 original,
                 malformed,
                 1,

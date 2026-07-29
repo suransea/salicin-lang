@@ -28,7 +28,7 @@ let consume(move resource: resource): i32 = {
 
 let poll_once(comptime e: effects, comptime f: type, comptime t: type)
   (future: borrow(mut)(f)): poll(t) with(e)
-where f: future(e, output = t) = {
+= requires(f is future(e) && f.output == t) {
   future.poll()
 }
 

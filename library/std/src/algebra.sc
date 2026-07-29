@@ -4,7 +4,6 @@ pub let semigroup = trait {
 }
 
 /// A semigroup with an identity value.
-pub let monoid = trait
-where self: semigroup {
+pub let monoid = trait(requires: self is semigroup) {
   let empty(): self
 }

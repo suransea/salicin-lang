@@ -9,7 +9,7 @@ extend(value, convert(i32)) {
 }
 
 let convert(comptime t: type)(value: borrow(t)): i32
-where t: convert(i32) = { value.convert() }
+= requires(t is convert(i32)) { value.convert() }
 
 let main(): i32 = {
   let value = value { value: 42 }

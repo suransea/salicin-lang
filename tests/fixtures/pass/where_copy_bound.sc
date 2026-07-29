@@ -4,8 +4,7 @@ extend(value, copyable) {}
 extend(value, marker()) {}
 
 let duplicate(comptime t: type)(copy value: t): t
-where t: copyable,
-  t: marker, = {
+= requires(t is copyable && t is marker) {
   let first = value
   value
 }

@@ -28,7 +28,7 @@ extend(bits, shr(bits)) {
 }
 
 let mask(comptime t: type)(move left: t)(move right: t): t
-where t: bit_and(t, output = t) = { left & right }
+= requires(t is bit_and(t) && t.output == t) { left & right }
 
 let unsigned_shift(value: u32): u32 = { value >> 2 }
 

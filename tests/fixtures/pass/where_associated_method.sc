@@ -11,10 +11,10 @@ extend(value, produce) {
 }
 
 let produce(comptime t: type)(value: borrow(t)): i32
-where t: produce(item = i32) = { value.produce() }
+= requires(t is produce && t.item == i32) { value.produce() }
 
 let forward(comptime t: type)(value: borrow(t)): i32
-where t: produce(item = i32) = { produce(value) }
+= requires(t is produce && t.item == i32) { produce(value) }
 
 let main(): i32 = {
   let value = value { value: 42 }

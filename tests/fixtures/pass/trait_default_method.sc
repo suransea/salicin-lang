@@ -19,7 +19,7 @@ extend(override, read) {
 let cell(comptime t: type) = struct { value: t }
 
 extend(cell(t), read)
-where t: read {
+(requires: t is read) {
   let read(self: borrow(self))(): i32 = { self.value.read() }
 }
 

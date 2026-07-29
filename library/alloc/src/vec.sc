@@ -308,8 +308,7 @@ let vec_shrink_to_fit(comptime t: type)(values: borrow(mut)(vec(t))): () = {
 }
 
 /// Copies the element at `index` out of `values`.
-let vec_read(comptime t: type)(values: borrow(vec(t)))(index: u64): t
-where t: copyable = {
+let vec_read(comptime t: type)(values: borrow(vec(t)))(index: u64): t = requires(t is copyable) {
   if index >= values.length {
     unsafe {
       raw_trap()
@@ -321,8 +320,7 @@ where t: copyable = {
 }
 
 /// Copies `value` into the element slot at `index`.
-let vec_write(comptime t: type)(values: borrow(mut)(vec(t)))(index: u64)(copy value: t): ()
-where t: copyable = {
+let vec_write(comptime t: type)(values: borrow(mut)(vec(t)))(index: u64)(copy value: t): () = requires(t is copyable) {
   if index >= values.length {
     unsafe {
       raw_trap()
@@ -427,7 +425,7 @@ extend(vec(t)) {
 
 /// Provides copy-only indexed read and write operations.
 extend(vec(t))
-where t: copyable {
+(requires: t is copyable) {
   /// Copies the element at `index` out of this vector.
   let read(self: borrow(self))(index: u64): t = { vec_read(self)(index) }
   /// Copies `value` into the element slot at `index`.

@@ -1707,6 +1707,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             .unwrap_or_default(),
         &mut diagnostics,
     );
+    validate_constraint_query_contract(program, &mut diagnostics);
 
     if !diagnostics.is_empty() {
         return Err(CoreBundleError::new(edition, diagnostics));
@@ -1834,6 +1835,150 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         iterator: item(LangItemKind::Iterator),
         into_iterator: item(LangItemKind::IntoIterator),
     })
+}
+
+fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<String>) {
+    let constraints = program
+        .items
+        .iter()
+        .enumerate()
+        .filter(
+            |(_, item)| matches!(item, Item::Sort(definition) if definition.name == "constraint"),
+        )
+        .collect::<Vec<_>>();
+    if constraints.len() != 1 {
+        diagnostics.push(
+            "core must declare exactly one `pub let constraint: sort(2)` contract".to_owned(),
+        );
+    } else {
+        let (index, Item::Sort(definition)) = constraints[0] else {
+            unreachable!()
+        };
+        if definition.level != 2
+            || definition.members.is_some()
+            || program.item_visibilities[index] != Visibility::Public
+        {
+            diagnostics.push(
+                "compile-time constraint sort must have shape `pub let constraint: sort(2)`"
+                    .to_owned(),
+            );
+        }
+    }
+
+    let relations = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Trait(definition) if definition.name == "is" => Some(definition),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let valid_relation = matches!(
+        relations.as_slice(),
+        [definition]
+            if definition.self_parameter.name == "self"
+                && definition.self_parameter.kind
+                    == Sort::Universe(crate::ast::SortLevel::Literal(2))
+                && definition.compile_groups
+                    == vec![vec![CompileParam {
+                        name: "right".to_owned(),
+                        kind: Sort::Universe(crate::ast::SortLevel::Literal(2)),
+                        default: None,
+                    }]]
+                && definition.where_predicates.is_empty()
+                && matches!(
+                    definition.members.as_slice(),
+                    [TraitMember::Function(function)]
+                        if function.name == "is"
+                            && function.compile_groups
+                                == vec![vec![
+                                    CompileParam {
+                                        name: "left".to_owned(),
+                                        kind: Sort::Named("self".to_owned()),
+                                        default: None,
+                                    },
+                                    CompileParam {
+                                        name: "right".to_owned(),
+                                        kind: Sort::Named("right".to_owned()),
+                                        default: None,
+                                    },
+                                ]]
+                            && function.groups.is_empty()
+                            && function.return_type == Some(Type::Bool)
+                            && function.body.is_none()
+                            && !function.builtin
+                )
+    );
+    if !valid_relation {
+        diagnostics
+            .push("compile-time `is` operator trait has an invalid source contract".to_owned());
+    }
+
+    let implementations = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Extend(extension)
+                if matches!(
+                    &extension.target,
+                    Type::Named(name, arguments)
+                        if name.split(['.', ':']).next_back() == Some("type")
+                            && arguments.is_empty()
+                ) =>
+            {
+                Some(extension)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let valid = matches!(
+        implementations.as_slice(),
+        [extension]
+            if matches!(
+                &extension.trait_ref,
+                Some(Type::Named(name, arguments))
+                    if name.split(['.', ':']).next_back() == Some("is")
+                        && matches!(
+                            arguments.as_slice(),
+                            [Type::Named(argument, nested)]
+                                if argument.split(['.', ':']).next_back()
+                                    == Some("constraint")
+                                    && nested.is_empty()
+                        )
+            )
+                && extension.where_predicates.is_empty()
+                && matches!(
+                    extension.members.as_slice(),
+                    [crate::ast::ExtendMember::Function(function)]
+                        if function.name == "is"
+                            && function.compile_groups
+                                == vec![vec![
+                                    CompileParam {
+                                        name: "left".to_owned(),
+                                        kind: Sort::Type,
+                                        default: None,
+                                    },
+                                    CompileParam {
+                                        name: "right".to_owned(),
+                                        kind: Sort::Named("constraint".to_owned()),
+                                        default: None,
+                                    },
+                                ]]
+                            && function.groups.is_empty()
+                            && function.return_type == Some(Type::Bool)
+                            && function.effects == FunctionEffects::default()
+                            && function.where_predicates.is_empty()
+                            && function.foreign.is_none()
+                            && function.builtin
+                            && function.body.is_none()
+                )
+    );
+    if !valid {
+        diagnostics.push(
+            "compile-time constraint query must have shape `extend(type, is(constraint)) { let is(comptime left: type, comptime right: constraint): bool = builtin() }`"
+                .to_owned(),
+        );
+    }
 }
 
 fn validate_builtin_bootstrap(item: &Item, diagnostics: &mut Vec<String>) {
@@ -2103,6 +2248,8 @@ fn is_core_support_item(name: &str) -> bool {
             | "sort"
             | "sort_of"
             | "type_of"
+            | "constraint"
+            | "is"
     )
 }
 
@@ -3871,7 +4018,7 @@ pub(crate) fn move_trait_has_required_shape(definition: &TraitDef) -> bool {
 fn validate_copy(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     if !copy_trait_has_required_shape(definition) {
         diagnostics.push(
-            "lang item `copyable` must have shape `pub let copyable = trait where self: movable {}`"
+            "lang item `copyable` must have shape `pub let copyable = trait(requires: self is movable) {}`"
                 .to_owned(),
         );
     }

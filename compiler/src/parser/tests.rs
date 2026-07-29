@@ -2912,7 +2912,7 @@ fn infers_extend_pattern_parameters_from_constructor_sorts() {
     let program = parse(
         "let cell(comptime t: type) = struct { value: t }\n\
              extend(cell(t))\n\
-             where t: copyable {\n\
+             (requires: t is copyable) {\n\
                let get(self: borrow(self))(): t = { self.value }\n}\n",
     )
     .unwrap();
@@ -2970,11 +2970,10 @@ fn qualified_extend_roots_are_not_inferred_as_parameters() {
 }
 
 #[test]
-fn parses_multiline_where_predicates_without_inference_placeholders() {
+fn parses_multiline_constraint_guards_without_inference_placeholders() {
     let program = parse(
         "let choose(comptime t: type)(copy value: t): t\n\
-             where t: copyable,\n\
-                   t: marker(i32, item = t), = { value }\n",
+             = requires(t is copyable && t is marker(i32) && t.item == t) { value }\n",
     )
     .unwrap();
     let Item::Function(function) = &program.items[0] else {
@@ -3001,10 +3000,58 @@ fn parses_multiline_where_predicates_without_inference_placeholders() {
 }
 
 #[test]
+fn lowers_compile_time_constraint_guards_to_trait_predicates() {
+    let program = parse(
+        "let copyable = trait {}\n\
+         let cell(comptime t: type) = struct { value: t }\n\
+         let duplicate(comptime t: type)(value: t): (t, t) = requires(t is copyable) {\n\
+           (value, value)\n\
+         }\n\
+         extend(cell(t), copyable)\n\
+         (requires: t is copyable) {}\n",
+    )
+    .unwrap();
+
+    let Item::Function(function) = &program.items[2] else {
+        panic!("expected guarded function");
+    };
+    assert_eq!(function.where_predicates.len(), 1);
+    assert_eq!(
+        function.where_predicates[0].subject,
+        Type::Named("t".into(), Vec::new())
+    );
+    assert_eq!(
+        function.where_predicates[0].trait_ref,
+        Type::Named("copyable".into(), Vec::new())
+    );
+
+    let Item::Extend(extension) = &program.items[3] else {
+        panic!("expected guarded extension");
+    };
+    assert_eq!(extension.where_predicates, function.where_predicates);
+}
+
+#[test]
+fn constraint_guards_require_is_evidence_before_projection_equalities() {
+    let error =
+        parse("let read(comptime t: type)(value: t): t = requires(t.item == i32) { value }\n")
+            .expect_err("a projection without trait evidence must fail");
+    assert!(error
+        .message
+        .contains("must follow an `is` constraint for the same subject"));
+
+    let error = parse("let read(comptime t: type)(value: t): t where t: copyable = { value }\n")
+        .expect_err("colon-style predicates must fail");
+    assert!(error
+        .message
+        .contains("colon-style `where` predicates were removed"));
+}
+
+#[test]
 fn parses_generic_associated_type_equalities() {
     let program = parse(
             "let lend(comptime t: type)(value: t): t\n\
-             where t: lender(item(comptime a: access)(comptime r: region) = borrow(a)(r)(i32)) = { value }\n",
+             = requires(t is lender && t.item(comptime a: access)(comptime r: region) == borrow(a)(r)(i32)) { value }\n",
         )
         .unwrap();
     let Item::Function(function) = &program.items[0] else {
@@ -3159,8 +3206,7 @@ fn parses_constructor_compile_parameter_sorts() {
              let functor = trait(comptime self: (comptime value: type): type) {\n\
                let map(comptime e: effects, comptime a: type, comptime b: type)(move self: self(a))(move transform: (a): b with(e)): self(b) with(e)\n\
              }\n\
-             let applicative = trait(comptime self: (comptime value: type): type)\n\
-             where self: functor {\n\
+             let applicative = trait(comptime self: (comptime value: type): type)(requires: self is functor) {\n\
                let pure(comptime a: type)(move value: a): self(a)\n}\n",
         )
         .unwrap();

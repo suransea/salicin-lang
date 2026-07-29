@@ -1,7 +1,7 @@
 let box = alloc.boxed.box
 
 let read_box(comptime t: type)(boxed: borrow(box(t))): t
-where t: copyable = { boxed.read() }
+= requires(t is copyable) { boxed.read() }
 
 let main(): i32 = {
   let mut boxed = box.new(t: i32)(0)

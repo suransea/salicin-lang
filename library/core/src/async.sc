@@ -11,8 +11,7 @@ pub let poll(comptime t: type) = enum {
 }
 
 /// A cold asynchronous computation with residual effect row `E`.
-pub let future(comptime e: effects) = trait
-where self: movable {
+pub let future(comptime e: effects) = trait(requires: self is movable) {
   let output: type
 
   let poll(comptime r: region)
@@ -24,19 +23,17 @@ where self: movable {
 pub let executor = trait {
   let run(comptime e: effects, comptime f: type, comptime t: type)
     (self: borrow(mut)(self))
-    (move future: f): t with(e)
-  where f: future(e, output = t)
+    (move future: f): t with(e) = requires(f is future(e) && f.output == t)
 }
 
 /// Constructs a cold compiler-generated future without running `action`.
 pub let async(comptime e: effects, comptime f: type, comptime t: type)
-  (move action: (): t with(core.async.suspension, e)): f
-where f: future(e, output = t) = builtin()
+  (move action: (): t with(core.async.suspension, e)): f = requires(f is future(e) && f.output == t) builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
 pub let await(comptime e: effects, comptime f: type, comptime t: type)
   (move future: f): t with(core.async.suspension, e)
-where f: future(e, output = t) = {
+= requires(f is future(e) && f.output == t) {
   let mut current = future
   loop {
     match current.poll()

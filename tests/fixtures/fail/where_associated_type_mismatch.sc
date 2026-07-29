@@ -11,7 +11,7 @@ extend(value, produce) {
 }
 
 let require_bool(comptime t: type)(value: borrow(t)): bool
-where t: produce(item = bool) = { value.produce() }
+= requires(t is produce && t.item == bool) { value.produce() }
 
 let main(): i32 = {
   let value = value { value: 42 }

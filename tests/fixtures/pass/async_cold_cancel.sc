@@ -13,7 +13,7 @@ extend(resource, droppable) {
 let consume(move resource: resource): () = { () }
 
 let relocate(comptime t: type)(move value: t): t
-where t: movable = {
+= requires(t is movable) {
   value
 }
 

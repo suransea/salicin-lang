@@ -1546,7 +1546,7 @@ let select = trait {
 }
 let counter = struct { value: i32 }
 extend(counter, select) {}
-let select(comptime t: type)(value: borrow(t)): i32 where t: select = {
+let select(comptime t: type)(value: borrow(t)): i32 = requires(t is select) {
   value.pick(right: 41)
 }
 let main(): i32 = { select(counter { value: 0 }) }
@@ -1818,12 +1818,12 @@ let main(): i32 = { picker {}.first(1)([42]) }
 let copy = core.copyable
 let select = trait {
   let select(comptime value: type)(self: borrow(self))(move value: value): value
-    where value: copyable
+    = requires(value is copyable)
 }
 let selector = struct {}
 extend(selector, select) {
   let select(comptime result: type)(self: borrow(self))(move value: result): result
-    where result: copyable = { value }
+    = requires(result is copyable) { value }
 }
 let main(): i32 = { selector {}.select(i32)(42) }
 "#,
@@ -1879,7 +1879,7 @@ let select = trait {
 let selector = struct {}
 extend(selector, select) {
   let select(comptime result: type)(self: borrow(self))(move value: result): result
-    where result: copyable = { value }
+    = requires(result is copyable) { value }
 }
 let main(): i32 = { 0 }
 "#,
@@ -1948,7 +1948,7 @@ let has_item = trait {
 }
 let select = trait {
   let select(comptime value: type)(self: borrow(self))(move value: value): value
-    where value: has_item(item = i32)
+    = requires(value is has_item && value.item == i32)
 }
 let wrapped = struct { value: i32 }
 extend(wrapped, has_item) {
@@ -1957,7 +1957,7 @@ extend(wrapped, has_item) {
 let selector = struct {}
 extend(selector, select) {
   let select(comptime result: type)(self: borrow(self))(move value: result): result
-    where result: has_item(item = i32) = {
+    = requires(result is has_item && result.item == i32) {
     value
   }
 }
@@ -3566,7 +3566,7 @@ fn where_bound_validation_rolls_back_assumed_trait_implementations() {
            let measure(self: borrow(self))(): i32 = { self.value }\n\
          }\n\
          let read(comptime t: type)(value: borrow(t)): i32\n\
-         where t: measure = { value.measure() }\n\
+         = requires(t is measure) { value.measure() }\n\
          let main(): i32 = { let value = measured_value { value: 42 }; read(value) }\n",
     )
     .expect("where-bound method source must parse");
@@ -4481,12 +4481,12 @@ extend(leaf, read) {
 }
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), read)
-where t: read {
+(requires: t is read) {
   let read(self: borrow(self))(): i32 = { self.value.read() }
 }
 
 let read_cell(comptime t: type)(cell: borrow(cell(t))): i32
-where t: read = { cell.read() }
+= requires(t is read) { cell.read() }
 
 let value = trait {
   let item: type
@@ -4516,7 +4516,7 @@ let read = trait {
 let leaf = struct { value: i32 }
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), read)
-where t: read {
+(requires: t is read) {
   let read(self: borrow(self))(): i32 = { self.value.read() }
 }
 let main(): i32 = {
@@ -4575,7 +4575,7 @@ let main(): i32 = {
 let convert(comptime to: type) = trait { let convert(self: borrow(self))(): to }
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), convert(t))
-where t: copyable {
+(requires: t is copyable) {
   let convert(self: borrow(self))(): t = { self.value }}
 extend(cell(i32), convert(i64)) {
   let convert(self: borrow(self))(): i64 = { 42 }
@@ -4619,7 +4619,7 @@ let main(): i32 = { 42 }
 let read = trait { let read(self: borrow(self))(): i32 }
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), read)
-where t: read {
+(requires: t is read) {
   let read(self: borrow(self))(): i32 = { self.value.read() }
 }
 let main(): i32 = { 42 }
@@ -4664,7 +4664,7 @@ fn generic_copy_and_drop_extensions_follow_concrete_instance_semantics() {
         r#"
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 let sum(copy cell: cell(i32)): i32 = { cell.value }
 let main(): i32 = {
   let cell = cell { value: 42 }
@@ -4682,7 +4682,7 @@ let maybe(comptime t: type) = enum {
   none,
 }
 extend(maybe(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 let read(copy value: maybe(i32)): i32 = { value match {
   some(number) => number,
   none => 0,
@@ -4703,7 +4703,7 @@ extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = { self.value = 0 }}
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 let main(): i32 = {
   let cell = cell { value: resource { value: 42 } }
   let moved = cell
@@ -4732,7 +4732,7 @@ let main(): i32 = { 42 }
         r#"
 let cell(comptime t: type) = struct { value: t }
 extend(cell(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 extend(cell(t), droppable) {
   let drop(self: borrow(mut)(self))(): () = { () }}
 let main(): i32 = {
@@ -4750,7 +4750,7 @@ let main(): i32 = {
         r#"
 pub let cell(comptime t: type) = struct { value: t }
 extend(cell(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 let main(): i32 = { 42 }
 "#,
         vec![
@@ -7355,8 +7355,7 @@ fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
 	    transform: (a): b with(e),
 	  ): self(b) with(e)
 	}
-let applicative = trait(comptime self: (comptime value: type): type)
-where self: functor {
+let applicative = trait(comptime self: (comptime value: type): type)(requires: self is functor) {
   let pure(comptime a: type)(move value: a): self(a)}
 let carrier(comptime t: type) = struct { value: t }
 extend(carrier, applicative) {
@@ -7380,8 +7379,7 @@ let main(): i32 = { 0 }
 	    transform: (a): b with(e),
 	  ): self(b) with(e)
 	}
-let applicative = trait(comptime self: (comptime value: type): type)
-where self: functor {
+let applicative = trait(comptime self: (comptime value: type): type)(requires: self is functor) {
   let pure(comptime a: type)(move value: a): self(a)}
 let carrier(comptime t: type) = struct { value: t }
 extend(carrier, applicative) {
@@ -7410,7 +7408,7 @@ let monad = trait(comptime self: (comptime value: type): type) {}
 let carrier(comptime t: type) = struct { value: t }
 extend(carrier, monad) {}
 let keep(comptime m: (comptime value: type): type, comptime a: type)(move value: m(a)): m(a)
-where m: monad = {
+= requires(m is monad) {
   value
 }
 
@@ -8049,8 +8047,8 @@ extend(flag, not) {
   let output = i32
   let not(self)(): i32 = { if self.value { 0 } else { 42 } }
 }
-let negate(comptime t: type)(move value: t): t where t: neg(output = t) = { -value }
-let invert(comptime t: type)(move value: t): t where t: not(output = t) = { !value }
+let negate(comptime t: type)(move value: t): t = requires(t is neg && t.output == t) { -value }
+let invert(comptime t: type)(move value: t): t = requires(t is not && t.output == t) { !value }
 let main(): i32 = { if invert(false) {
   !flag { value: false } + -number { value: 0 } + negate(0)
 } else { 0 } }
@@ -8104,7 +8102,7 @@ extend(bits, shr(bits)) {
   let shr(self)(rhs: bits): bits = { bits { value: self.value >> rhs.value } }
 }
 let mask(comptime t: type)(move left: t)(move right: t): t
-where t: bit_and(t, output = t) = { left & right }
+= requires(t is bit_and(t) && t.output == t) { left & right }
 let unsigned_shift(value: u32): u32 = { value >> 2 }
 let main(): i32 = {
   let value = ((((mask(bits { value: 6 })(bits { value: 3 }) | bits { value: 8 }) ^ bits { value: 3 }) << bits { value: 1 }) >> bits { value: 1 }).value
@@ -8776,7 +8774,7 @@ extend(resource, droppable) {
   let drop(self: borrow(mut)(self))(): () = { () }
 }
 let relocate(comptime t: type)(move value: t): t
-where t: movable = {
+= requires(t is movable) {
   value
 }
 
@@ -8990,7 +8988,7 @@ let future = core.async.future
 
 let poll_once(comptime e: effects, comptime f: type, comptime t: type)
   (future: borrow(mut)(f)): poll(t) with(e)
-where f: future(e, output = t) = {
+= requires(f is future(e) && f.output == t) {
   future.poll()
 }
 

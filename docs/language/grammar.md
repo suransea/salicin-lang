@@ -225,8 +225,7 @@ named_field = [ visibility ], IDENT, ":", type_expr ;
 trait_decl =
     "trait",
     [ "(", self_parameter, ")" ],
-    { compile_parameter_group },
-    [ where_clause ],
+    [ requires_parameter_group ],
     "{", separators,
     { trait_member, separators },
     "}" ;
@@ -238,8 +237,7 @@ trait_member =
     { declaration_group },
     ":", ( type_expr | contextual("type") | contextual("parameters") ),
     [ with_clause ],
-    [ where_clause ],
-    [ "=", expression ] ;
+    [ "=", [ constraint_guard ], expression ] ;
 ```
 
 An associated type or associated constructor has no runtime parameter groups. Its compile-time
@@ -253,7 +251,7 @@ extend_decl =
     type_expr,
     [ ",", trait_ref ],
     ")",
-    [ where_clause ],
+    [ requires_parameter_group ],
     "{", separators,
     { extend_member, separators },
     "}" ;
@@ -263,32 +261,55 @@ extend_member =
     { declaration_group },
     [ ":", type_expr ],
     [ with_clause ],
-    [ where_clause ],
-    [ "=", expression ] ;
+    [ "=", [ constraint_guard ], expression ] ;
 
-where_clause =
-    "where", where_predicate,
-    { ",", where_predicate },
-    [ "," ] ;
+constraint_guard =
+    contextual("requires"), constraint_arguments ;
 
-where_predicate = type_expr, ":", trait_ref ;
+requires_parameter_group =
+    "(", contextual("requires"), ":",
+    constraint_expression,
+    { ( "&&" | "," ), constraint_expression },
+    [ "," ], ")" ;
+
+constraint_arguments =
+    "(", constraint_expression,
+    { ( "&&" | "," ), constraint_expression },
+    [ "," ], ")" ;
+
+constraint_expression =
+    type_path, contextual("is"), trait_ref
+  | projection, "==", type_expr ;
+
+projection =
+    type_path, ".", IDENT, { compile_parameter_group } ;
 
 trait_ref =
     path,
     [ "(", [ trait_argument, { ",", trait_argument }, [ "," ] ], ")" ] ;
 
-trait_argument = [ IDENT, ":" ], type_expr | associated_binding ;
-
-associated_binding =
-    IDENT,
-    { compile_parameter_group },
-    "=",
-    type_expr ;
+trait_argument = [ IDENT, ":" ], type_expr ;
 ```
 
-Positional trait arguments precede associated bindings. A generic associated constructor equation
-declares its local binders on the left, for example
-`item(comptime r: region) = borrow(r)(t)`.
+An associated type projection equality follows the trait constraint whose
+evidence owns that projection. A generic associated constructor equation
+declares its local binders on the projection, for example
+`t is iterator && t.item(comptime r: region) == borrow(r)(i32)`.
+
+An extension requirement group is evaluated after the target pattern binds
+its compile-time parameters. A function applies the same compiler-owned
+`requires` guard to its body:
+
+```sc fragment
+let duplicate(comptime t: type)(value: t): (t, t) = requires(t is copyable) {
+  (value, value)
+}
+```
+
+Both forms lower `is` relations and projection equalities to solver goals. An
+unsatisfied concrete goal is a compile-time error; an abstract goal is
+retained until generic instantiation. Trait prerequisites use the same
+constraint arguments directly, for example `trait(requires: self is movable) {}`.
 
 ### 2.6 Foreign Declarations
 
@@ -301,7 +322,7 @@ foreign_function =
 ```
 
 A foreign declaration has exactly one runtime parameter group, no
-compile-time parameters, explicit effects, `where` clause, or body. Omitting
+compile-time parameters, explicit effects, `requires` guard, or body. Omitting
 the string uses the Salicin declaration name as the linker symbol. The only
 accepted ABI name is the contextual identifier `c`. Grouped `extern`
 declarations and `@` attributes are not grammar productions.

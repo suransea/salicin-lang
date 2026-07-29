@@ -2,7 +2,7 @@ let pair = struct { left: i32, right: i32 }
 let cell(comptime t: type) = struct { value: t }
 
 let read(comptime t: type)(cell: borrow(cell(t))): t
-where t: copyable = {
+= requires(t is copyable) {
   let alias: borrow(cell(t)) = borrow(cell)
   alias.value
 }

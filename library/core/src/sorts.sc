@@ -23,3 +23,17 @@ pub let effect: sort(2)
 pub let effects: sort(2)
 /// Sort of compile-time schemas expanded into one runtime parameter group.
 pub let parameters: sort(2)
+/// Sort of trait requirements consumed by compile-time constraint queries.
+pub let constraint: sort(2)
+
+/// Compile-time relation between values classified by sorts.
+pub let is(comptime right: sort(2)) = trait(comptime self: sort(2)) {
+  let is(comptime left: self, comptime right: right): bool
+}
+
+extend(type, is(constraint)) {
+  let is(
+    comptime left: type,
+    comptime right: constraint,
+  ): bool = builtin()
+}

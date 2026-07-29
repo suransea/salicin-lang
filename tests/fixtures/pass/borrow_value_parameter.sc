@@ -5,7 +5,7 @@ let forward(comptime r: region)(value: borrow(r)(i32)): borrow(r)(i32) = { value
 let inferred_forward(value: borrow(i32)): borrow(i32) = { value }
 
 let generic_read(comptime t: type)(value: borrow(t)): t
-where t: copyable = { value }
+= requires(t is copyable) { value }
 
 let forward_mut(value: borrow(mut)(i32)): borrow(mut)(i32) = { value }
 

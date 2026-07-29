@@ -1,7 +1,7 @@
 let cell(comptime t: type) = struct { value: t }
 
 extend(cell(t))
-where t: missing {
+(requires: t is missing) {
   let take(move self)(): t = { self.value }
 }
 

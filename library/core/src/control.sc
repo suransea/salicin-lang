@@ -113,9 +113,12 @@ pub let match(
 /// Iterates through `iterable`, passing each item to the lazy body.
 pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
   (move iterable: iterable)
-  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)
-where iterable: core.iter.into_iterator(iter = iter),
-  iter: core.iter.iterator(item = item) = {
+  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = requires(
+  iterable is core.iter.into_iterator &&
+  iterable.iter == iter &&
+  iter is core.iter.iterator &&
+  iter.item == item
+) {
   let mut iterator = iterable.into_iter()
   loop {
     match iterator.next()

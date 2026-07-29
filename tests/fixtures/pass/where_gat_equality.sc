@@ -15,7 +15,7 @@ extend(cell, factory) {
 }
 
 let make_i32(comptime t: type)(value: borrow(t)): i32
-where t: factory(item(comptime u: type) = u) = {
+= requires(t is factory && t.item(comptime u: type) == u) {
   value.make(42)
 }
 

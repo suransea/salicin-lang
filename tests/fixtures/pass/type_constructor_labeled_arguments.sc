@@ -11,8 +11,7 @@ extend(pair(i32, bool), holds(item: i32)) {
 }
 
 let read(comptime t: type)(value: borrow(t)): i32
-where t: holds(item: i32)
-= {
+= requires(t is holds(item: i32)) {
   value.get()
 }
 

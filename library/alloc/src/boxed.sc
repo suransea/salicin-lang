@@ -23,16 +23,14 @@ let box_into_raw(comptime t: type)(move boxed: box(t)): ptr(mut)(t) = {
 }
 
 /// Copies the boxed value out of `boxed`.
-let box_read(comptime t: type)(boxed: borrow(box(t))): t
-where t: copyable = {
+let box_read(comptime t: type)(boxed: borrow(box(t))): t = requires(t is copyable) {
   unsafe {
     *boxed.pointer
   }
 }
 
 /// Copies `value` over the current boxed value.
-let box_write(comptime t: type)(boxed: borrow(mut)(box(t)))(copy value: t): ()
-where t: copyable = {
+let box_write(comptime t: type)(boxed: borrow(mut)(box(t)))(copy value: t): () = requires(t is copyable) {
   unsafe {
     *boxed.pointer = value
   }
@@ -95,7 +93,7 @@ extend(box(t)) {
 
 /// Provides copy-only value accessors for `Box`.
 extend(box(t))
-where t: copyable {
+(requires: t is copyable) {
   /// Copies the boxed value out of this box.
   let read(self: borrow(self))(): t = { box_read(self) }
   /// Copies `value` over the current boxed value.

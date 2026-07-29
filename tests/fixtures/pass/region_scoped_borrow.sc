@@ -4,7 +4,7 @@ let read(comptime r: region)(value: borrow(r)(i32)): i32 = {
 }
 
 let generic_read(comptime r: region, comptime t: type)(cell: borrow(r)(cell(t))): t
-where t: copyable = {
+= requires(t is copyable) {
   let alias: borrow(r)(cell(t)) = borrow(cell)
   alias.value
 }

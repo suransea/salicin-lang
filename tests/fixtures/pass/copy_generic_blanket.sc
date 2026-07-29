@@ -1,7 +1,7 @@
 let cell(comptime t: type) = struct { value: t }
 
 extend(cell(t), copyable)
-where t: copyable {}
+(requires: t is copyable) {}
 
 let read_twice(copy cell: cell(cell(i32))): i32 = {
   let duplicate = cell

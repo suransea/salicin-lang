@@ -6,8 +6,7 @@ pub let functor = trait(comptime self: (comptime value: type): type) {
 }
 
 /// Functors that can inject values and apply wrapped functions.
-pub let applicative = trait(comptime self: (comptime value: type): type)
-where self: functor {
+pub let applicative = trait(comptime self: (comptime value: type): type)(requires: self is functor) {
   let pure(comptime a: type)(value: a): self(a)
 
   let apply(comptime e: effects, comptime a: type, comptime b: type)
@@ -16,8 +15,7 @@ where self: functor {
 }
 
 /// Applicatives that can sequence dependent computations.
-pub let monad = trait(comptime self: (comptime value: type): type)
-where self: applicative {
+pub let monad = trait(comptime self: (comptime value: type): type)(requires: self is applicative) {
   let flat_map(comptime e: effects, comptime a: type, comptime b: type)
     (self: self(a))
     (next: (a): self(b) with(e)): self(b) with(e)

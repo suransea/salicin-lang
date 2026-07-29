@@ -11,7 +11,7 @@ extend(cell, lend) {
 }
 
 let require_i64(comptime t: type)(move value: t): ()
-where t: lend(item(comptime r: region) = borrow(r)(i64)) = {}
+= requires(t is lend && t.item(comptime r: region) == borrow(r)(i64)) {}
 
 let main(): () = {
   require_i64(cell { value: 42 })

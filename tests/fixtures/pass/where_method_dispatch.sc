@@ -9,10 +9,10 @@ extend(value, measure) {
 }
 
 let read(comptime t: type)(value: borrow(t)): i32
-where t: measure = { value.measure() }
+= requires(t is measure) { value.measure() }
 
 let forward(comptime t: type)(value: borrow(t)): i32
-where t: measure = { read(value) }
+= requires(t is measure) { read(value) }
 
 let main(): i32 = {
   let value = value { value: 42 }

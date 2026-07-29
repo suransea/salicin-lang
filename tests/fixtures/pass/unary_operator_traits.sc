@@ -15,8 +15,8 @@ extend(flag, not) {
   }
 }
 
-let negate(comptime t: type)(move value: t): t where t: neg(output = t) = { -value }
-let invert(comptime t: type)(move value: t): t where t: not(output = t) = { !value }
+let negate(comptime t: type)(move value: t): t = requires(t is neg && t.output == t) { -value }
+let invert(comptime t: type)(move value: t): t = requires(t is not && t.output == t) { !value }
 
 let main(): i32 = {
   if invert(false) {

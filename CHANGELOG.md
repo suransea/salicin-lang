@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+- Added the compile-time `constraint` sort and non-associative `is` relation.
+- Added compiler-owned `requires(...)` guards for extension implementations and
+  generic function bodies, such as `requires(t is copyable)`.
+- Replaced colon-style predicates with `is` goals, separate projection
+  equalities such as `t is iterator && t.item == i32`, and call-shaped trait
+  prerequisites such as `trait(requires: self is movable)`.
+- Satisfied guards provide solver evidence to their bodies, while false
+  concrete goals reject instantiation.
+
 ## 0.225.0 - 2026-07-29
 
 - Completed COLL-3 with common array and slice `swap`, `reverse`, `fill`,

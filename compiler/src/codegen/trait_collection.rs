@@ -184,8 +184,42 @@ impl Analyzer {
                 Item::Sort(definition) => &definition.name,
                 Item::TypeAlias(definition) => &definition.name,
                 Item::TypeForm(definition) => &definition.name,
-                Item::Trait(definition) => &definition.name,
+                Item::Trait(definition) => {
+                    if origin.package == PackageId::CORE.0
+                        && definition.name.rsplit("::").next() == Some("is")
+                    {
+                        continue;
+                    }
+                    &definition.name
+                }
                 Item::Extend(extension) => {
+                    let compiler_constraint_query = origin.package == PackageId::CORE.0
+                        && matches!(
+                            &extension.target,
+                            Type::Named(name, arguments)
+                                if name.split(['.', ':']).next_back() == Some("type")
+                                    && arguments.is_empty()
+                        )
+                        && matches!(
+                            &extension.trait_ref,
+                            Some(Type::Named(name, arguments))
+                                if name.split(['.', ':']).next_back() == Some("is")
+                                    && matches!(
+                                        arguments.as_slice(),
+                                        [Type::Named(argument, nested)]
+                                            if argument.split(['.', ':']).next_back()
+                                                == Some("constraint")
+                                                && nested.is_empty()
+                                    )
+                        )
+                        && matches!(
+                            extension.members.as_slice(),
+                            [ExtendMember::Function(function)]
+                                if function.name == "is" && function.builtin
+                        );
+                    if compiler_constraint_query {
+                        continue;
+                    }
                     if origin.package != PackageId::CORE.0
                         && extension.members.iter().any(|member| {
                             matches!(
@@ -556,6 +590,11 @@ impl Analyzer {
                     unreachable!("type aliases are expanded before item collection")
                 }
                 Item::Trait(definition) => {
+                    if origin.package == PackageId::CORE.0
+                        && definition.name.rsplit("::").next() == Some("is")
+                    {
+                        continue;
+                    }
                     self.collect_trait_schema(definition.clone(), visibility, origin)
                 }
                 Item::Extend(_) => unreachable!("extensions were collected separately"),
@@ -1016,7 +1055,7 @@ impl Analyzer {
             && !copy_trait_has_required_shape(&definition)
         {
             self.error(
-                "`copyable` language trait must have shape `let copyable = trait where self: movable {}`",
+                "`copyable` language trait must have shape `let copyable = trait(requires: self is movable) {}`",
             );
             valid = false;
         }

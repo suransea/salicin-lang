@@ -776,6 +776,10 @@ fn constrained_generic_extensions_select_members_per_instance() {
             "constrained_extend_function_unsatisfied.sc",
             "not satisfied",
         ),
+        (
+            "compile_time_constraint_function_unsatisfied.sc",
+            "not satisfied",
+        ),
         ("constrained_extend_unknown_trait.sc", "unknown trait"),
     ] {
         let output = salic()

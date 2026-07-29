@@ -235,14 +235,14 @@ extend(i64, parse) {
 let write_digit(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (digit: u8): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   writer.write_ascii(48 + digit)
 }
 
 let write_unsigned(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (value: u128): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   if value >= 10 {
     write_unsigned(writer)(value / 10)
   }
@@ -262,21 +262,21 @@ where w: text_writer(e) = {
 
 let write_minus(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w)): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   writer.write_ascii(45)
 }
 
 let display_unsigned(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (value: u128): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   write_unsigned(writer)(value)
 }
 
 let display_signed(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (negative: bool, magnitude: u128): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   if negative {
     write_minus(writer)
   }
@@ -286,7 +286,7 @@ where w: text_writer(e) = {
 let write_unsigned_u64(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (value: u64): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   if value >= 10 {
     write_unsigned_u64(writer)(value / 10)
   }
@@ -307,7 +307,7 @@ where w: text_writer(e) = {
 let display_signed_i64(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (negative: bool, magnitude: u64): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   if negative {
     write_minus(writer)
   }
@@ -318,7 +318,7 @@ where w: text_writer(e) = {
 pub let write_bool(comptime e: effects, comptime w: type)
   (writer: borrow(mut)(w))
   (value: bool): () with(e)
-where w: text_writer(e) = {
+= requires(w is text_writer(e)) {
   if value {
     writer.write_ascii(116)
     writer.write_ascii(114)
@@ -337,7 +337,7 @@ extend(bool, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: bool = self
     write_bool(writer)(value)
   }
@@ -347,7 +347,7 @@ extend(core.string.unicode_scalar, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: core.string.unicode_scalar = self
     writer.write_scalar(value)
   }
@@ -357,7 +357,7 @@ extend(core.string.str, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let mut scalars = self.scalars()
     while {
       match scalars.next()
@@ -374,7 +374,7 @@ extend(core.string.string, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let view = self.as_str()
     let mut scalars = view.scalars()
     while {
@@ -391,7 +391,7 @@ extend(core.string.string, display) {
 extend(u64, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: u64 = self
     write_unsigned_u64(writer)(value)
   }
@@ -400,7 +400,7 @@ extend(u64, display) {
 extend(u128, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: u128 = self
     display_unsigned(writer)(value)
   }
@@ -409,7 +409,7 @@ extend(u128, display) {
 extend(i64, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: i64 = self
     display_signed_i64(writer)(value < 0, value.magnitude())
   }
@@ -418,7 +418,7 @@ extend(i64, display) {
 extend(i128, display) {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: i128 = self
     display_signed(writer)(value < 0, value.magnitude())
   }
@@ -427,7 +427,7 @@ extend(i128, display) {
 extend(bool, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: bool = self
     write_bool(writer)(value)
   }
@@ -436,7 +436,7 @@ extend(bool, debug) {
 extend(core.string.unicode_scalar, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: core.string.unicode_scalar = self
     writer.write_scalar(value)
   }
@@ -445,7 +445,7 @@ extend(core.string.unicode_scalar, debug) {
 extend(core.string.str, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let mut scalars = self.scalars()
     while {
       match scalars.next()
@@ -461,7 +461,7 @@ extend(core.string.str, debug) {
 extend(core.string.string, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let view = self.as_str()
     let mut scalars = view.scalars()
     while {
@@ -478,7 +478,7 @@ extend(core.string.string, debug) {
 extend(u64, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: u64 = self
     write_unsigned_u64(writer)(value)
   }
@@ -487,7 +487,7 @@ extend(u64, debug) {
 extend(u128, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: u128 = self
     write_unsigned(writer)(value)
   }
@@ -496,7 +496,7 @@ extend(u128, debug) {
 extend(i64, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: i64 = self
     display_signed_i64(writer)(value < 0, value.magnitude())
   }
@@ -505,7 +505,7 @@ extend(i64, debug) {
 extend(i128, debug) {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))(writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e) = {
+  = requires(w is text_writer(e)) {
     let value: i128 = self
     display_signed(writer)(value < 0, value.magnitude())
   }
@@ -517,7 +517,7 @@ pub let display = trait {
   let display(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e)
+  = requires(w is text_writer(e))
 }
 
 /// Source-backed diagnostic formatting.
@@ -526,5 +526,5 @@ pub let debug = trait {
   let debug(comptime e: effects, comptime w: type)
     (self: borrow(self))
     (writer: borrow(mut)(w)): () with(e)
-  where w: text_writer(e)
+  = requires(w is text_writer(e))
 }

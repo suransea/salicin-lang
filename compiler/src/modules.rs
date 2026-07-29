@@ -523,6 +523,8 @@ const CORE_SORT_EXPORTS: &[&str] = &[
     "effect",
     "effects",
     "parameters",
+    "constraint",
+    "is",
 ];
 const CORE_STRING_EXPORTS: &[&str] = &[
     "str",
