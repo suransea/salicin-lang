@@ -1,5 +1,4 @@
 // Compile-time sorts used by generic parameters and calling conventions.
-/// Sort of compile-time type values.
 /// Constructs the universe at `level`. Universe levels start at one.
 pub let sort(comptime level: usize): sort(level + 1) = builtin()
 
@@ -14,6 +13,7 @@ pub let sort_of(
 pub let type_of(comptime t: type)
   (move expression: (): t): type = builtin()
 
+/// Sort of compile-time type values.
 pub let type: sort(2)
 /// Sort of compile-time lifetime regions.
 pub let region: sort(2)
@@ -23,4 +23,3 @@ pub let effect: sort(2)
 pub let effects: sort(2)
 /// Sort of compile-time schemas expanded into one runtime parameter group.
 pub let parameters: sort(2)
-/// Sort of compiler-consumed UTF-8 metadata strings.

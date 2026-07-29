@@ -982,7 +982,7 @@ fn collect_symbols(
                             "{}: error: overloads of `{name}` must use the same visibility as the declaration in {}",
                             unit.source.path, previous.source_path
                         ));
-                    } else if !overloads.insert(shape) {
+                    } else if !overloads.insert(shape) && !(name == "foreign" && function.builtin) {
                         diagnostics.push(format!(
                             "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
                             unit.source.path, previous.source_path

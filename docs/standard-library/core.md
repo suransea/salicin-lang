@@ -16,7 +16,8 @@ primitives remain ordinary Salicin definitions: the core implementation does
 not use `builtin()` merely as an optimization annotation.
 
 The same private root module declares
-`pub let foreign(comptime abi: abi): never = builtin()` and
+`pub let foreign(comptime abi: abi): never = builtin()`,
+`pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, and
 `pub let test(move body: (): bool): () = builtin()`. These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
 `abi` sort selected by `foreign(c)`; `test("name")` consumes its ordinary string

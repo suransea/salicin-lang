@@ -217,6 +217,7 @@ The same root module publicly declares the other syntax-owned contracts:
 
 ```sc fragment
 pub let foreign(comptime abi: abi): never = builtin()
+pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()
 pub let test(comptime name: string)(move body: (): bool): () = builtin()
 ```
 

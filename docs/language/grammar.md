@@ -324,8 +324,9 @@ compiler-owned edition contract and is removed before code generation.
 Trait requirements, effect operations, and user opaque types remain
 bodyless declarations rather than builtin definitions.
 
-The root `core` module also contains the public declarations
+The root `core` module also contains the public overloads
 `pub let foreign(comptime abi: abi): never = builtin()` and
+`pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, plus
 `pub let test(comptime name: string)(move body: (): bool): () = builtin()`. They authorize the
 `foreign(c, ...)` initializer and top-level test registration respectively;
 `c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.

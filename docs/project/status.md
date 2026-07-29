@@ -66,7 +66,7 @@ Implemented lexical and declaration features include:
 - canonical private `builtin`, `foreign`, and `test` syntax declarations plus
   identity-validated passing and control-exit contracts;
 - explicit erased inputs for those syntax declarations:
-  `pub let foreign(comptime abi: abi): never = builtin()` selects the finite
+  the one- and two-argument `foreign` overloads select the finite
   `abi.c` value, while
   `pub let test(comptime name: string)(move body: (): bool): () = builtin()`
   receives compiler-owned UTF-8 metadata.

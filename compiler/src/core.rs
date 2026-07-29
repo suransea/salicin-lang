@@ -1657,6 +1657,34 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
     for kind in LangItemKind::ALL {
         match indices.get(&kind).map(Vec::as_slice) {
             None | Some([]) => diagnostics.push(format!("missing lang item `{kind}`")),
+            Some(indices) if kind == LangItemKind::Foreign && indices.len() == 2 => {
+                let functions = indices
+                    .iter()
+                    .filter_map(|index| match &program.items[*index] {
+                        Item::Function(function) => Some(function),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                for index in indices {
+                    validate_item_shape(kind, &program.items[*index], &mut diagnostics);
+                    validate_lang_item_builtin(kind, &program.items[*index], &mut diagnostics);
+                }
+                if functions.len() == 2
+                    && functions
+                        .iter()
+                        .any(|function| foreign_contract_arity(function) == Some(1))
+                    && functions
+                        .iter()
+                        .any(|function| foreign_contract_arity(function) == Some(2))
+                {
+                    resolved.insert(kind, indices[0]);
+                } else {
+                    diagnostics.push(
+                        "lang item `foreign` must provide its one- and two-argument overloads"
+                            .to_owned(),
+                    );
+                }
+            }
             Some([index]) => {
                 validate_item_shape(kind, &program.items[*index], &mut diagnostics);
                 validate_lang_item_builtin(kind, &program.items[*index], &mut diagnostics);
@@ -1669,7 +1697,16 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         }
     }
 
-    validate_builtin_boundaries(program, &resolved, &builtin_bootstraps, &mut diagnostics);
+    validate_builtin_boundaries(
+        program,
+        &resolved,
+        &builtin_bootstraps,
+        indices
+            .get(&LangItemKind::Foreign)
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+        &mut diagnostics,
+    );
 
     if !diagnostics.is_empty() {
         return Err(CoreBundleError::new(edition, diagnostics));
@@ -1884,12 +1921,14 @@ fn validate_builtin_boundaries(
     program: &Program,
     resolved: &BTreeMap<LangItemKind, usize>,
     bootstraps: &[usize],
+    foreign_overloads: &[usize],
     diagnostics: &mut Vec<String>,
 ) {
-    let known = resolved
+    let mut known = resolved
         .values()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
+    known.extend(foreign_overloads.iter().copied());
     for (index, item) in program.items.iter().enumerate() {
         if (known.contains(&index) && !matches!(item, Item::Trait(_) | Item::Effect(_)))
             || bootstraps.contains(&index)
@@ -2391,16 +2430,7 @@ fn validate_syntax_contract(
     diagnostics: &mut Vec<String>,
 ) {
     let valid = match kind {
-        LangItemKind::Foreign => {
-            function.compile_groups
-                == vec![vec![CompileParam {
-                    name: "abi".to_owned(),
-                    kind: Sort::Named("abi".to_owned()),
-                    default: None,
-                }]]
-                && function.groups.is_empty()
-                && function.return_type == Some(named_type("never"))
-        }
+        LangItemKind::Foreign => foreign_contract_arity(function).is_some(),
         LangItemKind::Test => {
             function.compile_groups.is_empty()
                 && single_moved_callable(function, "body", Type::Bool, FunctionEffects::default())
@@ -2414,7 +2444,9 @@ fn validate_syntax_contract(
         && function.body.is_none();
     if !valid {
         let shape = match kind {
-            LangItemKind::Foreign => "pub let foreign(comptime abi: abi): never = builtin()",
+            LangItemKind::Foreign => {
+                "pub let foreign(comptime abi: abi): never = builtin()` or `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()"
+            }
             LangItemKind::Test => "pub let test(move body: (): bool): () = builtin()",
             _ => unreachable!(),
         };
@@ -2422,6 +2454,41 @@ fn validate_syntax_contract(
             "syntax lang item `{kind}` must have shape `{shape}`"
         ));
     }
+}
+
+fn foreign_contract_arity(function: &Function) -> Option<usize> {
+    let arity = match function.compile_groups.as_slice() {
+        [parameters]
+            if parameters.as_slice()
+                == [CompileParam {
+                    name: "abi".to_owned(),
+                    kind: Sort::Named("abi".to_owned()),
+                    default: None,
+                }] =>
+        {
+            Some(1)
+        }
+        [parameters]
+            if parameters.as_slice()
+                == [
+                    CompileParam {
+                        name: "abi".to_owned(),
+                        kind: Sort::Named("abi".to_owned()),
+                        default: None,
+                    },
+                    CompileParam {
+                        name: "symbol".to_owned(),
+                        kind: Sort::Named("string".to_owned()),
+                        default: None,
+                    },
+                ] =>
+        {
+            Some(2)
+        }
+        _ => None,
+    };
+    arity
+        .filter(|_| function.groups.is_empty() && function.return_type == Some(named_type("never")))
 }
 
 fn validate_closed_enum(
