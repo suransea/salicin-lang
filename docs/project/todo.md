@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Arrays, slices, vectors, and iteration
 
-- [ ] **COLL-4 — Common `vec` operations.** Add checked access and slice-based
-  extension/copy operations that complement the existing push, insert,
-  remove, append, truncate, reverse, and capacity APIs. Allocation failure,
-  partial copy, overlap, and move-only element behavior must be explicit.
-
 - [ ] **ITER-1 — Common algorithms.** Provide source-backed `find`,
   `position`, `contains`, `any`, `all`, and `fold` over the narrowest usable
   iterator or slice contracts, forwarding callback effects and preserving

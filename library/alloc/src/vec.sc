@@ -423,13 +423,50 @@ extend(vec(t)) {
   let shrink_to_fit(self: borrow(mut)(self))(): () = { vec_shrink_to_fit(self) }
 }
 
-/// Provides copy-only indexed read and write operations.
+/// Provides copy-based slice extension and mutation operations.
 extend(vec(t))
 (requires: t is copyable) {
+  /// Copies every element of `source` onto the end of this vector.
+  let extend_from_slice(self: borrow(mut)(self))(source: borrow(slice(t))): () = {
+    let additional = source.len()
+    vec_reserve(self)(additional)
+    if additional > 0 {
+      let source_values = unsafe {
+        raw_slice_ptr(source)
+      }
+      let mut index: u64 = 0
+      while { index < additional } {
+        let value = unsafe {
+          *raw_offset(source_values, index)
+        }
+        unsafe {
+          raw_init(raw_offset(self.pointer, self.length), value)
+        }
+        self.length = self.length + 1
+        index = index + 1
+      }
+    }
+  }
   /// Copies the element at `index` out of this vector.
   let read(self: borrow(self))(index: u64): t = { vec_read(self)(index) }
   /// Copies `value` into the element slot at `index`.
   let write(self: borrow(mut)(self))(index: u64)(copy value: t): () = { vec_write(self)(index)(value) }
+  /// Replaces every initialized element with a copy of `value`.
+  let fill(self: borrow(mut)(self))(copy value: t): () = {
+    let values = self.as_slice(mut)()
+    values.fill(value)
+  }
+  /// Copies an equally sized source slice into the initialized elements.
+  let copy_from(self: borrow(mut)(self))(source: borrow(slice(t))): () = {
+    let values = self.as_slice(mut)()
+    values.copy_from(source)
+  }
+  /// Copies an initialized range within this vector with overlap-safe semantics.
+  let copy_within(self: borrow(mut)(self))
+    (source_start: u64, source_end: u64, destination_start: u64): () = {
+    let values = self.as_slice(mut)()
+    values.copy_within(source_start, source_end, destination_start)
+  }
 }
 
 /// Owning iterator over a vector.

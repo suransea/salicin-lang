@@ -35,6 +35,12 @@ in-place reversal. `values.at(index)` borrows an element with shared access and
 `values.at(mut)(index)` borrows it with exclusive access. Bounds and allocation-layout failures
 trap.
 
+For copyable elements, `extend_from_slice` reserves the complete additional
+capacity before copying, while `fill`, equal-length `copy_from`, and
+overlap-safe `copy_within` share the array/slice mutation contract. Borrow
+checking rejects a source slice that aliases the mutable vector. Move-only
+elements use owned `push` and `append` instead of borrowed slice copying.
+
 `vec(t)` also implements `core.ops.index(u64)` in source. `values[index]`,
 `borrow(values[index])`, and `values[index] = replacement` share the same checked `at(a)`
 implementation and preserve its receiver loan.
@@ -43,7 +49,7 @@ implementation and preserve its receiver loan.
 allocation without copying elements. Consuming iteration transfers the allocation into
 `vec_into_iter(t)` and invalidates the original
 vector. Each `next` moves one initialized element in source order. If iteration stops early, the
-The iterator drops only the unyielded suffix and then releases the allocation; yielded values remain
+iterator drops only the unyielded suffix and then releases the allocation; yielded values remain
 owned by the loop body. Capacity arithmetic, layout overflow, invalid bounds, invalid allocator
 layouts, and allocation failure terminate the process rather than returning a recoverable error or
 widening the caller's effect row.

@@ -77,7 +77,10 @@ arrays, slices, and vectors. The accepted
 [borrowed-iteration contract](borrowed-iteration.md) is implemented for arrays
 and slices. The accepted
 [collection-mutation contract](collection-mutation.md) is implemented for
-arrays and slices. The active slice is common vector operations.
+arrays and slices. The accepted
+[vector-operations contract](vector-operations.md) completes checked access,
+slice extension, and copy mutation for vectors. The active slice is common
+collection algorithms.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.226.0 - 2026-07-29
+
 - Added the compile-time `constraint` sort and non-associative `is` relation.
 - Added compiler-owned `requires(...)` guards for extension implementations and
   generic function bodies, such as `requires(t is copyable)`.
@@ -14,6 +16,14 @@ subset.
   prerequisites such as `trait(requires: self is movable)`.
 - Satisfied guards provide solver evidence to their bodies, while false
   concrete goals reject instantiation.
+- Completed COLL-4 with copyable `vec.extend_from_slice`, `fill`,
+  equal-length `copy_from`, and overlap-safe `copy_within`, complementing the
+  existing checked access and ownership-transferring vector operations.
+- Reserved complete extension capacity before initializing the tail, advanced
+  vector length only after each initialization, reused prevalidated slice-copy
+  kernels, and statically rejected self-aliasing and move-only slice copies.
+- Documented allocation termination, partial progress, overlap, and move-only
+  behavior, with native success, empty, trap, alias, and constraint coverage.
 
 ## 0.225.0 - 2026-07-29
 

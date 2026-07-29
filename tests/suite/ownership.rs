@@ -300,6 +300,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_ordered_copy.sc",
         "vec_ordered_resource.sc",
         "vec_reorder_resource.sc",
+        "vec_slice_operations.sc",
         "index_protocol_containers.sc",
         "vec_index_resource_overwrite.sc",
         "vec_into_iterator.sc",
@@ -334,6 +335,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_swap_right_out_of_bounds.sc",
         "vec_capacity_overflow.sc",
         "vec_reserve_overflow.sc",
+        "vec_copy_from_length_mismatch.sc",
+        "vec_copy_within_out_of_bounds.sc",
         "vec_zst_resource_drop_trap.sc",
     ];
     for (name, output) in trapping_fixture_outputs_in_parallel(&trapping) {
@@ -398,6 +401,26 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         assert!(!output.status.success(), "{name} unexpectedly compiled");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("borrowed"),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    for (name, expected) in [
+        ("vec_extend_from_slice_self_alias.sc", "already borrowed"),
+        (
+            "vec_slice_copy_resource.sc",
+            "unknown method `extend_from_slice`",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check vec slice-operation contract");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
             "{name}: {}",
             output_text(&output)
         );

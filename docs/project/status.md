@@ -498,7 +498,9 @@ Implemented `alloc` facilities include:
 
 - `box(t)`;
 - `vec(t)` with consistent checked/trapping shared or mutable access,
-  first/last, slice conversion, mutation, and consuming iteration;
+  first/last, slice conversion, copyable slice extension, equal-length and
+  overlap-safe copy mutation, resource-preserving owned append, and consuming
+  iteration;
 - ownership-preserving `vec(u8)`/`string` conversion: success transfers the
   allocation, failure retains the original vector and its valid-prefix length,
   and static strings copy into owned bytes;
@@ -526,6 +528,14 @@ or length precondition is checked before the first write. `copy_within`
 selects backward copying whenever the destination starts after the source, so
 overlap has memmove semantics. These operations do not allocate or invoke user
 effects; resource reordering neither copies nor drops elements.
+
+Vectors additionally expose `extend_from_slice` for copyable elements. It
+reserves the complete additional capacity before initializing the tail,
+advances the initialized length after every write, and rejects a source view
+borrowed from the same mutable vector. Allocation and layout failure terminate
+before any tail copy. Move-only elements use ownership-transferring `push` and
+`append`; borrowed slices never copy or consume them. The accepted
+[vector-operations contract](vector-operations.md) records these guarantees.
 
 ## Quality Gates
 

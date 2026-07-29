@@ -1199,6 +1199,26 @@ fn valid_vec_swap_method(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn valid_vec_copy_within_method(function: &Function) -> bool {
+    function.name == "copy_within"
+        && function.compile_groups.is_empty()
+        && matches!(function.groups.as_slice(), [receiver, indices]
+            if has_parameter(receiver, "self", PassMode::MutBorrow, named("self"))
+                && matches!(indices.as_slice(), [source_start, source_end, destination_start]
+                    if source_start.name == "source_start"
+                        && source_start.mode == PassMode::Inferred
+                        && source_start.ty == Type::U64
+                        && source_end.name == "source_end"
+                        && source_end.mode == PassMode::Inferred
+                        && source_end.ty == Type::U64
+                        && destination_start.name == "destination_start"
+                        && destination_start.mode == PassMode::Inferred
+                        && destination_start.ty == Type::U64))
+        && function.return_type == Some(Type::Unit)
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
 fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
@@ -1274,10 +1294,18 @@ fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
         && extension.trait_ref.is_none()
         && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
         && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Function(extend_from_slice),
             crate::ast::ExtendMember::Function(read),
             crate::ast::ExtendMember::Function(write),
-        ] if valid_vec_receiver_method(read, "read", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], named("t"))
-            && valid_vec_receiver_method(write, "write", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Copy, named("t"))], Type::Unit))
+            crate::ast::ExtendMember::Function(fill),
+            crate::ast::ExtendMember::Function(copy_from),
+            crate::ast::ExtendMember::Function(copy_within),
+        ] if valid_vec_receiver_method(extend_from_slice, "extend_from_slice", PassMode::MutBorrow, &[("source", PassMode::Borrow, applied("slice", named("t")))], Type::Unit)
+            && valid_vec_receiver_method(read, "read", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], named("t"))
+            && valid_vec_receiver_method(write, "write", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Copy, named("t"))], Type::Unit)
+            && valid_vec_receiver_method(fill, "fill", PassMode::MutBorrow, &[("value", PassMode::Copy, named("t"))], Type::Unit)
+            && valid_vec_receiver_method(copy_from, "copy_from", PassMode::MutBorrow, &[("source", PassMode::Borrow, applied("slice", named("t")))], Type::Unit)
+            && valid_vec_copy_within_method(copy_within))
 }
 
 fn valid_vec_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
