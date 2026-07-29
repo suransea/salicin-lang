@@ -447,7 +447,10 @@ fn emit_ir_and_check_cover_the_frontend() {
         .expect("emit LLVM IR");
     assert!(emitted.status.success(), "{}", output_text(&emitted));
     let ir = String::from_utf8_lossy(&emitted.stdout);
-    assert!(ir.contains("define i32 @main()"), "unexpected IR:\n{ir}");
+    assert!(
+        ir.contains("define i32 @main(i32 %argc, ptr %argv)"),
+        "unexpected IR:\n{ir}"
+    );
 
     let checked = salic()
         .arg("check")

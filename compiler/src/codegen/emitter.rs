@@ -6,6 +6,53 @@ use super::target::NATIVE_TARGET;
 use super::*;
 use crate::cleanup::{CleanupPlan, LocalOwnership as CleanupLocalOwnership};
 
+fn is_host_runtime_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        "sali_host_read"
+            | "sali_host_write"
+            | "sali_host_argument_count"
+            | "sali_host_argument_length"
+            | "sali_host_argument_byte"
+    )
+}
+
+#[cfg(target_os = "linux")]
+const ERRNO_LOCATION_SYMBOL: &str = "__errno_location";
+#[cfg(target_os = "macos")]
+const ERRNO_LOCATION_SYMBOL: &str = "__error";
+
+#[cfg(target_os = "linux")]
+const HOST_ERROR_CASES: &[(i32, i32)] = &[
+    (2, 0),
+    (1, 1),
+    (13, 1),
+    (17, 2),
+    (22, 3),
+    (84, 4),
+    (4, 5),
+    (11, 6),
+    (32, 9),
+    (38, 10),
+    (95, 10),
+    (12, 11),
+];
+#[cfg(target_os = "macos")]
+const HOST_ERROR_CASES: &[(i32, i32)] = &[
+    (2, 0),
+    (1, 1),
+    (13, 1),
+    (17, 2),
+    (22, 3),
+    (92, 4),
+    (4, 5),
+    (35, 6),
+    (32, 9),
+    (78, 10),
+    (102, 10),
+    (12, 11),
+];
+
 fn string_literal_symbol(value: &str) -> String {
     let encoded = value
         .as_bytes()
@@ -43,7 +90,6 @@ impl<'a> Emitter<'a> {
         output.push_str(
             "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n%salicin.continuation = type { ptr, ptr, ptr, ptr }\n%salicin.effect_callable = type { ptr, ptr, ptr, ptr }\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
         );
-
         for layout in &self.program.structs {
             let fields = layout
                 .fields
@@ -68,6 +114,9 @@ impl<'a> Emitter<'a> {
             ));
         }
         for function in &self.program.foreign_functions {
+            if is_host_runtime_symbol(&function.link_name) {
+                continue;
+            }
             let parameters = function
                 .params
                 .iter()
@@ -83,6 +132,7 @@ impl<'a> Emitter<'a> {
         if !self.program.foreign_functions.is_empty() {
             output.push('\n');
         }
+        output.push_str(&self.emit_host_runtime());
         let callable_types = self.callable_types();
         for callable_ty in &callable_types {
             let Ty::Callable(callable) = callable_ty else {
@@ -193,7 +243,12 @@ impl<'a> Emitter<'a> {
             .iter()
             .find(|function| function.name == "main")
             .expect("entry point checked by analyzer");
-        output.push_str("define i32 @main() {\nentry:\n");
+        output.push_str("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        output.push_str("  store i32 %argc, ptr @salicin.argc\n");
+        output.push_str("  store ptr %argv, ptr @salicin.argv\n");
+        output.push_str(
+            "  %ignore_sigpipe = call ptr @signal(i32 13, ptr inttoptr (i64 1 to ptr))\n",
+        );
         match main.result {
             Ty::Unit => {
                 output.push_str(&format!(
@@ -213,6 +268,98 @@ impl<'a> Emitter<'a> {
         }
         output.push_str("}\n");
         Ok(output)
+    }
+
+    fn emit_host_runtime(&self) -> String {
+        let mut output = format!(
+            "@salicin.argc = linkonce_odr global i32 0\n\
+             @salicin.argv = linkonce_odr global ptr null\n\
+             declare i64 @read(i32, ptr, i64)\n\
+             declare i64 @write(i32, ptr, i64)\n\
+             declare i64 @strlen(ptr)\n\
+             declare ptr @{ERRNO_LOCATION_SYMBOL}()\n\
+             declare ptr @signal(i32, ptr)\n\n\
+             define linkonce_odr i32 @sali_host_error_kind(i32 %error) {{\n\
+             entry:\n\
+               switch i32 %error, label %other [\n"
+        );
+        for (error, kind) in HOST_ERROR_CASES {
+            output.push_str(&format!("    i32 {error}, label %kind.{kind}\n"));
+        }
+        output.push_str("  ]\n");
+        for kind in 0..12 {
+            if HOST_ERROR_CASES
+                .iter()
+                .any(|(_, candidate)| *candidate == kind)
+            {
+                output.push_str(&format!("kind.{kind}:\n  ret i32 {kind}\n"));
+            }
+        }
+        output.push_str(
+            "other:\n  ret i32 12\n}\n\n\
+             define linkonce_odr i64 @sali_host_read(i32 %fd, ptr %data, i64 %length, ptr %kind, ptr %raw) {\n\
+             entry:\n\
+               %result = call i64 @read(i32 %fd, ptr %data, i64 %length)\n\
+               %failed = icmp slt i64 %result, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n",
+        );
+        output.push_str(&format!(
+            "  %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n"
+        ));
+        output.push_str(
+            "  %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i64 -1\n\
+             success:\n\
+               ret i64 %result\n\
+             }\n\n\
+             define linkonce_odr i64 @sali_host_write(i32 %fd, ptr %data, i64 %length, ptr %kind, ptr %raw) {\n\
+             entry:\n\
+               %result = call i64 @write(i32 %fd, ptr %data, i64 %length)\n\
+               %failed = icmp slt i64 %result, 0\n\
+               br i1 %failed, label %failure, label %success\n\
+             failure:\n",
+        );
+        output.push_str(&format!(
+            "  %error_pointer = call ptr @{ERRNO_LOCATION_SYMBOL}()\n"
+        ));
+        output.push_str(
+            "  %error = load i32, ptr %error_pointer\n\
+               %portable = call i32 @sali_host_error_kind(i32 %error)\n\
+               store i32 %portable, ptr %kind\n\
+               store i32 %error, ptr %raw\n\
+               ret i64 -1\n\
+             success:\n\
+               ret i64 %result\n\
+             }\n\n\
+             define linkonce_odr i64 @sali_host_argument_count() {\n\
+             entry:\n\
+               %count = load i32, ptr @salicin.argc\n\
+               %wide = zext i32 %count to i64\n\
+               ret i64 %wide\n\
+             }\n\n\
+             define linkonce_odr i64 @sali_host_argument_length(i64 %index) {\n\
+             entry:\n\
+               %arguments = load ptr, ptr @salicin.argv\n\
+               %slot = getelementptr ptr, ptr %arguments, i64 %index\n\
+               %argument = load ptr, ptr %slot\n\
+               %length = call i64 @strlen(ptr %argument)\n\
+               ret i64 %length\n\
+             }\n\n\
+             define linkonce_odr i8 @sali_host_argument_byte(i64 %index, i64 %offset) {\n\
+             entry:\n\
+               %arguments = load ptr, ptr @salicin.argv\n\
+               %slot = getelementptr ptr, ptr %arguments, i64 %index\n\
+               %argument = load ptr, ptr %slot\n\
+               %byte_pointer = getelementptr i8, ptr %argument, i64 %offset\n\
+               %byte = load i8, ptr %byte_pointer\n\
+               ret i8 %byte\n\
+             }\n\n",
+        );
+        output
     }
 
     fn callable_types(&self) -> Vec<Ty> {

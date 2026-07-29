@@ -12,6 +12,8 @@ mod abi;
 mod async_runtime;
 #[path = "suite/effects.rs"]
 mod effects;
+#[path = "suite/io.rs"]
+mod io;
 #[path = "suite/language.rs"]
 mod language;
 #[path = "suite/ownership.rs"]

@@ -171,6 +171,8 @@ progress and interruption, while bounded helpers define retry, EOF,
 
 Current research and specifications:
 
+- [Toka: Explicit Resource Semantics (2026)](https://arxiv.org/abs/2606.01974)
+- [Safe Coding (2026)](https://doi.org/10.1145/3795888)
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
 - [Securing Agents With Tracked Capabilities (ACM CAIS 2026)](https://doi.org/10.1145/3786335.3813127)
 - [Rows and Capabilities as Modal Effects (POPL 2026)](https://doi.org/10.1145/3776674)

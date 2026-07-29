@@ -346,7 +346,9 @@ mod tests {
         )
         .expect("test registrations should compile into one runner");
         assert_eq!(compilation.names, ["arithmetic", "utf-8: 盐"]);
-        assert!(compilation.ir.contains("define i32 @main()"));
+        assert!(compilation
+            .ir
+            .contains("define i32 @main(i32 %argc, ptr %argv)"));
 
         let no_tests =
             compile_test_source("let helper(): bool = { true }\n").expect_err("tests are required");
@@ -377,7 +379,7 @@ mod tests {
                       let answer(): i32 = { 42 }\n\
                       let main(): i32 = { selected() }\n";
         let ir = compile_source(source).expect("single-source import should resolve");
-        assert!(ir.contains("define i32 @main()"));
+        assert!(ir.contains("define i32 @main(i32 %argc, ptr %argv)"));
         assert!(ir.contains("call i32 @sali.fn.616e73776572()"));
 
         let library = "use root.answer as selected\n\

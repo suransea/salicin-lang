@@ -24,12 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Synchronous host I/O
 
-- [ ] **IO-2 — Console and process support.** Implement process arguments and
-  synchronous stdin, stdout, and stderr byte/text operations, including flush,
-  EOF, invalid UTF-8, broken pipes, short reads/writes, `read_line`, and
-  `print`/`println` plus stderr counterparts. Keep program output separate
-  from compiler diagnostics.
-
 - [ ] **IO-3 — Filesystem basics.** Implement owned file handles with
   deterministic cleanup, open/create options, read, write, flush, seek where
   supported, and whole-file convenience functions with bounded allocation and

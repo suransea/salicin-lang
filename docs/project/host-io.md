@@ -3,8 +3,8 @@
 Status: accepted for Edition 2026
 
 This contract fixes the authority, error, byte/text, progress, ownership,
-cleanup, and target rules used by the first synchronous host APIs. Concrete
-console/process operations are IO-2; filesystem operations are IO-3.
+cleanup, and target rules used by the first synchronous host APIs.
+Console/process operations are implemented; filesystem operations are IO-3.
 
 ## Authority and the native boundary
 
@@ -91,6 +91,14 @@ Process arguments have a lossless byte view and a checked text view. The text
 view reports `invalid_data` for a non-UTF-8 host argument rather than replacing
 bytes. Standard input/output/error are byte streams; text helpers are adapters.
 
+The implemented console/process surface includes `read_stdin`,
+`read_stdin_exact`, `read_line`, one-attempt and all-byte stdout/stderr writes,
+`print`/`println` and stderr counterparts, explicit flush points,
+`argument_count`, `argument_bytes`, `arguments_bytes`, and `arguments`.
+Bulk lossless arguments use the nominal `process_argument` wrapper; each value
+can be consumed into its byte vector. Direct descriptor writes are unbuffered,
+so flush is an explicit successful synchronization point.
+
 ## Progress, EOF, and interruption
 
 `reader.read(buffer)` and `writer.write(bytes)` make one host attempt:
@@ -165,6 +173,11 @@ Each concrete host primitive must have:
 - initialized-buffer and checked-count coverage;
 - ownership and exactly-once cleanup coverage for every resource;
 - Linux/x86-64 CI and macOS/arm64 release conformance.
+
+IO-2 evidence covers byte-exact stdout/stderr, stdin line input, EOF from
+`read_stdin_exact`, non-UTF-8 argv preservation and checked rejection, and
+`EPIPE` recovery with `SIGPIPE` ignored. Primitive calls expose native short
+progress; all/exact helpers loop until completion or the specified error.
 
 ## Research and specification basis
 

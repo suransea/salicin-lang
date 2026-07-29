@@ -431,20 +431,34 @@ impl Analyzer {
             let Some(foreign) = self.collection.functions[&name].foreign.clone() else {
                 continue;
             };
-            self.current_origin = self
+            let origin = self
                 .collection
                 .function_origins
                 .get(&name)
                 .cloned()
                 .map(Box::new);
+            let trusted_host_bridge = origin
+                .as_deref()
+                .is_some_and(|origin| origin.package == crate::modules::PackageId::STD.0)
+                && matches!(
+                    (name.as_str(), foreign.link_name.as_str()),
+                    ("std::io::host_read", "sali_host_read")
+                        | ("std::io::host_write", "sali_host_write")
+                        | ("std::io::host_argument_count", "sali_host_argument_count")
+                        | ("std::io::host_argument_length", "sali_host_argument_length")
+                        | ("std::io::host_argument_byte", "sali_host_argument_byte")
+                );
+            self.current_origin = origin;
             if name == "main" {
                 self.error("foreign function `main` cannot be the Salicin entry point");
             }
-            if matches!(
-                foreign.link_name.as_str(),
-                "main" | "salicin_alloc" | "salicin_dealloc"
-            ) || foreign.link_name.starts_with("llvm.")
-                || foreign.link_name.starts_with("sali.")
+            if !trusted_host_bridge
+                && (matches!(
+                    foreign.link_name.as_str(),
+                    "main" | "salicin_alloc" | "salicin_dealloc"
+                ) || foreign.link_name.starts_with("llvm.")
+                    || foreign.link_name.starts_with("sali.")
+                    || foreign.link_name.starts_with("sali_host_"))
             {
                 self.error(format!(
                     "foreign function `{name}` uses reserved link symbol `{}`",

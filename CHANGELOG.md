@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.230.0 - 2026-07-30
+
+- Implemented synchronous stdin, stdout, and stderr byte primitives plus
+  exact/all progress helpers, UTF-8 line input, text printing, stderr
+  counterparts, and explicit unbuffered flush points under `std.io.io`.
+- Added lossless process-argument bytes and checked UTF-8 argument collection;
+  native entry points now preserve `argc`/`argv`.
+- Added portable Unix error mapping and recoverable broken-pipe behavior by
+  ignoring `SIGPIPE`, with native coverage for EOF, invalid UTF-8 arguments,
+  stdout/stderr separation, and `EPIPE`.
+
 ## 0.229.0 - 2026-07-30
 
 - Accepted the synchronous host I/O contract covering exact `io` authority,

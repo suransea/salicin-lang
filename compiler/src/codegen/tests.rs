@@ -1120,7 +1120,7 @@ let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
     assert!(ir.contains(&type_symbol("core::never::never")));
     assert!(ir.contains(&type_symbol("empty")));
     assert!(ir.contains("unreachable"));
-    assert!(!ir.contains("define i32 @main()"));
+    assert!(!ir.contains("define i32 @main(i32 %argc, ptr %argv)"));
 }
 
 #[test]
@@ -3696,7 +3696,7 @@ fn emits_flattened_curried_call_and_i32_wrapper() {
     let main = function("main", vec![vec![]], Type::I32, call);
     let ir = compile(&Program::new(vec![add, main])).unwrap();
     assert!(ir.contains("call i32 @sali.fn.616464(i32 20, i32 22)"));
-    assert!(ir.contains("define i32 @main()"));
+    assert!(ir.contains("define i32 @main(i32 %argc, ptr %argv)"));
     assert!(ir.contains("ret i32 %status"));
 }
 

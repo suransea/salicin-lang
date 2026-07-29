@@ -379,7 +379,7 @@ fn package_qualified_exports_link_across_independent_llvm_modules() {
     let driver = format!(
         "declare i32 @{alpha_symbol}()\n\
          declare i32 @{beta_symbol}()\n\
-         define i32 @main() {{\n\
+         define i32 @main(i32 %argc, ptr %argv) {{\n\
          entry:\n\
            %alpha = call i32 @{alpha_symbol}()\n\
            %beta = call i32 @{beta_symbol}()\n\
