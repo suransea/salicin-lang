@@ -149,9 +149,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = crate::standard::naming_diagnostics(program, "alloc");
-    if program.items.len() != 55
-        || program.item_visibilities.len() != 55
-        || program.item_origins.len() != 55
+    if program.items.len() != 56
+        || program.item_visibilities.len() != 56
+        || program.item_origins.len() != 56
     {
         diagnostics.push(
             "embedded alloc must contain the fixed box, vec, and string bootstrap schema"
@@ -164,7 +164,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 12 | 39 | 47 | 50 | 51 | 52) {
+                    let expected = if matches!(index, 0 | 12 | 39 | 48 | 51 | 52 | 53) {
                         Visibility::Public
                     } else if matches!(index, 45 | 46) {
                         Visibility::Package
@@ -400,10 +400,14 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc vec_into_raw_parts helper is missing".to_owned()),
         }
         match &program.items[47] {
+            Item::Extend(extension) if valid_eq_vec_extension(extension) => {}
+            _ => diagnostics.push("alloc equality vec extension has an invalid shape".to_owned()),
+        }
+        match &program.items[48] {
             Item::Struct(definition) if definition.name == "from_utf8_error" => {}
             _ => diagnostics.push("alloc from_utf8_error has an invalid shape".to_owned()),
         }
-        match &program.items[48] {
+        match &program.items[49] {
             Item::Extend(extension)
                 if matches!(
                     &extension.target,
@@ -412,23 +416,23 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 ) => {}
             _ => diagnostics.push("alloc from_utf8_error extension is missing".to_owned()),
         }
-        match &program.items[49] {
+        match &program.items[50] {
             Item::Function(function) if function.name == "first_invalid_owned_utf8" => {}
             _ => diagnostics.push("alloc owned UTF-8 validation helper is missing".to_owned()),
         }
-        match &program.items[50] {
+        match &program.items[51] {
             Item::Function(function) if function.name == "string_from_utf8" => {}
             _ => diagnostics.push("alloc string_from_utf8 has an invalid shape".to_owned()),
         }
-        match &program.items[51] {
+        match &program.items[52] {
             Item::Function(function) if function.name == "string_into_bytes" => {}
             _ => diagnostics.push("alloc string_into_bytes has an invalid shape".to_owned()),
         }
-        match &program.items[52] {
+        match &program.items[53] {
             Item::Struct(definition) if definition.name == "string_writer" => {}
             _ => diagnostics.push("alloc string_writer has an invalid shape".to_owned()),
         }
-        match &program.items[53] {
+        match &program.items[54] {
             Item::Extend(extension)
                 if matches!(
                     &extension.target,
@@ -437,7 +441,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 ) => {}
             _ => diagnostics.push("alloc string_writer extension is missing".to_owned()),
         }
-        match &program.items[54] {
+        match &program.items[55] {
             Item::Extend(extension)
                 if matches!(
                     &extension.target,
@@ -1219,6 +1223,90 @@ fn valid_vec_copy_within_method(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
+    crate::ast::FunctionEffects {
+        parameters: vec![name.to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    }
+}
+
+fn valid_vec_predicate_method(function: &Function, name: &str, result: Type) -> bool {
+    let predicate = Type::Function {
+        groups: vec![vec![borrow_type(false, None, None, named("t"))]],
+        effects: effect_parameter("e"),
+        result: Box::new(Type::Bool),
+    };
+    function.name == name
+        && matches!(function.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [parameter]
+                if parameter.name == "e"
+                    && parameter.kind == Sort::Effects
+                    && parameter.default.is_none()))
+        && matches!(function.groups.as_slice(), [receiver, callback]
+            if has_parameter(receiver, "self", PassMode::Borrow, named("self"))
+                && has_parameter(callback, "predicate", PassMode::Move, predicate))
+        && function.return_type == Some(result)
+        && function.effects == effect_parameter("e")
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_vec_fold_method(function: &Function) -> bool {
+    let combine = Type::Function {
+        groups: vec![vec![
+            named("accumulator"),
+            borrow_type(false, None, None, named("t")),
+        ]],
+        effects: effect_parameter("e"),
+        result: Box::new(named("accumulator")),
+    };
+    function.name == "fold"
+        && matches!(function.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [effect, accumulator]
+                if effect.name == "e"
+                    && effect.kind == Sort::Effects
+                    && effect.default.is_none()
+                    && accumulator.name == "accumulator"
+                    && accumulator.kind == Sort::Type
+                    && accumulator.default.is_none()))
+        && matches!(function.groups.as_slice(), [receiver, initial, callback]
+            if has_parameter(receiver, "self", PassMode::Borrow, named("self"))
+                && has_parameter(initial, "initial", PassMode::Move, named("accumulator"))
+                && has_parameter(callback, "combine", PassMode::Move, combine))
+        && function.return_type == Some(named("accumulator"))
+        && function.effects == effect_parameter("e")
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_vec_contains_method(function: &Function) -> bool {
+    function.name == "contains"
+        && function.compile_groups.is_empty()
+        && matches!(function.groups.as_slice(), [receiver, needle]
+            if has_parameter(receiver, "self", PassMode::Borrow, named("self"))
+                && has_parameter(needle, "needle", PassMode::Copy, named("t")))
+        && function.return_type == Some(Type::Bool)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_eq_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "t" && parameter.kind == Sort::Type))
+        && extension.target == applied("vec", named("t"))
+        && extension.trait_ref.is_none()
+        && matches!(extension.where_predicates.as_slice(), [copy, equality]
+            if is_copy_bound(copy)
+                && equality.subject == named("t")
+                && equality.trait_ref == applied("core.cmp.eq", named("t"))
+                && equality.associated_types.is_empty())
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Function(contains),
+        ] if valid_vec_contains_method(contains))
+}
+
 fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
@@ -1236,6 +1324,11 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(at),
             crate::ast::ExtendMember::Function(first),
             crate::ast::ExtendMember::Function(last),
+            crate::ast::ExtendMember::Function(find),
+            crate::ast::ExtendMember::Function(position),
+            crate::ast::ExtendMember::Function(any),
+            crate::ast::ExtendMember::Function(all),
+            crate::ast::ExtendMember::Function(fold),
             crate::ast::ExtendMember::Function(reserve),
             crate::ast::ExtendMember::Function(push),
             crate::ast::ExtendMember::Function(replace),
@@ -1269,6 +1362,11 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && valid_vec_element_access_method(at, "at", true, false)
             && valid_vec_element_access_method(first, "first", false, true)
             && valid_vec_element_access_method(last, "last", false, true)
+            && valid_vec_predicate_method(find, "find", applied("option", borrow_type(false, None, None, named("t"))))
+            && valid_vec_predicate_method(position, "position", applied("option", Type::U64))
+            && valid_vec_predicate_method(any, "any", Type::Bool)
+            && valid_vec_predicate_method(all, "all", Type::Bool)
+            && valid_vec_fold_method(fold)
             && valid_vec_receiver_method(reserve, "reserve", PassMode::MutBorrow, &[("additional", PassMode::Inferred, Type::U64)], Type::Unit)
             && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Inferred, named("t"))], Type::Unit)
             && valid_vec_receiver_method(replace, "replace", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("t"))], named("t"))
@@ -1457,7 +1555,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 55);
+        assert_eq!(bundle.program.items.len(), 56);
         assert!(bundle
             .program
             .item_origins
@@ -1466,10 +1564,10 @@ mod tests {
         assert!(bundle.program.item_origins[..12]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "boxed"]));
-        assert!(bundle.program.item_origins[12..47]
+        assert!(bundle.program.item_origins[12..48]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
-        assert!(bundle.program.item_origins[47..55]
+        assert!(bundle.program.item_origins[48..56]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "string"]));
     }

@@ -79,8 +79,11 @@ and slices. The accepted
 [collection-mutation contract](collection-mutation.md) is implemented for
 arrays and slices. The accepted
 [vector-operations contract](vector-operations.md) completes checked access,
-slice extension, and copy mutation for vectors. The active slice is common
-collection algorithms.
+slice extension, and copy mutation for vectors. The accepted
+[collection-algorithms contract](collection-algorithms.md) now completes
+common source-backed search, predicates, membership, and folds across arrays,
+slices, and vectors. The active slice is the prefix effect-row callable syntax
+migration, followed by the explicit synchronous host I/O contract.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

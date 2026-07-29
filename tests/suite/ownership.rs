@@ -493,6 +493,56 @@ fn arrays_and_slices_mutate_with_prevalidated_overlap_safe_bounds() {
 }
 
 #[test]
+fn contiguous_collections_share_short_circuiting_effect_aware_algorithms() {
+    for (name, output) in batched_native_fixture_outputs(&[
+        "collection_algorithms.sc",
+        "collection_algorithm_cleanup.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let effect_check = salic()
+        .arg("check")
+        .arg(fixture("pass", "collection_algorithm_effect_check.sc"))
+        .output()
+        .expect("check custom-effect collection callback");
+    assert!(
+        effect_check.status.success(),
+        "{}",
+        output_text(&effect_check)
+    );
+
+    for (name, expected) in [
+        (
+            "collection_contains_resource.sc",
+            "unknown method `contains`",
+        ),
+        (
+            "collection_find_local_escape.sc",
+            "source is local or cannot be proven",
+        ),
+        ("collection_find_mutation_conflict.sc", "already borrowed"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid collection algorithm use");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn core_string_literals_preserve_utf8_and_representation_privacy() {
     let mut outputs = batched_native_fixture_outputs(&["string_utf8.sc"]);
     let (name, output) = outputs.pop().expect("String fixture output");

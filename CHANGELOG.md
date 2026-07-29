@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.227.0 - 2026-07-30
+
+- Completed ITER-1 with source-backed `find`, `position`, `contains`, `any`,
+  `all`, and `fold` shared by arrays, slices, and vectors through one slice
+  kernel.
+- Preserved increasing-index order, first-result short-circuiting, empty-input
+  identities, source-retaining `find` borrows, and move-only fold accumulator
+  cleanup. Membership is explicitly limited to copyable equality.
+- Forwarded predicate and fold callback effect rows exactly, with static
+  custom-effect coverage and no implicit allocation or authority.
+- Added native array/slice/vector, resource-cleanup, empty,
+  borrow-escape, mutation-conflict, and copy-bound coverage, plus the accepted
+  collection-algorithms contract and current 2026 research basis.
+
 ## 0.226.0 - 2026-07-29
 
 - Added the compile-time `constraint` sort and non-associative `is` relation.

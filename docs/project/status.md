@@ -457,6 +457,10 @@ Implemented `core` facilities include:
   trapping `at`/index, first/last, and access-preserving array-to-slice views.
   Checked misses test bounds before forming a borrow, and mutable views retain
   the original array loan;
+- shared left-to-right `find`, `position`, `contains`, `any`, `all`, and
+  `fold` algorithms for slices and arrays. Predicate and fold callbacks borrow
+  elements and forward their exact effect row; source-returning search retains
+  the collection loan;
 - ownership markers and operator traits;
 - `option` and `result`, including inspection, region-preserving views,
   transformations, fallback, and extraction helpers;
@@ -500,7 +504,7 @@ Implemented `alloc` facilities include:
 - `vec(t)` with consistent checked/trapping shared or mutable access,
   first/last, slice conversion, copyable slice extension, equal-length and
   overlap-safe copy mutation, resource-preserving owned append, and consuming
-  iteration;
+  iteration, plus the common slice-backed search and fold vocabulary;
 - ownership-preserving `vec(u8)`/`string` conversion: success transfers the
   allocation, failure retains the original vector and its valid-prefix length,
   and static strings copy into owned bytes;
@@ -536,6 +540,15 @@ borrowed from the same mutable vector. Allocation and layout failure terminate
 before any tail copy. Move-only elements use ownership-transferring `push` and
 `append`; borrowed slices never copy or consume them. The accepted
 [vector-operations contract](vector-operations.md) records these guarantees.
+
+Arrays, slices, and vectors expose common `find`, `position`, `contains`,
+`any`, `all`, and `fold` operations through one borrowed-slice kernel.
+Search and predicates short-circuit in source order, empty inputs use the
+usual logical and fold identities, and callback effects remain visible to the
+caller. `find` returns a source-retaining element borrow; `contains` requires
+copyable equality while move-only callers use a borrowing predicate. The
+accepted [collection-algorithms contract](collection-algorithms.md) records
+the ownership, effect, cleanup, and iterator-boundary decisions.
 
 ## Quality Gates
 

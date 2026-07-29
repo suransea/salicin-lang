@@ -66,6 +66,47 @@ extend(array(t)(l)) {
     values.last(a)()
   }
 
+  /// Borrows the first element accepted by `predicate`.
+  let find(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): core.option(borrow(t)) with(e) = {
+    let values = self.as_slice()
+    values.find(predicate)
+  }
+
+  /// Returns the index of the first element accepted by `predicate`.
+  let position(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): core.option(u64) with(e) = {
+    let values = self.as_slice()
+    values.position(predicate)
+  }
+
+  /// Returns whether any element is accepted by `predicate`.
+  let any(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let values = self.as_slice()
+    values.any(predicate)
+  }
+
+  /// Returns whether every element is accepted by `predicate`.
+  let all(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let values = self.as_slice()
+    values.all(predicate)
+  }
+
+  /// Folds elements from left to right into `initial`.
+  let fold(comptime e: effects, comptime accumulator: type)
+    (self: borrow(self))
+    (move initial: accumulator)
+    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+    let values = self.as_slice()
+    values.fold(initial)(combine)
+  }
+
   /// Swaps two elements, trapping before mutation when either index is invalid.
   let swap(self: borrow(mut)(self))(left: u64, right: u64): () = {
     let values = self.as_slice(mut)()
@@ -76,6 +117,16 @@ extend(array(t)(l)) {
   let reverse(self: borrow(mut)(self))(): () = {
     let values = self.as_slice(mut)()
     values.reverse()
+  }
+}
+
+/// Provides equality-based membership for fixed-size arrays.
+extend(array(t)(l))
+(requires: t is core.marker.copyable && t is core.cmp.eq(t)) {
+  /// Returns whether this array contains an element equal to `needle`.
+  let contains(self: borrow(self))(copy needle: t): bool = {
+    let values = self.as_slice()
+    values.contains(needle)
   }
 }
 
@@ -155,6 +206,86 @@ extend(slice(t)) {
     }
   }
 
+  /// Borrows the first element accepted by `predicate`.
+  let find(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): core.option(borrow(t)) with(e) = {
+    let length = self.len()
+    let mut index: u64 = 0
+    while { index < length } {
+      let item = self.at(index)
+      if predicate(item) {
+        return(self.get(index))
+      }
+      index = index + 1
+    }
+    core.option.none
+  }
+
+  /// Returns the index of the first element accepted by `predicate`.
+  let position(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): core.option(u64) with(e) = {
+    let length = self.len()
+    let mut index: u64 = 0
+    while { index < length } {
+      let item = self.at(index)
+      if predicate(item) {
+        return(core.option.some(index))
+      }
+      index = index + 1
+    }
+    core.option.none
+  }
+
+  /// Returns whether any element is accepted by `predicate`.
+  let any(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let length = self.len()
+    let mut index: u64 = 0
+    while { index < length } {
+      let item = self.at(index)
+      if predicate(item) {
+        return(true)
+      }
+      index = index + 1
+    }
+    false
+  }
+
+  /// Returns whether every element is accepted by `predicate`.
+  let all(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let length = self.len()
+    let mut index: u64 = 0
+    while { index < length } {
+      let item = self.at(index)
+      if !predicate(item) {
+        return(false)
+      }
+      index = index + 1
+    }
+    true
+  }
+
+  /// Folds elements from left to right into `initial`.
+  let fold(comptime e: effects, comptime accumulator: type)
+    (self: borrow(self))
+    (move initial: accumulator)
+    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+    let length = self.len()
+    let mut value = initial
+    let mut index: u64 = 0
+    while { index < length } {
+      let item = self.at(index)
+      value = combine(value, item)
+      index = index + 1
+    }
+    value
+  }
+
   /// Swaps two elements, trapping before mutation when either index is invalid.
   let swap(self: borrow(mut)(self))(left: u64, right: u64): () = {
     let length = self.len(mut)()
@@ -194,6 +325,31 @@ extend(slice(t)) {
       self.swap(left, length - 1 - left)
       left = left + 1
     }
+  }
+}
+
+/// Provides equality-based membership for borrowed slices.
+extend(slice(t))
+(requires: t is core.marker.copyable && t is core.cmp.eq(t)) {
+  /// Returns whether this slice contains an element equal to `needle`.
+  let contains(self: borrow(self))(copy needle: t): bool = {
+    let length = self.len()
+    if length > 0 {
+      let values = unsafe {
+        raw_slice_ptr(self)
+      }
+      let mut index: u64 = 0
+      while { index < length } {
+        let item = unsafe {
+          *raw_offset(values, index)
+        }
+        if item == needle {
+          return(true)
+        }
+        index = index + 1
+      }
+    }
+    false
   }
 }
 

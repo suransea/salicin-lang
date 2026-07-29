@@ -385,6 +385,42 @@ extend(vec(t)) {
       self.get(a)(length - 1)
     }
   }
+  /// Borrows the first element accepted by `predicate`.
+  let find(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): option(borrow(t)) with(e) = {
+    let values = self.as_slice()
+    values.find(predicate)
+  }
+  /// Returns the index of the first element accepted by `predicate`.
+  let position(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): option(u64) with(e) = {
+    let values = self.as_slice()
+    values.position(predicate)
+  }
+  /// Returns whether any element is accepted by `predicate`.
+  let any(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let values = self.as_slice()
+    values.any(predicate)
+  }
+  /// Returns whether every element is accepted by `predicate`.
+  let all(comptime e: effects)
+    (self: borrow(self))
+    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+    let values = self.as_slice()
+    values.all(predicate)
+  }
+  /// Folds elements from left to right into `initial`.
+  let fold(comptime e: effects, comptime accumulator: type)
+    (self: borrow(self))
+    (move initial: accumulator)
+    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+    let values = self.as_slice()
+    values.fold(initial)(combine)
+  }
   /// Ensures capacity for at least `additional` more elements.
   let reserve(self: borrow(mut)(self))(additional: u64): () = { vec_reserve(self)(additional) }
   /// Appends `value` to the end of this vector.
@@ -554,4 +590,14 @@ pub(package) let vec_into_raw_parts(comptime t: type)
   let parts = (values.pointer, values.length, values.storage_capacity)
   forget(values)
   parts
+}
+
+/// Provides equality-based membership for vectors.
+extend(vec(t))
+(requires: t is copyable && t is core.cmp.eq(t)) {
+  /// Returns whether this vector contains an element equal to `needle`.
+  let contains(self: borrow(self))(copy needle: t): bool = {
+    let values = self.as_slice()
+    values.contains(needle)
+  }
 }
