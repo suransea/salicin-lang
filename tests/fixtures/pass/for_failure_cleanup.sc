@@ -41,11 +41,11 @@ extend(counter, into_iterator) {
   }
 }
 
-let check(value: i32): () with(throwing(bool)) = {
+let check: with(throwing(bool))(value: i32): () = {
   if value < 0 { throw(true) } else { () }
 }
 
-let visit(move counter: counter): i32 with(throwing(bool)) = {
+let visit: with(throwing(bool))(move counter: counter): i32 = {
   for counter { value ->
     check(value)
   }

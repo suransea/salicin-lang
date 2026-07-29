@@ -15,13 +15,13 @@ extend(state, droppable) {
   }
 }
 
-let update(left: borrow(mut)(i32), right: borrow(mut)(i32)): () with(step) = {
+let update: with(step)(left: borrow(mut)(i32), right: borrow(mut)(i32)): () = {
   let delta = step.delta()
   left = left + delta
   right = right + delta
 }
 
-let program(drops: ptr(mut)(i32)): i32 with(step) = {
+let program: with(step)(drops: ptr(mut)(i32)): i32 = {
   let mut state = state { values: [20, 20], drops: drops }
   update(state.values[0], state.values[1])
   state.values[0] + state.values[1]

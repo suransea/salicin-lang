@@ -2,7 +2,7 @@ let result = core.result
 let throwing = core.error.throwing
 let defer = core.control.defer
 
-let fail(counter: borrow(mut)(i32)): i32 with(throwing(bool)) = {
+let fail: with(throwing(bool))(counter: borrow(mut)(i32)): i32 = {
   defer {
       counter = counter + 1
     }

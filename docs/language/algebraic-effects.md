@@ -9,8 +9,8 @@ An effect is a nominal compile-time identity with zero or more operations:
 
 ```sc fragment
 let state(comptime s: type) = effect {
-  let get(): s
-  let put(move value: s): ()
+  let get: (): s
+  let put: (move value: s): ()
 }
 ```
 
@@ -23,15 +23,28 @@ rules. A declaration with the same operation name in another effect is unrelated
 
 ## Effect Rows
 
-`with(...)` is part of a function type:
+`with(E)(F)` adds the normalized effect row `E` to callable type `F`:
 
 ```sc fragment
-let increment(): i32 with(state(i32)) = {
+let increment: with(state(i32))(): i32 = {
   let value = state(i32).get()
   state(i32).put(value + 1)
   value
 }
+
+let apply(comptime e: effects): with(e)
+  (action: with(e)((i32): i32))
+  (value: i32): i32 = {
+  action(value)
+}
 ```
+
+The declaration boundary after the function name and compile-time parameters
+starts the complete runtime callable type. A function value uses the fully
+parenthesized form, such as `with(state(i32))((): i32)`. The row belongs to
+the complete multi-group call, not to a parameter group or result value.
+`with()((a): b)` is the pure callable `(a): b`; a non-callable operand is
+rejected.
 
 Rows are unordered sets of nominal effect identities. Handling one identity removes exactly that
 identity and forwards every other requirement. A `comptime e: effects` parameter may represent

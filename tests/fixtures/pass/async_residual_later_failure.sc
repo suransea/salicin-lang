@@ -45,11 +45,11 @@ extend(step, future(())) {
   }
 }
 
-let finish(
+let finish: with(throwing(bool))(
   calls: ptr(mut)(i32),
   fail: bool,
   value: i32,
-): i32 with(throwing(bool)) = {
+): i32 = {
   unsafe {
     *calls = *calls + 1
   }

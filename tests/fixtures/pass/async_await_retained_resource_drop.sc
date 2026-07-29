@@ -43,13 +43,13 @@ extend(step, future(())) {
   }
 }
 
-let allocate(): ptr(mut)(i32) with(unsafety) = {
+let allocate: with(unsafety)(): ptr(mut)(i32) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: ptr(mut)(i32)): () with(unsafety) = {
+let release: with(unsafety)(counter: ptr(mut)(i32)): () = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }

@@ -56,6 +56,8 @@ Implemented lexical and declaration features include:
 - UTF-8 source and NFC-normalized Unicode XID identifiers;
 - logical newlines, semicolons, line comments, and nested block comments;
 - uniform `let` declarations and mutable local value bindings;
+- prefix effect callable types `with(E)(F)` and effectful declaration
+  boundaries, with compact boundary-free syntax retained for pure functions;
 - private, package, and public visibility;
 - contextual control, passing, sort, and borrow words;
 - compiler-owned abstract sorts written `let name: sort(2)`;

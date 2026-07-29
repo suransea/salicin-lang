@@ -3,15 +3,15 @@ let ask = effect {
   let value(): i32
 }
 
-let left(): i32 with(ask) = { ask.value() + 1 }
-let middle(): i32 with(ask) = { ask.value() + 2 }
-let right(): i32 with(ask) = { ask.value() + 3 }
+let left: with(ask)(): i32 = { ask.value() + 1 }
+let middle: with(ask)(): i32 = { ask.value() + 2 }
+let right: with(ask)(): i32 = { ask.value() + 3 }
 
 let main(): i32 = {
   ask.handle choose { (resume) -> resume(false) } value { (resume) -> resume(39) } action {
-      let first: (): i32 with(ask) = if true { left } else { middle }
-      let second: (): i32 with(ask) = if false { middle } else { right }
-      let combined: (): i32 with(ask) = if ask.choose() { first } else { second }
+      let first: with(ask)((): i32)  = if true { left } else { middle }
+      let second: with(ask)((): i32)  = if false { middle } else { right }
+      let combined: with(ask)((): i32)  = if ask.choose() { first } else { second }
       combined()
     }
 }

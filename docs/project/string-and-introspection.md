@@ -221,8 +221,8 @@ Its source declaration therefore describes the expression as a lazy callable:
 pub let type_of(
   comptime e: effects,
   comptime t: type,
-)
-  (move expression: (): t with(e)): type = builtin()
+): with(e)
+  (move expression: with(e)((): t)): type = builtin()
 ```
 
 The parser rewrites:
@@ -341,27 +341,27 @@ let string_reserve(
 ): () = builtin()
 
 // Callers preserve the UTF-8 invariant.
-let string_push_byte_unchecked(
+let string_push_byte_unchecked: with(core.unsafe.unsafety)(
   value: borrow(mut)(string),
   byte: u8,
-): () with(core.unsafe.unsafety) = builtin()
+): () = builtin()
 
 // `new_length` has already been checked as a UTF-8 boundary.
-let string_truncate_unchecked(
+let string_truncate_unchecked: with(core.unsafe.unsafety)(
   value: borrow(mut)(string),
   new_length: u64,
-): () with(core.unsafe.unsafety) = builtin()
+): () = builtin()
 
 // Transfers ownership between the opaque string and allocation adapters.
-pub let string_from_raw_parts(
+pub let string_from_raw_parts: with(core.unsafe.unsafety)(
   pointer: ptr(mut)(u8),
   length: u64,
   capacity: u64,
-): string with(core.unsafe.unsafety) = builtin()
+): string = builtin()
 
-pub let string_into_raw_parts(
+pub let string_into_raw_parts: with(core.unsafe.unsafety)(
   move value: string,
-): (ptr(mut)(u8), u64, u64) with(core.unsafe.unsafety) = builtin()
+): (ptr(mut)(u8), u64, u64) = builtin()
 ```
 
 The raw-parts operations always return heap-owned storage. Converting an

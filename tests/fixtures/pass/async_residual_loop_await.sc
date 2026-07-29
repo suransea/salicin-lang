@@ -33,7 +33,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(drops: ptr(mut)(i32), pending: bool): step with(ask) = {
+let make_step: with(ask)(drops: ptr(mut)(i32), pending: bool): step = {
   step { drops: drops, pending: pending, done: ask.ask() }
 }
 

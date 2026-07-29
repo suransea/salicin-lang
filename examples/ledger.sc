@@ -77,7 +77,7 @@ let count_batch(move batch: batch): i32 = {
   count
 }
 
-let apply(ledger: borrow(mut)(ledger))(move transaction: transaction): () with(overdraft) = {
+let apply: with(overdraft)(ledger: borrow(mut)(ledger))(move transaction: transaction): () = {
   match transaction
     { credit(amount) -> ledger.credit(amount) }
     { debit(amount) ->
@@ -89,7 +89,7 @@ let apply(ledger: borrow(mut)(ledger))(move transaction: transaction): () with(o
     }
 }
 
-let process(move batch: batch): i32 with(overdraft) = {
+let process: with(overdraft)(move batch: batch): i32 = {
   let mut ledger = ledger { balance: 0, processed: 0 }
   for batch { transaction ->
     apply(ledger)(transaction)

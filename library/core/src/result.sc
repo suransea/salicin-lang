@@ -34,27 +34,21 @@ extend(result(error)(t)) {
   }
 
   /// Transforms `ok` once and preserves `err`.
-  let map(comptime e: effects, comptime u: type)
-    (move self)
-    (move transform: (t): u with(e)): result(error)(u) with(e) = {
+  let map(comptime e: effects, comptime u: type): with(e)(move self)(move transform: with(e)((t): u)): result(error)(u) = {
     match self
       { ok(value) -> result.ok(transform(value)) }
       { err(error) -> result.err(error) }
   }
 
   /// Transforms `err` once and preserves `ok`.
-  let map_error(comptime e: effects, comptime mapped_error: type)
-    (move self)
-    (move transform: (error): mapped_error with(e)): result(mapped_error)(t) with(e) = {
+  let map_error(comptime e: effects, comptime mapped_error: type): with(e)(move self)(move transform: with(e)((error): mapped_error)): result(mapped_error)(t) = {
     match self
       { ok(value) -> result.ok(value) }
       { err(error) -> result.err(transform(error)) }
   }
 
   /// Runs `next` once for `ok` and preserves `err`.
-  let and_then(comptime e: effects, comptime u: type)
-    (move self)
-    (move next: (t): result(error)(u) with(e)): result(error)(u) with(e) = {
+  let and_then(comptime e: effects, comptime u: type): with(e)(move self)(move next: with(e)((t): result(error)(u))): result(error)(u) = {
     match self
       { ok(value) -> next(value) }
       { err(error) -> result.err(error) }
@@ -68,9 +62,7 @@ extend(result(error)(t)) {
   }
 
   /// Extracts `ok` or evaluates `fallback` exactly once for `err`.
-  let unwrap_or_else(comptime e: effects)
-    (move self)
-    (move fallback: (error): t with(e)): t with(e) = {
+  let unwrap_or_else(comptime e: effects): with(e)(move self)(move fallback: with(e)((error): t)): t = {
     match self
       { ok(value) -> value }
       { err(error) -> fallback(error) }
@@ -99,9 +91,7 @@ extend(result(error)(t), core.flow.chain) {
   let rebind = result(error)
 
   /// Applies `transform` to `Ok` and propagates `Err`.
-  let chain(comptime e: effects, comptime u: type)
-    (self)
-    (transform: (t): u with(e)): result(error)(u) with(e) = {
+  let chain(comptime e: effects, comptime u: type): with(e)(self)(transform: with(e)((t): u)): result(error)(u) = {
     match self
       { ok(value) -> result.ok(transform(value)) }
       { err(error) -> result.err(error) }
@@ -114,9 +104,7 @@ extend(result(error)(t), core.flow.coalesce) {
   let item = t
 
   /// Extracts `Ok` or evaluates `fallback` for `Err`.
-  let coalesce(comptime e: effects)
-    (self)
-    (fallback: (): t with(e)): t with(e) = {
+  let coalesce(comptime e: effects): with(e)(self)(fallback: with(e)((): t)): t = {
     match self
       { ok(value) -> value }
       { err(_) -> fallback() }
@@ -139,7 +127,7 @@ extend(result(e)(t), core.flow.raise) {
   let output = t
   let error = e
 
-  let raise(move self): t with(core.error.throwing(e)) = {
+  let raise: with(core.error.throwing(e))(move self): t = {
     match self
       { ok(value) -> value }
       { err(error) -> core.error.throwing(e).raise(error) }

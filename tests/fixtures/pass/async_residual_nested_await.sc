@@ -34,7 +34,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(drops: ptr(mut)(i32)): step with(ask) = {
+let make_step: with(ask)(drops: ptr(mut)(i32)): step = {
   step { drops: drops, polls: 0, value: ask.ask() }
 }
 

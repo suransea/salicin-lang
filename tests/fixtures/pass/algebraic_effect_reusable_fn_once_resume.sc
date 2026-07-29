@@ -14,7 +14,7 @@ extend(resource, droppable) {
 
 let consume(move resource: resource): i32 = { 0 }
 
-let run(move action: (): i32 with(ask)): i32 = {
+let run(move action: with(ask)((): i32)): i32 = {
   ask.handle value { (resume) -> resume(41) } action {
       action()
     }
@@ -22,7 +22,7 @@ let run(move action: (): i32 with(ask)): i32 = {
 
 let execute(counter: ptr(mut)(i32)): i32 = {
   let resource = resource { counter: counter }
-  let action: (): i32 with(ask) = { () ->
+  let action: with(ask)((): i32)  = { () ->
     ask.value() + consume(resource)
   }
   let alias = action

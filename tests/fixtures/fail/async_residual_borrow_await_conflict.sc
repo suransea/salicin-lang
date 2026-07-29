@@ -19,7 +19,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(): step with(ask) = {
+let make_step: with(ask)(): step = {
   step { value: ask.ask() }
 }
 

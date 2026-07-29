@@ -707,14 +707,14 @@ let absolute = if value < 0 {
 The principal source contracts in `core.control` are:
 
 ```sc fragment
-pub let if(comptime e: effects, comptime t: type)
+pub let if(comptime e: effects, comptime t: type): with(e)
   (condition: bool)
-  (move then: (): t with(e))
-  (move else: (): t with(e)): t with(e)
+  (move then: with(e)((): t))
+  (move else: with(e)((): t)): t
 
-pub let while(comptime e: effects)
-  (move condition: (): bool with(e))
-  (move do: (): () with(e)): () with(e)
+pub let while(comptime e: effects): with(e)
+  (move condition: with(e)((): bool))
+  (move do: with(e)((): ())): ()
 ```
 
 The surface forms supply their branch, condition, and body blocks as lazy callable groups. The
@@ -747,17 +747,30 @@ An effect declares operations:
 
 ```sc fragment
 let counter = effect {
-  let next(): i32
+  let next: (): i32
 }
 ```
 
-A function's `with(...)` clause is part of its type:
+`with(E)(F)` is the effect-row type constructor for a callable `F`. In a
+declaration, the colon after the name and compile-time parameter groups is the
+callable-type/body boundary; the final colon introduces its result:
 
 ```sc fragment
-let read(): i32 with(counter) = {
+let read: with(counter)(): i32 = {
   counter.next()
 }
+
+let apply(comptime e: effects): with(e)
+  (action: with(e)((i32): i32))
+  (value: i32): i32 = {
+  action(value)
+}
 ```
+
+The corresponding function value type is `with(counter)((): i32)`.
+`with()((a): b)` is equivalent to the pure callable `(a): b`, and one row
+always covers the complete multi-group invocation. `with(E)` cannot wrap an
+ordinary result type.
 
 An operation transfers control to the nearest matching handler. A resumable clause receives a
 single-use continuation. Resuming supplies the operation result and eventually returns the
@@ -767,7 +780,7 @@ handler's answer type. Abandoning the continuation cleans its captured state exa
 operation. `try { ... }` handles that effect and materializes `core.result(error)(value)`.
 
 ```sc fragment
-let parse(): i32 with(throwing(parse_error)) = { ... }
+let parse: with(throwing(parse_error))(): i32 = { ... }
 
 let result = try {
   parse()
@@ -869,7 +882,7 @@ Postfix `value!` invokes the validated source trait `core.flow.raise`:
 pub let raise = trait {
   let output: type
   let error: type
-  let raise(move self): output with(core.error.throwing(error))
+  let raise: with(core.error.throwing(error))(move self): output
 }
 ```
 

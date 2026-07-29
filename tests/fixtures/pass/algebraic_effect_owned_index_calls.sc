@@ -29,12 +29,12 @@ let next_index(calls: ptr(mut)(i32)): usize = {
   }
 }
 
-let update(before: i32)(value: borrow(mut)(i32))(after: i32): () with(step) = {
+let update: with(step)(before: i32)(value: borrow(mut)(i32))(after: i32): () = {
   let delta = step.delta()
   value = value + delta + before + after
 }
 
-let program(drops: ptr(mut)(i32))(calls: ptr(mut)(i32)): i32 with(step) = {
+let program: with(step)(drops: ptr(mut)(i32))(calls: ptr(mut)(i32)): i32 = {
   let mut state = state { values: [0, 40], drops: drops }
   update(mark(calls)(1))(state.values[next_index(calls)])(mark(calls)(3))
   state.values[1]

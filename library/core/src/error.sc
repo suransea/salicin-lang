@@ -5,8 +5,7 @@ pub let throwing(comptime error: type) = effect {
 }
 
 /// Handles `throwing(e)` from `action` and returns a `result`.
-pub let try(comptime f: effects, comptime t: type, comptime e: type)
-  (move action: (): t with(core.error.throwing(e), f)): core.result(e)(t) with(f) = {
+pub let try(comptime f: effects, comptime t: type, comptime e: type): with(f)(move action: with(core.error.throwing(e), f)((): t)): core.result(e)(t) = {
   core.error.throwing(e).handle
     raise { (error) -> core.result.err(error) }
     done { (value) -> core.result.ok(value) }
@@ -16,7 +15,6 @@ pub let try(comptime f: effects, comptime t: type, comptime e: type)
 }
 
 /// Raises a value through `throwing(error)`.
-pub let throw(comptime error: type)
-  (move error: error): never with(core.error.throwing(error)) = {
+pub let throw(comptime error: type): with(core.error.throwing(error))(move error: error): never = {
   core.error.throwing(error).raise(error)
 }

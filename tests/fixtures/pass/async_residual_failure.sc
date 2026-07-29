@@ -16,7 +16,7 @@ extend(resource, droppable) {
   }
 }
 
-let choose(fail: bool, value: i32): i32 with(throwing(bool)) = {
+let choose: with(throwing(bool))(fail: bool, value: i32): i32 = {
   if fail {
     throw(true)
   } else {
@@ -24,13 +24,11 @@ let choose(fail: bool, value: i32): i32 with(throwing(bool)) = {
   }
 }
 
-let consume_or_throw(move resource: resource): i32 with(throwing(bool)) = {
+let consume_or_throw: with(throwing(bool))(move resource: resource): i32 = {
   choose(true, resource.value)
 }
 
-let poll_once(comptime e: effects, comptime f: type, comptime t: type)
-  (future: borrow(mut)(f)): poll(t) with(e)
-= requires(f is future(e) && f.output == t) {
+let poll_once(comptime e: effects, comptime f: type, comptime t: type): with(e)(future: borrow(mut)(f)): poll(t) = requires(f is future(e) && f.output == t) {
   future.poll()
 }
 

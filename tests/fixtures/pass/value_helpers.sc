@@ -5,12 +5,18 @@ let unsafety = core.unsafe.unsafety
 let add_one(value: i32): i32 = { value + 1 }
 let keep(value: i32): option(i32) = { option.some(value) }
 let keep_result(value: i32): result(bool)(i32) = { result.ok(value) }
-let map_error(value: bool): i32 = { if value { 1 } else { 0 } }
+let map_error(value: bool): i32 = {
+  if value { 1 } else { 0 }
+}
 let option_fallback(): i32 = { 10 }
-let result_fallback(error: bool): i32 = { if error { 11 } else { 10 } }
+let result_fallback(error: bool): i32 = {
+  if error { 11 } else { 10 }
+}
 let make_error(): bool = { true }
-let impossible(): i32 with(unsafety) = { unsafe { raw_trap() } }
-let impossible_error(error: bool): i32 with(unsafety) = {
+let impossible: with(unsafety)(): i32 = {
+  unsafe { raw_trap() }
+}
+let impossible_error: with(unsafety)(error: bool): i32 = {
   unsafe { raw_trap() }
 }
 

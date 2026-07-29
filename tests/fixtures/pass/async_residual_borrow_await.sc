@@ -25,11 +25,11 @@ extend(step, future(())) {
   }
 }
 
-let make_step(): step with(ask) = {
+let make_step: with(ask)(): step = {
   step { polls: 0, value: ask.ask() }
 }
 
-let make_step_with(offset: borrow(i32)): step with(ask) = {
+let make_step_with: with(ask)(offset: borrow(i32)): step = {
   step { polls: 0, value: ask.ask() + offset }
 }
 

@@ -67,42 +67,31 @@ extend(array(t)(l)) {
   }
 
   /// Borrows the first element accepted by `predicate`.
-  let find(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): core.option(borrow(t)) with(e) = {
+  let find(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): core.option(borrow(t)) = {
     let values = self.as_slice()
     values.find(predicate)
   }
 
   /// Returns the index of the first element accepted by `predicate`.
-  let position(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): core.option(u64) with(e) = {
+  let position(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): core.option(u64) = {
     let values = self.as_slice()
     values.position(predicate)
   }
 
   /// Returns whether any element is accepted by `predicate`.
-  let any(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let any(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let values = self.as_slice()
     values.any(predicate)
   }
 
   /// Returns whether every element is accepted by `predicate`.
-  let all(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let all(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let values = self.as_slice()
     values.all(predicate)
   }
 
   /// Folds elements from left to right into `initial`.
-  let fold(comptime e: effects, comptime accumulator: type)
-    (self: borrow(self))
-    (move initial: accumulator)
-    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+  let fold(comptime e: effects, comptime accumulator: type): with(e)(self: borrow(self))(move initial: accumulator)(move combine: with(e)((accumulator, borrow(t)): accumulator)): accumulator = {
     let values = self.as_slice()
     values.fold(initial)(combine)
   }
@@ -207,9 +196,7 @@ extend(slice(t)) {
   }
 
   /// Borrows the first element accepted by `predicate`.
-  let find(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): core.option(borrow(t)) with(e) = {
+  let find(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): core.option(borrow(t)) = {
     let length = self.len()
     let mut index: u64 = 0
     while { index < length } {
@@ -223,9 +210,7 @@ extend(slice(t)) {
   }
 
   /// Returns the index of the first element accepted by `predicate`.
-  let position(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): core.option(u64) with(e) = {
+  let position(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): core.option(u64) = {
     let length = self.len()
     let mut index: u64 = 0
     while { index < length } {
@@ -239,9 +224,7 @@ extend(slice(t)) {
   }
 
   /// Returns whether any element is accepted by `predicate`.
-  let any(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let any(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let length = self.len()
     let mut index: u64 = 0
     while { index < length } {
@@ -255,9 +238,7 @@ extend(slice(t)) {
   }
 
   /// Returns whether every element is accepted by `predicate`.
-  let all(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let all(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let length = self.len()
     let mut index: u64 = 0
     while { index < length } {
@@ -271,10 +252,7 @@ extend(slice(t)) {
   }
 
   /// Folds elements from left to right into `initial`.
-  let fold(comptime e: effects, comptime accumulator: type)
-    (self: borrow(self))
-    (move initial: accumulator)
-    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+  let fold(comptime e: effects, comptime accumulator: type): with(e)(self: borrow(self))(move initial: accumulator)(move combine: with(e)((accumulator, borrow(t)): accumulator)): accumulator = {
     let length = self.len()
     let mut value = initial
     let mut index: u64 = 0
@@ -464,7 +442,7 @@ pub let ptr(comptime a: access = shared)
 /// Provides operations shared by raw pointers at either access.
 extend(ptr(a)(t)) {
   /// Returns the pointer `index` elements after this pointer.
-  let offset(self)(index: u64): ptr(a)(t) with(core.unsafe.unsafety) = {
+  let offset: with(core.unsafe.unsafety)(self)(index: u64): ptr(a)(t) = {
     unsafe {
       raw_offset(self, index)
     }
@@ -474,14 +452,14 @@ extend(ptr(a)(t)) {
 /// Provides operations that require mutable raw-pointer access.
 extend(ptr(mut)(t)) {
   /// Initializes storage that is currently uninitialized.
-  let init(self)(value: t): () with(core.unsafe.unsafety) = {
+  let init: with(core.unsafe.unsafety)(self)(value: t): () = {
     unsafe {
       raw_init(self, value)
     }
   }
 
   /// Moves a value out and leaves the storage uninitialized.
-  let take(self)(): t with(core.unsafe.unsafety) = {
+  let take: with(core.unsafe.unsafety)(self)(): t = {
     unsafe {
       raw_take(self)
     }

@@ -12,7 +12,7 @@ extend(resource, droppable) {
   }
 }
 
-let read_early(counter: ptr(mut)(i32)): i32 with(read) = {
+let read_early: with(read)(counter: ptr(mut)(i32)): i32 = {
   let resource = resource { counter: counter }
   let value = read.read()
   return(value)

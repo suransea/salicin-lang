@@ -124,12 +124,13 @@ struct Parser {
     layout: SourceLayout,
 }
 
-enum HeaderGroup {
-    Compile(Vec<CompileParam>),
-    Runtime(Vec<Param>),
-}
-
-type DeclarationGroups = (Vec<Vec<CompileParam>>, Vec<Vec<Param>>);
+type DeclarationGroups = (
+    Vec<Vec<CompileParam>>,
+    Vec<Vec<Param>>,
+    FunctionEffects,
+    bool,
+    bool,
+);
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
@@ -438,7 +439,8 @@ impl Parser {
         let mutable = self.take(&TokenKind::Mut);
         let name = self.declaration_name()?;
 
-        let (compile_groups, groups) = self.declaration_groups(false, &[])?;
+        let (compile_groups, groups, mut effects, has_callable_boundary, mut has_effect_clause) =
+            self.declaration_groups(false, &[])?;
 
         if mutable && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Err(self.error_here("`let mut` cannot declare a function"));
@@ -510,14 +512,15 @@ impl Parser {
         } else {
             None
         };
-        let (effects, failure_error, has_effect_group) = self.function_effect_clause()?;
-        if failure_error.is_some() && logical_result.is_none() {
-            return Err(self.error_here(
-                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
-            ));
+        if !has_callable_boundary {
+            let (legacy_effects, _failure_error, legacy_has_effect_clause) =
+                self.function_effect_clause()?;
+            effects = legacy_effects;
+            has_effect_clause = legacy_has_effect_clause;
         }
+        let failure_error = effects.failure.as_deref().cloned();
         let annotation =
-            logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
+            logical_result.map(|result| Self::apply_failure_effect(result, failure_error.clone()));
         self.effect_parameters_in_scope.clear();
 
         if !compile_groups.is_empty() || !groups.is_empty() {
@@ -625,7 +628,7 @@ impl Parser {
                     "foreign functions require an explicit result type before `= foreign(...)`",
                 ));
             }
-            if has_effect_group {
+            if has_effect_clause {
                 return Err(self.error_here(
                     "foreign declarations acquire `Unsafe` implicitly and cannot declare effects",
                 ));
@@ -659,7 +662,7 @@ impl Parser {
         if self.at_context_ident("effect") {
             if mutable
                 || annotation.is_some()
-                || has_effect_group
+                || has_callable_boundary
                 || !groups.is_empty()
                 || !where_predicates.is_empty()
             {
@@ -682,7 +685,7 @@ impl Parser {
         if self.at_context_ident("sort") {
             if mutable
                 || annotation.is_some()
-                || has_effect_group
+                || has_callable_boundary
                 || !compile_groups.is_empty()
                 || !groups.is_empty()
                 || !where_predicates.is_empty()
@@ -702,7 +705,7 @@ impl Parser {
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
-            if mutable || annotation.is_some() || has_effect_group || !groups.is_empty() {
+            if mutable || annotation.is_some() || has_callable_boundary || !groups.is_empty() {
                 return Err(self.error_here(
                     "data declarations cannot be mutable, annotated, or have runtime parameters",
                 ));
@@ -729,7 +732,7 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
-            if has_effect_group {
+            if has_callable_boundary {
                 return Err(self.error_here("effect annotations require a function declaration"));
             }
             let value = self.expression(true)?;
@@ -840,7 +843,13 @@ impl Parser {
                     "effect operation name `{operation}` is reserved by handler lowering"
                 )));
             }
-            let (operation_compile_groups, groups) = self.declaration_groups(false, &[])?;
+            let (
+                operation_compile_groups,
+                groups,
+                mut effects,
+                has_callable_boundary,
+                _has_effect_clause,
+            ) = self.declaration_groups(false, &[])?;
             if !operation_compile_groups.is_empty() {
                 return Err(self.error_here(
                     "compile-time parameters on effect operations are not supported yet",
@@ -853,7 +862,10 @@ impl Parser {
             }
             self.expect(&TokenKind::Colon, "`:` before effect operation result type")?;
             let logical_result = self.function_result_type()?;
-            let (effects, failure_error, _) = self.function_effect_clause()?;
+            if !has_callable_boundary {
+                effects = self.function_effect_clause()?.0;
+            }
+            let failure_error = effects.failure.as_deref().cloned();
             let return_type = Some(Self::apply_failure_effect(logical_result, failure_error));
             self.effect_parameters_in_scope.clear();
             if self.at(&TokenKind::Where) {
@@ -1208,7 +1220,8 @@ impl Parser {
         }
         let name = self.expect_ident("an extend member name")?;
 
-        let (compile_groups, groups) = self.declaration_groups(true, &[])?;
+        let (compile_groups, groups, mut effects, has_callable_boundary, _has_effect_clause) =
+            self.declaration_groups(true, &[])?;
         self.validate_receiver_groups(&name, &groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
@@ -1216,14 +1229,12 @@ impl Parser {
         } else {
             None
         };
-        let (effects, failure_error, has_effect_group) = self.function_effect_clause()?;
-        if failure_error.is_some() && logical_result.is_none() {
-            return Err(self.error_here(
-                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
-            ));
+        if !has_callable_boundary {
+            effects = self.function_effect_clause()?.0;
         }
+        let failure_error = effects.failure.as_deref().cloned();
         let annotation =
-            logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
+            logical_result.map(|result| Self::apply_failure_effect(result, failure_error.clone()));
         self.effect_parameters_in_scope.clear();
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -1297,7 +1308,7 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
-            if has_effect_group {
+            if has_callable_boundary {
                 return Err(self.error_here("effect annotations require a function member"));
             }
             Ok(ExtendMember::Const(Binding {
@@ -1526,43 +1537,93 @@ impl Parser {
             .extend(outer_effect_parameters.iter().cloned());
         let mut compile_groups: Vec<Vec<CompileParam>> = Vec::new();
         let mut runtime_groups = Vec::new();
-        let mut saw_runtime_group = false;
+
+        while self.group_starts_with_compile_parameter() {
+            let params = self.compile_parameter_group()?;
+            self.effect_parameters_in_scope.extend(
+                params
+                    .iter()
+                    .filter(|parameter| parameter.kind.is_effect_classifier())
+                    .map(|parameter| parameter.name.clone()),
+            );
+            compile_groups.push(params);
+            self.take_newlines_if_followed_by(&[
+                TokenKind::LParen,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]);
+        }
 
         while self.at(&TokenKind::LParen) {
-            if saw_runtime_group && self.group_starts_with_compile_parameter() {
+            runtime_groups.push(
+                self.runtime_parameter_group(
+                    allow_receiver,
+                    &compile_groups
+                        .iter()
+                        .flatten()
+                        .map(|parameter| parameter.name.clone())
+                        .collect(),
+                    true,
+                )?,
+            );
+            self.take_newlines_if_followed_by(&[
+                TokenKind::LParen,
+                TokenKind::Ellipsis,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]);
+        }
+        if !runtime_groups.is_empty() {
+            return Ok((
+                compile_groups,
+                runtime_groups,
+                FunctionEffects::default(),
+                false,
+                false,
+            ));
+        }
+
+        let callable_boundary = self.at(&TokenKind::Colon)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "with"
+            );
+        if !callable_boundary {
+            return Ok((
+                compile_groups,
+                runtime_groups,
+                FunctionEffects::default(),
+                false,
+                false,
+            ));
+        }
+        self.expect(
+            &TokenKind::Colon,
+            "callable-type/body boundary `:` before runtime callable type",
+        )?;
+        self.take_newlines_if_followed_by(&[
+            TokenKind::LParen,
+            TokenKind::Ellipsis,
+            TokenKind::Ident("with".to_owned()),
+        ]);
+        let (effects, _failure_error, has_effect_clause) = self.function_effect_clause()?;
+        self.take_newlines_if_followed_by(&[TokenKind::LParen, TokenKind::Ellipsis]);
+        let modifier_parameters = compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        while self.at(&TokenKind::LParen) {
+            if self.group_starts_with_compile_parameter() {
                 return Err(self.error_here(
-                    "compile-time parameter groups must precede runtime parameter groups",
+                    "compile-time parameter groups must precede the callable-type/body boundary",
                 ));
             }
-            let group = if self.group_starts_with_compile_parameter() {
-                self.compile_parameter_group().map(HeaderGroup::Compile)?
-            } else {
-                let modifier_parameters = compile_groups
-                    .iter()
-                    .flatten()
-                    .map(|parameter| parameter.name.clone())
-                    .collect::<HashSet<_>>();
-                HeaderGroup::Runtime(self.runtime_parameter_group(
-                    allow_receiver,
-                    &modifier_parameters,
-                    true,
-                )?)
-            };
-            match group {
-                HeaderGroup::Compile(params) => {
-                    self.effect_parameters_in_scope.extend(
-                        params
-                            .iter()
-                            .filter(|parameter| parameter.kind.is_effect_classifier())
-                            .map(|parameter| parameter.name.clone()),
-                    );
-                    compile_groups.push(params);
-                }
-                HeaderGroup::Runtime(params) => {
-                    saw_runtime_group = true;
-                    runtime_groups.push(params);
-                }
-            }
+            runtime_groups.push(self.runtime_parameter_group(
+                allow_receiver,
+                &modifier_parameters,
+                true,
+            )?);
             self.take_newlines_if_followed_by(&[
                 TokenKind::LParen,
                 TokenKind::Ellipsis,
@@ -1632,7 +1693,13 @@ impl Parser {
             }
         }
 
-        Ok((compile_groups, runtime_groups))
+        Ok((
+            compile_groups,
+            runtime_groups,
+            effects,
+            true,
+            has_effect_clause,
+        ))
     }
 
     fn repeated_parameter_group_schema(&mut self) -> Result<Type, ParseError> {
@@ -2583,7 +2650,8 @@ impl Parser {
             return Err(self.error_at(&mutable, "trait members cannot be declared with `let mut`"));
         }
         let name = self.expect_ident("a trait member name")?;
-        let (compile_groups, groups) = self.declaration_groups(true, outer_effect_parameters)?;
+        let (compile_groups, groups, mut effects, has_callable_boundary, _has_effect_clause) =
+            self.declaration_groups(true, outer_effect_parameters)?;
         self.validate_receiver_groups(&name, &groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
@@ -2622,12 +2690,10 @@ impl Parser {
         } else {
             None
         };
-        let (effects, failure_error, _has_effect_group) = self.function_effect_clause()?;
-        if failure_error.is_some() && logical_result.is_none() {
-            return Err(self.error_here(
-                "`throwing(Error)` requires an explicit logical return type before `with(...)`",
-            ));
+        if !has_callable_boundary {
+            effects = self.function_effect_clause()?.0;
         }
+        let failure_error = effects.failure.as_deref().cloned();
         let return_type =
             logical_result.map(|result| Self::apply_failure_effect(result, failure_error));
         self.effect_parameters_in_scope.clear();
@@ -2703,6 +2769,9 @@ impl Parser {
 
         self.advance();
         self.expect(&TokenKind::LParen, "`(` after `with`")?;
+        if self.take(&TokenKind::RParen) {
+            return Ok((FunctionEffects::default(), None, true));
+        }
         let unsafety = false;
         let failure_error: Option<Type> = None;
         let mut effect_parameters = Vec::new();
@@ -2975,6 +3044,35 @@ impl Parser {
     }
 
     fn type_expr(&mut self) -> Result<Type, ParseError> {
+        if self.at_context_ident("with") {
+            let (outer, _failure_error, _has_effect_clause) = self.function_effect_clause()?;
+            self.expect(
+                &TokenKind::LParen,
+                "`(` before the callable operand of `with(...)`",
+            )?;
+            let operand = self.type_expr()?;
+            self.expect(
+                &TokenKind::RParen,
+                "`)` after the callable operand of `with(...)`",
+            )?;
+            let Type::Function {
+                groups,
+                effects: inner,
+                result,
+            } = operand
+            else {
+                return Err(self.error_here(
+                    "`with(E)(F)` accepts only a callable type `F`; it cannot wrap an ordinary result type",
+                ));
+            };
+            let effects = self.merge_function_effects(outer, inner)?;
+            return Ok(Type::Function {
+                groups,
+                effects,
+                result,
+            });
+        }
+
         if self.take(&TokenKind::LParen) {
             return self.function_type_or_unit();
         }
@@ -3325,13 +3423,39 @@ impl Parser {
             return Err(self.error_here("function types require `:` before the result type"));
         }
         let logical_result = self.function_result_type()?;
-        let (effects, failure_error, _has_effect_clause) = self.function_effect_clause()?;
+        let (effects, failure_error, _has_legacy_effect_clause) = self.function_effect_clause()?;
         let result = Self::apply_failure_effect(logical_result, failure_error);
         Ok(Type::Function {
             groups,
             effects,
             result: Box::new(result),
         })
+    }
+
+    fn merge_function_effects(
+        &self,
+        mut outer: FunctionEffects,
+        inner: FunctionEffects,
+    ) -> Result<FunctionEffects, ParseError> {
+        outer.unsafety |= inner.unsafety;
+        match (&outer.failure, inner.failure) {
+            (None, failure) => outer.failure = failure,
+            (Some(left), Some(right)) if **left != *right => {
+                return Err(self.error_here(
+                    "nested `with(...)` constructors declare incompatible failure effects",
+                ));
+            }
+            _ => {}
+        }
+        for effect in inner.custom {
+            if !outer.custom.contains(&effect) {
+                outer.custom.push(effect);
+            }
+        }
+        outer.parameters.extend(inner.parameters);
+        outer.parameters.sort();
+        outer.parameters.dedup();
+        Ok(outer)
     }
 
     fn expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {

@@ -17,10 +17,10 @@ extend(state, droppable) {
   }
 }
 
-let update(
+let update: with(step, unsafety)(
   state: borrow(mut)(state),
   calls: ptr(mut)(i32),
-): i32 with(step, unsafety) = {
+): i32 = {
   let delta = step.delta()
   unsafe { *calls = *calls + 1 }
   state.value = state.value + delta

@@ -22,26 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Effect callable syntax
-
-- [ ] **EFF-1 — Prefix effect-row callable syntax.** Define `with(E)(F)` as
-  the effect-row type constructor for callable type `F`, replacing postfix
-  callable spelling such as `(i32): i32 with(e)` with
-  `with(e)((i32): i32)`. After the function name and any compile-time
-  parameter groups, require a callable-type/body boundary `:` followed by the
-  effect constructor and runtime callable, as in
-  `let tagged(comptime e: effects): with(e)(value: i32): i32` and
-  `let read: with(io)(path: str): string`. The final colon remains the
-  callable result annotation. Require the effect generic to be declared
-  before use; apply one row to the complete multi-group call; make
-  `with()((A): B)` equivalent to the pure callable and formatter-elidable;
-  reject non-callable operands and result-position `with(e)(R)`. Diagnostics
-  must call the first colon the callable-type/body boundary rather than a
-  return-type colon. Migrate parser, diagnostics, formatter/token
-  preservation, core/alloc/std sources, fixtures, tests, grammar,
-  specification, and project docs under one edition migration policy without
-  leaving two long-term canonical syntaxes.
-
 ### Synchronous host I/O
 
 - [ ] **IO-1 — Explicit host I/O contract.** Define the `io` authority effect,

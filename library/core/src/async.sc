@@ -14,26 +14,19 @@ pub let poll(comptime t: type) = enum {
 pub let future(comptime e: effects) = trait(requires: self is movable) {
   let output: type
 
-  let poll(comptime r: region)
-    (self: borrow(mut)(r)(self))
-    (): poll(output) with(e)
+  let poll(comptime r: region): with(e)(self: borrow(mut)(r)(self))(): poll(output)
 }
 
 /// Explicit executor protocol. Creating a future never selects an executor.
 pub let executor = trait {
-  let run(comptime e: effects, comptime f: type, comptime t: type)
-    (self: borrow(mut)(self))
-    (move future: f): t with(e) = requires(f is future(e) && f.output == t)
+  let run(comptime e: effects, comptime f: type, comptime t: type): with(e)(self: borrow(mut)(self))(move future: f): t = requires(f is future(e) && f.output == t)
 }
 
 /// Constructs a cold compiler-generated future without running `action`.
-pub let async(comptime e: effects, comptime f: type, comptime t: type)
-  (move action: (): t with(core.async.suspension, e)): f = requires(f is future(e) && f.output == t) builtin()
+pub let async(comptime e: effects, comptime f: type, comptime t: type)(move action: with(core.async.suspension, e)((): t)): f = requires(f is future(e) && f.output == t) builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
-pub let await(comptime e: effects, comptime f: type, comptime t: type)
-  (move future: f): t with(core.async.suspension, e)
-= requires(f is future(e) && f.output == t) {
+pub let await(comptime e: effects, comptime f: type, comptime t: type): with(core.async.suspension, e)(move future: f): t = requires(f is future(e) && f.output == t) {
   let mut current = future
   loop {
     match current.poll()

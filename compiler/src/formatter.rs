@@ -454,8 +454,8 @@ mod tests {
 
     #[test]
     fn indents_parameter_groups_and_match_arms_as_continuations() {
-        let source = "let apply(comptime e: effects)\n(action: (i32): i32 with(e))\n(value: i32): i32 with(e) = { action(value) }\n\nlet main(): i32 = {\nmatch true\n{ true -> match false\n{ false -> apply()(42) }\n{ true -> 0 } }\n{ false -> 0 }\n}\n";
-        let expected = "let apply(comptime e: effects)\n  (action: (i32): i32 with(e))\n  (value: i32): i32 with(e) = { action(value) }\n\nlet main(): i32 = {\n  match true\n    { true -> match false\n      { false -> apply()(42) }\n      { true -> 0 } }\n    { false -> 0 }\n}\n";
+        let source = "let apply(comptime e: effects): with(e)\n(action: with(e)((i32): i32))\n(value: i32): i32 = { action(value) }\n\nlet main: (): i32 = {\nmatch true\n{ true -> match false\n{ false -> apply()(42) }\n{ true -> 0 } }\n{ false -> 0 }\n}\n";
+        let expected = "let apply(comptime e: effects): with(e)\n  (action: with(e)((i32): i32))\n  (value: i32): i32 = { action(value) }\n\nlet main: (): i32 = {\n  match true\n    { true -> match false\n      { false -> apply()(42) }\n      { true -> 0 } }\n    { false -> 0 }\n}\n";
         let formatted = format_source(source).expect("format continuations");
         assert_eq!(formatted, expected);
         assert_eq!(

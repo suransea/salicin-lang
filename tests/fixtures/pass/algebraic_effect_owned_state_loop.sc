@@ -6,7 +6,7 @@ let state = struct {
   value: i32,
 }
 
-let program(): i32 with(step) = {
+let program: with(step)(): i32 = {
   let mut state = state { value: 40 }
   let mut count = 0
   while { count < 2 } do {

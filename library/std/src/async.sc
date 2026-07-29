@@ -2,9 +2,7 @@
 pub let spin = struct {}
 
 extend(spin, core.async.executor) {
-  let run(comptime e: effects, comptime f: type, comptime t: type)
-    (self: borrow(mut)(self))
-    (move future: f): t with(e) = requires(f is core.async.future(e) && f.output == t) {
+  let run(comptime e: effects, comptime f: type, comptime t: type): with(e)(self: borrow(mut)(self))(move future: f): t = requires(f is core.async.future(e) && f.output == t) {
     let mut current = future
     loop {
       match current.poll()

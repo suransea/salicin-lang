@@ -18,7 +18,7 @@ extend(resource, droppable) {
   }
 }
 
-let request(): i32 with(ask) = {
+let request: with(ask)(): i32 = {
   ask.ask()
 }
 
@@ -26,9 +26,7 @@ let consume(move resource: resource): i32 = {
   resource.value
 }
 
-let poll_once(comptime e: effects, comptime f: type, comptime t: type)
-  (future: borrow(mut)(f)): poll(t) with(e)
-= requires(f is future(e) && f.output == t) {
+let poll_once(comptime e: effects, comptime f: type, comptime t: type): with(e)(future: borrow(mut)(f)): poll(t) = requires(f is future(e) && f.output == t) {
   future.poll()
 }
 

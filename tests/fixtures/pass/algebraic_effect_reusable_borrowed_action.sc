@@ -20,7 +20,7 @@ let run(
   left: borrow(i32),
   right: borrow(mut)(i32),
   abandon: bool,
-)(move action: (): i32 with(ask)): i32 = {
+)(move action: with(ask)((): i32)): i32 = {
   ask.handle value { (resume) ->
       if abandon { 40 } else { resume(2) }
     } action {

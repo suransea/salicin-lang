@@ -1,7 +1,7 @@
 let result = core.result
 let throwing = core.error.throwing
 
-let extract(move result: result(bool)(i32)): i32 with(throwing(bool)) = {
+let extract: with(throwing(bool))(move result: result(bool)(i32)): i32 = {
   result!
 }
 

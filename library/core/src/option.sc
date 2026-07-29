@@ -32,18 +32,14 @@ extend(option(t)) {
   }
 
   /// Transforms `some` once and preserves `none`.
-  let map(comptime e: effects, comptime u: type)
-    (move self)
-    (move transform: (t): u with(e)): option(u) with(e) = {
+  let map(comptime e: effects, comptime u: type): with(e)(move self)(move transform: with(e)((t): u)): option(u) = {
     match self
       { some(value) -> option.some(transform(value)) }
       { none -> option.none }
   }
 
   /// Runs `next` once for `some` and preserves `none`.
-  let and_then(comptime e: effects, comptime u: type)
-    (move self)
-    (move next: (t): option(u) with(e)): option(u) with(e) = {
+  let and_then(comptime e: effects, comptime u: type): with(e)(move self)(move next: with(e)((t): option(u))): option(u) = {
     match self
       { some(value) -> next(value) }
       { none -> option.none }
@@ -57,9 +53,7 @@ extend(option(t)) {
   }
 
   /// Extracts `some` or evaluates `fallback` exactly once for `none`.
-  let unwrap_or_else(comptime e: effects)
-    (move self)
-    (move fallback: (): t with(e)): t with(e) = {
+  let unwrap_or_else(comptime e: effects): with(e)(move self)(move fallback: with(e)((): t)): t = {
     match self
       { some(value) -> value }
       { none -> fallback() }
@@ -75,9 +69,7 @@ extend(option(t)) {
   }
 
   /// Converts `some` to `ok` and lazily constructs the error for `none`.
-  let ok_or_else(comptime e: effects, comptime error: type)
-    (move self)
-    (move error: (): error with(e)): core.result(error)(t) with(e) = {
+  let ok_or_else(comptime e: effects, comptime error: type): with(e)(move self)(move error: with(e)((): error)): core.result(error)(t) = {
     match self
       { some(value) -> core.result.ok(value) }
       { none -> core.result.err(error()) }
@@ -92,9 +84,7 @@ extend(option(t), core.flow.chain) {
   let rebind = option
 
   /// Applies `transform` to `Some` and propagates `None`.
-  let chain(comptime e: effects, comptime u: type)
-    (self)
-    (transform: (t): u with(e)): option(u) with(e) = {
+  let chain(comptime e: effects, comptime u: type): with(e)(self)(transform: with(e)((t): u)): option(u) = {
     match self
       { some(value) -> option.some(transform(value)) }
       { none -> option.none }
@@ -107,9 +97,7 @@ extend(option(t), core.flow.coalesce) {
   let item = t
 
   /// Extracts `Some` or evaluates `fallback` for `None`.
-  let coalesce(comptime e: effects)
-    (self)
-    (fallback: (): t with(e)): t with(e) = {
+  let coalesce(comptime e: effects): with(e)(self)(fallback: with(e)((): t)): t = {
     match self
       { some(value) -> value }
       { none -> fallback() }

@@ -24,12 +24,12 @@ let main(): i32 = {
       let left_resource = resource { counter: counter }
       let middle_resource = resource { counter: counter }
       let right_resource = resource { counter: counter }
-      let left: (): i32 with(abort) = { () -> abort.stop() + consume(left_resource) }
-      let middle: (): i32 with(abort) = { () -> abort.stop() + consume(middle_resource) }
-      let right: (): i32 with(abort) = { () -> abort.stop() + consume(right_resource) }
-      let first: (): i32 with(abort) = if true { left } else { middle }
-      let second: (): i32 with(abort) = if false { middle } else { right }
-      let combined: (): i32 with(abort) = if abort.choose() { first } else { second }
+      let left: with(abort)((): i32)  = { () -> abort.stop() + consume(left_resource) }
+      let middle: with(abort)((): i32)  = { () -> abort.stop() + consume(middle_resource) }
+      let right: with(abort)((): i32)  = { () -> abort.stop() + consume(right_resource) }
+      let first: with(abort)((): i32)  = if true { left } else { middle }
+      let second: with(abort)((): i32)  = if false { middle } else { right }
+      let combined: with(abort)((): i32)  = if abort.choose() { first } else { second }
       combined()
     }
   let drops = unsafe { *counter }

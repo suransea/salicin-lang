@@ -594,19 +594,19 @@ let string_is_char_boundary(value: borrow(string), index: u64): bool = {
 }
 
 /// Rebuilds unique string ownership from validated initialized byte storage.
-pub let string_from_raw_parts(
+pub let string_from_raw_parts: with(core.unsafe.unsafety)(
   data: ptr(mut)(u8),
   length: u64,
   capacity: u64,
-): string with(core.unsafe.unsafety) = {
+): string = {
   string { data: data, length: length, storage_capacity: capacity }
 }
 
 /// Consumes a string into its representation. Capacity zero means borrowed
 /// static storage and must be copied before constructing an owned byte vector.
-pub let string_into_raw_parts(
+pub let string_into_raw_parts: with(core.unsafe.unsafety)(
   move value: string,
-): (ptr(mut)(u8), u64, u64) with(core.unsafe.unsafety) = {
+): (ptr(mut)(u8), u64, u64) = {
   let parts = (value.data, value.length, value.storage_capacity)
   forget(value)
   parts

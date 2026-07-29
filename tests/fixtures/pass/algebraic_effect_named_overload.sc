@@ -3,7 +3,7 @@ let ask = effect {
   let value(right: i32): i32
 }
 
-let choose(): i32 with(ask) = {
+let choose: with(ask)(): i32 = {
   ask.value(left: 19) + ask.value(right: 23)
 }
 

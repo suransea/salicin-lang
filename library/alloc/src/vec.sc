@@ -386,38 +386,27 @@ extend(vec(t)) {
     }
   }
   /// Borrows the first element accepted by `predicate`.
-  let find(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): option(borrow(t)) with(e) = {
+  let find(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): option(borrow(t)) = {
     let values = self.as_slice()
     values.find(predicate)
   }
   /// Returns the index of the first element accepted by `predicate`.
-  let position(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): option(u64) with(e) = {
+  let position(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): option(u64) = {
     let values = self.as_slice()
     values.position(predicate)
   }
   /// Returns whether any element is accepted by `predicate`.
-  let any(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let any(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let values = self.as_slice()
     values.any(predicate)
   }
   /// Returns whether every element is accepted by `predicate`.
-  let all(comptime e: effects)
-    (self: borrow(self))
-    (move predicate: (borrow(t)): bool with(e)): bool with(e) = {
+  let all(comptime e: effects): with(e)(self: borrow(self))(move predicate: with(e)((borrow(t)): bool)): bool = {
     let values = self.as_slice()
     values.all(predicate)
   }
   /// Folds elements from left to right into `initial`.
-  let fold(comptime e: effects, comptime accumulator: type)
-    (self: borrow(self))
-    (move initial: accumulator)
-    (move combine: (accumulator, borrow(t)): accumulator with(e)): accumulator with(e) = {
+  let fold(comptime e: effects, comptime accumulator: type): with(e)(self: borrow(self))(move initial: accumulator)(move combine: with(e)((accumulator, borrow(t)): accumulator)): accumulator = {
     let values = self.as_slice()
     values.fold(initial)(combine)
   }
@@ -579,8 +568,7 @@ extend(vec(t), droppable) {
 
 /// Rebuilds vector ownership from initialized storage supplied by another
 /// adapter in this package.
-pub(package) let vec_from_raw_parts(comptime t: type)
-  (pointer: ptr(mut)(t), length: u64, capacity: u64): vec(t) with(core.unsafe.unsafety) = {
+pub(package) let vec_from_raw_parts(comptime t: type): with(core.unsafe.unsafety)(pointer: ptr(mut)(t), length: u64, capacity: u64): vec(t) = {
   vec(t) { pointer: pointer, length: length, storage_capacity: capacity }
 }
 

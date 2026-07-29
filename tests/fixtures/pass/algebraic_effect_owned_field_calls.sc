@@ -19,12 +19,12 @@ extend(state, droppable) {
   }
 }
 
-let update(value: borrow(mut)(i32)): () with(step) = {
+let update: with(step)(value: borrow(mut)(i32)): () = {
   let delta = step.delta()
   value = value + delta
 }
 
-let program(drops: ptr(mut)(i32)): i32 with(step) = {
+let program: with(step)(drops: ptr(mut)(i32)): i32 = {
   let mut state = state { counter: counter { value: 40 }, drops: drops }
   update(state.counter.value)
   update(state.counter.value)

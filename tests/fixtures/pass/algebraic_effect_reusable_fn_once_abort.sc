@@ -14,7 +14,7 @@ extend(resource, droppable) {
 
 let consume(move resource: resource): i32 = { 0 }
 
-let run(move action: (): i32 with(abort)): i32 = {
+let run(move action: with(abort)((): i32)): i32 = {
   abort.handle stop { (resume) -> 41 } action {
       action()
     }
@@ -22,7 +22,7 @@ let run(move action: (): i32 with(abort)): i32 = {
 
 let execute(counter: ptr(mut)(i32)): i32 = {
   let resource = resource { counter: counter }
-  let action: (): i32 with(abort) = { () ->
+  let action: with(abort)((): i32)  = { () ->
     abort.stop() + consume(resource)
   }
   let alias = action

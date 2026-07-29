@@ -23,42 +23,36 @@ pub let attempt(comptime input: type)(comptime output: type) = enum {
   miss(input),
 }
 
-pub let break(comptime t: type)
-  (move value: t): never with(loop_exit(t)) = {
+pub let break(comptime t: type): with(loop_exit(t))(move value: t): never = {
   loop_exit(t).exit(value)
 }
 
-pub let break(): never with(loop_exit(())) = {
+pub let break: with(loop_exit(()))(): never = {
   loop_exit(()).exit(())
 }
 
-pub let continue(): never with(iteration_skip) = {
+pub let continue: with(iteration_skip)(): never = {
   iteration_skip.next()
 }
 
-pub let return(comptime t: type)
-  (move value: t): never with(function_exit(t)) = {
+pub let return(comptime t: type): with(function_exit(t))(move value: t): never = {
   function_exit(t).exit(value)
 }
 
-pub let return(): never with(function_exit(())) = {
+pub let return: with(function_exit(()))(): never = {
   function_exit(()).exit(())
 }
 
 /// Runs `action` and preserves its effect row.
-pub let do(comptime e: effects, comptime t: type)
-  (move action: (): t with(e)): t with(e) = {
+pub let do(comptime e: effects, comptime t: type): with(e)(move action: with(e)((): t)): t = {
   action()
 }
 
 /// Registers `action` to run when the current lexical scope exits.
-pub let defer(comptime e: effects)
-  (move action: (): () with(e)): () with(e) = builtin()
+pub let defer(comptime e: effects): with(e)(move action: with(e)((): ())): () = builtin()
 
 /// Runs `action` once, then repeats it while the lazy condition remains true.
-pub let do(comptime e: effects)
-  (move action: (): () with(core.control.loop_exit(()), core.control.iteration_skip, e))
-  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = {
+pub let do(comptime e: effects): with(e)(move action: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): ()))(move while: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): bool)): () = {
   loop {
     core.control.iteration_skip.handle
       next { () }
@@ -74,13 +68,10 @@ pub let do(comptime e: effects)
 }
 
 /// Repeats `body` indefinitely until control exits through another construct.
-pub let loop(comptime e: effects, comptime t: type)
-  (move body: (): () with(core.control.loop_exit(t), core.control.iteration_skip, e)): t with(e) = builtin()
+pub let loop(comptime e: effects, comptime t: type): with(e)(move body: with(core.control.loop_exit(t), core.control.iteration_skip, e)((): ())): t = builtin()
 
 /// Repeats `body` while the lazy condition remains true.
-pub let while(comptime e: effects)
-  (move condition: (): bool with(e))
-  (move do: (): () with(e)): () with(e) = {
+pub let while(comptime e: effects): with(e)(move condition: with(e)((): bool))(move do: with(e)((): ())): () = {
   loop {
     if condition() {
       do()
@@ -91,10 +82,7 @@ pub let while(comptime e: effects)
 }
 
 /// Selects one of two lazy branches from an eager boolean condition.
-pub let if(comptime e: effects, comptime t: type)
-  (condition: bool)
-  (move then: (): t with(e))
-  (move else: (): t with(e)): t with(e) = {
+pub let if(comptime e: effects, comptime t: type): with(e)(condition: bool)(move then: with(e)((): t))(move else: with(e)((): t)): t = {
   match condition
     { true -> then() }
     { false -> else() }
@@ -106,18 +94,16 @@ pub let match(
   comptime output: type,
   comptime e: effects,
   comptime ...cases: parameters,
-)
+): with(e)
   (move input: input)
-  ...cases: output with(e) = builtin()
+  ...cases: output = builtin()
 
 /// Iterates through `iterable`, passing each item to the lazy body.
-pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
-  (move iterable: iterable)
-  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = requires(
-  iterable is core.iter.into_iterator &&
-  iterable.iter == iter &&
-  iter is core.iter.iterator &&
-  iter.item == item
+pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type): with(e)(move iterable: iterable)(move body: with(core.control.loop_exit(()), core.control.iteration_skip, e)((item): ())): () = requires(
+    iterable is core.iter.into_iterator &&
+    iterable.iter == iter &&
+    iter is core.iter.iterator &&
+    iter.item == item
 ) {
   let mut iterator = iterable.into_iter()
   loop {

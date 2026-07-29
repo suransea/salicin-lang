@@ -2,7 +2,7 @@ let read = effect {
   let read(value: i32): i32
 }
 
-let once(value: i32): i32 with(read) = {
+let once: with(read)(value: i32): i32 = {
   read.read(value)
 }
 

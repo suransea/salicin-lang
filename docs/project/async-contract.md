@@ -37,14 +37,14 @@ pub let poll(comptime t: type) = enum {
 
 pub let future(comptime e: effects) = trait(requires: self is movable) {
   let output: type
-  let poll(comptime r: region)
-    (self: borrow(mut)(r)(self))(): poll(output) with(e)
+  let poll(comptime r: region): with(e)
+    (self: borrow(mut)(r)(self))(): poll(output)
 }
 
 pub let executor = trait {
-  let run(comptime e: effects, comptime f: type)
+  let run(comptime e: effects, comptime f: type): with(e)
     (self: borrow(mut)(self))
-    (move future: f): f.output with(e) =
+    (move future: f): f.output =
     requires(f is future(e))
 }
 ```

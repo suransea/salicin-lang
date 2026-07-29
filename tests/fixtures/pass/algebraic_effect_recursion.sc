@@ -2,7 +2,7 @@ let read = effect {
   let read(): i32
 }
 
-let sum_reads(count: i32): i32 with(read) = {
+let sum_reads: with(read)(count: i32): i32 = {
   if count == 0 {
     return(0)
   }

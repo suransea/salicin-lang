@@ -3,15 +3,15 @@ let ask = effect {
   let stop(): i32
 }
 
-let run(action: (i32): i32 with(ask))(input: i32): i32 = {
+let run(action: with(ask)((i32): i32))(input: i32): i32 = {
   ask.handle value { (resume) -> resume(10) } stop { (resume) -> 40 } action {
       action(input)
     }
 }
 
-let left(input: i32): i32 with(ask) = { ask.value() + input }
-let right(input: i32): i32 with(ask) = { ask.value() * 2 + input }
-let abort(input: i32): i32 with(ask) = { ask.stop() + input }
+let left: with(ask)(input: i32): i32 = { ask.value() + input }
+let right: with(ask)(input: i32): i32 = { ask.value() * 2 + input }
+let abort: with(ask)(input: i32): i32 = { ask.stop() + input }
 let select(order: borrow(mut)(i32)): bool = {
   order = order * 10 + 1
   false

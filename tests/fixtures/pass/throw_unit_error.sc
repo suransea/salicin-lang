@@ -1,7 +1,7 @@
 let result = core.result
 let throwing = core.error.throwing
 
-let fail(): i32 with(throwing(())) = {
+let fail: with(throwing(()))(): i32 = {
   throw(())
 }
 

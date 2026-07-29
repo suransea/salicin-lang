@@ -33,12 +33,12 @@ extend(step, future(())) {
   }
 }
 
-let make_second(
+let make_second: with(throwing(bool))(
   drops: ptr(mut)(i32),
   calls: ptr(mut)(i32),
   first: i32,
   fail: bool,
-): step with(throwing(bool)) = {
+): step = {
   unsafe {
     *calls = *calls + 1
   }

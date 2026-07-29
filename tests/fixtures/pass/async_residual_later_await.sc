@@ -35,11 +35,11 @@ extend(step, future(())) {
   }
 }
 
-let make_second(
+let make_second: with(ask)(
   drops: ptr(mut)(i32),
   calls: ptr(mut)(i32),
   first: i32,
-): step with(ask) = {
+): step = {
   unsafe {
     *calls = *calls + 1
   }

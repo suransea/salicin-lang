@@ -33,11 +33,11 @@ let increment(calls: ptr(mut)(i32)): i32 = {
   }
 }
 
-let make_step(
+let make_step: with(throwing(bool))(
   drops: ptr(mut)(i32),
   calls: ptr(mut)(i32),
   fail_at: i32,
-): step with(throwing(bool)) = {
+): step = {
   let call = increment(calls)
   if call == fail_at {
     throw true

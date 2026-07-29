@@ -4,7 +4,7 @@ let step = effect {
 
 let pair = struct { left: i32, right: i32 }
 
-let update(pair: borrow(mut)(pair), left: borrow(mut)(i32)): () with(step) = {
+let update: with(step)(pair: borrow(mut)(pair), left: borrow(mut)(i32)): () = {
   step.tick()
   pair.right = pair.right + 1
   left = left + 1

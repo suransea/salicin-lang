@@ -11,7 +11,8 @@ pub let handle = trait(comptime self: effect) {
   /// Clause parameter schema synthesized from the operations of `Self`.
   let clauses(comptime value: type, comptime answer: type): parameters
   /// Handles `Self` around `action`, leaving `Rest` as the residual effect row.
-  let handle(comptime value: type, comptime answer: type, comptime rest: effects)
+  let handle(comptime value: type, comptime answer: type, comptime rest: effects):
+  with(rest)
     ...clauses(value, answer)
-    (move action: (): value with(self, rest)): answer with(rest)
+    (move action: with(self, rest)((): value)): answer
 }

@@ -3,8 +3,8 @@ let state(comptime s: type) = effect {
   let put(move value: s): ()
 }
 
-let read(): i32 with(state(i32)) = { state(i32).get() }
-let write(value: i32): () with(state(i32)) = { state(i32).put(value) }
+let read: with(state(i32))(): i32 = { state(i32).get() }
+let write: with(state(i32))(value: i32): () = { state(i32).put(value) }
 
 let main(): i32 = { 42 }
 

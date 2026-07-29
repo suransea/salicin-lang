@@ -36,7 +36,7 @@ extend(step, future(())) {
   }
 }
 
-let make_step(fail: bool): step with(throwing(bool)) = {
+let make_step: with(throwing(bool))(fail: bool): step = {
   if fail {
     throw true
   } else {

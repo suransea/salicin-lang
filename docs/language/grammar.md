@@ -72,13 +72,19 @@ metadata and body contracts; the string is compile-time runner metadata.
 
 ```ebnf
 let_decl = "let", [ contextual("mut") ], IDENT,
-           { declaration_group },
-           [ ":", declaration_annotation ],
-           [ with_clause ],
+           { compile_parameter_group },
+           ( effect_callable_declaration
+           | { runtime_parameter_group },
+             [ "...", type_expr ],
+             [ ":", declaration_annotation ] ),
            [ where_clause ],
            [ "=", initializer ] ;
 
-declaration_group = compile_parameter_group | runtime_parameter_group ;
+effect_callable_declaration =
+    ":", with_clause,
+    runtime_parameter_group, { runtime_parameter_group },
+    [ "...", type_expr ],
+    [ ":", type_expr ] ;
 
 declaration_annotation =
     type_expr
@@ -194,9 +200,10 @@ effect_decl =
     { effect_operation, separators }, "}" ;
 
 effect_operation =
-    "let", IDENT, runtime_parameter_group,
-    { runtime_parameter_group },
-    ":", type_expr, [ with_clause ] ;
+    "let", IDENT,
+    ( ":", with_clause, runtime_parameter_group, { runtime_parameter_group }
+    | runtime_parameter_group, { runtime_parameter_group } ),
+    ":", type_expr ;
 
 struct_decl =
     "struct", [ struct_options ], "{", separators,
@@ -234,9 +241,10 @@ self_parameter = contextual("self"), ":", compile_parameter_sort ;
 
 trait_member =
     "let", IDENT,
-    { declaration_group },
-    ":", ( type_expr | contextual("type") | contextual("parameters") ),
-    [ with_clause ],
+    { compile_parameter_group },
+    ( effect_callable_declaration
+    | { runtime_parameter_group },
+      ":", ( type_expr | contextual("type") | contextual("parameters") ) ),
     [ "=", [ constraint_guard ], expression ] ;
 ```
 
@@ -258,9 +266,9 @@ extend_decl =
 
 extend_member =
     "let", IDENT,
-    { declaration_group },
-    [ ":", type_expr ],
-    [ with_clause ],
+    { compile_parameter_group },
+    ( effect_callable_declaration
+    | { runtime_parameter_group }, [ ":", type_expr ] ),
     [ "=", [ constraint_guard ], expression ] ;
 
 constraint_guard =
@@ -355,13 +363,15 @@ The root `core` module also contains the public overloads
 ## 3. Types
 
 ```ebnf
-type_expr = function_type | postfix_type ;
+type_expr = effect_callable_type | function_type | postfix_type ;
+
+effect_callable_type =
+    with_clause, "(", function_type, ")" ;
 
 function_type =
     function_type_group,
     { function_type_group },
-    ":", type_expr,
-    [ with_clause ] ;
+    ":", type_expr ;
 
 function_type_group =
     "(", [ function_type_parameter,
@@ -405,7 +415,7 @@ type_argument = [ IDENT, ":" ], type_expr ;
 
 with_clause =
     contextual("with"), "(",
-    effect_ref, { ",", effect_ref }, [ "," ],
+    [ effect_ref, { ",", effect_ref }, [ "," ] ],
     ")" ;
 
 effect_ref = path, [ type_argument_group ] ;
@@ -416,6 +426,13 @@ argument group in the AST. The `array_type` production applies when `path` resol
 edition's validated `array` type form; other constructor arguments remain type expressions.
 `static_usize_expression` admits literals, static names, checked operators, and calls to eligible
 ordinary pure functions.
+
+`with(E)(F)` accepts only a callable `F` and applies one normalized effect row
+to the complete multi-group call. `with()((a): b)` is equivalent to the pure
+callable `(a): b`. An effectful declaration uses a `:` callable-type/body
+boundary before `with(E)`; the final `:` introduces the callable result.
+Pure declarations retain the compact `let f(a): b` form and do not require
+that boundary.
 
 ## 4. Expressions
 

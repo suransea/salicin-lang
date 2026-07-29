@@ -2,12 +2,12 @@ let tick = effect {
   let tick(): bool
 }
 
-let even(count: i32): bool with(tick) = {
+let even: with(tick)(count: i32): bool = {
   if count == 0 { return(true) }
   if tick.tick() { odd(count - 1) } else { false }
 }
 
-let odd(count: i32): bool with(tick) = {
+let odd: with(tick)(count: i32): bool = {
   if count == 0 { return(false) }
   if tick.tick() { even(count - 1) } else { true }
 }

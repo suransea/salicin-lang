@@ -36,7 +36,7 @@ extend(step, future(())) {
   }
 }
 
-let choose(fail: bool): i32 with(throwing(bool)) = {
+let choose: with(throwing(bool))(fail: bool): i32 = {
   if fail {
     throw true
   } else {
@@ -44,7 +44,7 @@ let choose(fail: bool): i32 with(throwing(bool)) = {
   }
 }
 
-let make_step(move resource: resource, fail: bool): step with(throwing(bool)) = {
+let make_step: with(throwing(bool))(move resource: resource, fail: bool): step = {
   step { polls: 0, value: choose(fail), resource: resource }
 }
 

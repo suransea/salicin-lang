@@ -175,17 +175,17 @@ pub let chain = trait {
   let item: type
   let rebind(comptime value: type): type
 
-  let chain(comptime e: effects, comptime u: type)
+  let chain(comptime e: effects, comptime u: type): with(e)
     (self)
-    (transform: (item): u with(e)): rebind(u) with(e)
+    (transform: with(e)((item): u)): rebind(u)
 }
 
 pub let coalesce = trait {
   let item: type
 
-  let coalesce(comptime e: effects)
+  let coalesce(comptime e: effects): with(e)
     (self)
-    (fallback: (): item with(e)): item with(e)
+    (fallback: with(e)((): item)): item
 }
 ```
 
@@ -316,9 +316,9 @@ pub let continuation(comptime input: type, comptime output: type): type
 pub let effect_callable(comptime input: type, comptime output: type, comptime answer: type): type
 pub let handle = trait(comptime self: effect) {
   let clauses(comptime value: type, comptime answer: type): parameters
-  let handle(comptime value: type, comptime answer: type, comptime rest: effects)
+  let handle(comptime value: type, comptime answer: type, comptime rest: effects): with(rest)
     ...clauses(value, answer)
-    (move action: (): value with(self, rest)): answer with(rest)
+    (move action: with(self, rest)((): value)): answer
 }
 ```
 
@@ -375,11 +375,11 @@ output agrees. Each branch retains its own linear locals across suspension; a br
 is an immediate ready future. Loop suspension remains compiler work.
 
 ```sc fragment
-pub let do(comptime e: effects, comptime t: type)
-  (move action: (): t with(e)): t with(e)
-pub let do(comptime e: effects)
-  (move action: (): () with(core.control.loop_exit(()), core.control.iteration_skip, e))
-  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) = {
+pub let do(comptime e: effects, comptime t: type): with(e)
+  (move action: with(e)((): t)): t
+pub let do(comptime e: effects): with(e)
+  (move action: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): ()))
+  (move while: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): bool)): () = {
   loop {
     core.control.iteration_skip.handle
       next { () }
@@ -387,31 +387,31 @@ pub let do(comptime e: effects)
     if while() { continue() } else { break() }
   }
 }
-pub let try(comptime f: effects, comptime t: type, comptime e: type)
-  (move action: (): t with(core.error.throwing(e), f)): core.result(e)(t) with(f)
-pub let throw(comptime error: type)
-  (move error: error): never with(core.error.throwing(error))
-pub let unsafe(comptime e: effects, comptime t: type)
-  (move action: (): t with(core.unsafe.unsafety, e)): t with(e)
-pub let loop(comptime e: effects, comptime t: type)
-  (move body: (): () with(core.control.loop_exit(t), core.control.iteration_skip, e)): t with(e)
-pub let while(comptime e: effects)
-  (move condition: (): bool with(e))
-  (move do: (): () with(e)): () with(e)
-pub let if(comptime e: effects, comptime t: type)
+pub let try(comptime f: effects, comptime t: type, comptime e: type): with(f)
+  (move action: with(core.error.throwing(e), f)((): t)): core.result(e)(t)
+pub let throw(comptime error: type): with(core.error.throwing(error))
+  (move error: error): never
+pub let unsafe(comptime e: effects, comptime t: type): with(e)
+  (move action: with(core.unsafe.unsafety, e)((): t)): t
+pub let loop(comptime e: effects, comptime t: type): with(e)
+  (move body: with(core.control.loop_exit(t), core.control.iteration_skip, e)((): ())): t
+pub let while(comptime e: effects): with(e)
+  (move condition: with(e)((): bool))
+  (move do: with(e)((): ())): ()
+pub let if(comptime e: effects, comptime t: type): with(e)
   (condition: bool)
-  (move then: (): t with(e))
-  (move else: (): t with(e)): t with(e) = {
+  (move then: with(e)((): t))
+  (move else: with(e)((): t)): t = {
   match condition
     { true -> then() }
     { false -> else() }
 }
-pub let match(comptime input: type, comptime output: type, comptime e: effects, comptime ...cases: parameters)
+pub let match(comptime input: type, comptime output: type, comptime e: effects, comptime ...cases: parameters): with(e)
   (move input: input)
-  ...cases: output with(e)
-pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type)
+  ...cases: output
+pub let for(comptime e: effects, comptime iterable: type, comptime iter: type, comptime item: type): with(e)
   (move iterable: iterable)
-  (move body: (item): () with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e) =
+  (move body: with(core.control.loop_exit(()), core.control.iteration_skip, e)((item): ())): () =
 requires(
   iterable is core.iter.into_iterator &&
   iterable.iter == iter &&
@@ -427,20 +427,20 @@ only the selected lazy branch or case. The source definitions that do not requir
 lowering remain intentionally simple:
 
 ```sc fragment
-pub let do(comptime e: effects, comptime t: type)
-  (move action: (): t with(e)): t with(e) = {
+pub let do(comptime e: effects, comptime t: type): with(e)
+  (move action: with(e)((): t)): t = {
   action()
 }
 
-pub let try(comptime f: effects, comptime t: type, comptime e: type)
-  (move action: (): t with(core.error.throwing(e), f)): core.result(e)(t) with(f) = {
+pub let try(comptime f: effects, comptime t: type, comptime e: type): with(f)
+  (move action: with(core.error.throwing(e), f)((): t)): core.result(e)(t) = {
   core.error.throwing(e).handle raise { (error) -> core.result.err(error) } done { (value) -> core.result.ok(value) } action {
     action()
   }
 }
 
-pub let throw(comptime error: type)
-  (move error: error): never with(core.error.throwing(error)) = {
+pub let throw(comptime error: type): with(core.error.throwing(error))
+  (move error: error): never = {
   core.error.throwing(error).raise(error)
 }
 ```
@@ -513,24 +513,24 @@ part of the prelude:
 
 ```sc fragment
 pub let functor = trait(self: (comptime value: type): type) {
-  let map(comptime e: effects, comptime a: type, comptime b: type)
+  let map(comptime e: effects, comptime a: type, comptime b: type): with(e)
     (self: self(a))
-    (transform: (a): b with(e)): self(b) with(e)
+    (transform: with(e)((a): b)): self(b)
 }
 
 pub let applicative = trait(self: (comptime value: type): type)(requires: self is functor) {
   let pure(comptime a: type)
     (value: a): self(a)
 
-  let apply(comptime e: effects, comptime a: type, comptime b: type)
-    (self: self((a): b with(e)))
-    (value: self(a)): self(b) with(e)
+  let apply(comptime e: effects, comptime a: type, comptime b: type): with(e)
+    (self: self(with(e)((a): b)))
+    (value: self(a)): self(b)
 }
 
 pub let monad = trait(self: (comptime value: type): type)(requires: self is applicative) {
-  let flat_map(comptime e: effects, comptime a: type, comptime b: type)
+  let flat_map(comptime e: effects, comptime a: type, comptime b: type): with(e)
     (self: self(a))
-    (next: (a): self(b) with(e)): self(b) with(e)
+    (next: with(e)((a): self(b))): self(b)
 }
 ```
 

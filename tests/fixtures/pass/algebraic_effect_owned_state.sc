@@ -21,7 +21,7 @@ extend(state) {
   }
 }
 
-let program(drops: ptr(mut)(i32)): i32 with(step) = {
+let program: with(step)(drops: ptr(mut)(i32)): i32 = {
   let mut state = state { value: 40, drops: drops }
   state.add(1)
   let delta = step.delta()

@@ -2,12 +2,12 @@ let step = effect {
   let delta(): i32
 }
 
-let update(value: borrow(mut)(i32)): () with(step) = {
+let update: with(step)(value: borrow(mut)(i32)): () = {
   let delta = step.delta()
   value = value + delta
 }
 
-let program(index: usize): i32 with(step) = {
+let program: with(step)(index: usize): i32 = {
   let mut values = [40]
   update(values[index])
   values[0]

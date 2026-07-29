@@ -1,11 +1,11 @@
 let unsafety = core.unsafe.unsafety
 
-let dangerous(): i32 with(unsafety) = {
+let dangerous: with(unsafety)(): i32 = {
   42
 }
 
 let main(): i32 = {
-  let choose: (bool): core.control.attempt(bool)(i32) with(unsafety) = {
+  let choose: with(unsafety)((bool): core.control.attempt(bool)(i32))  = {
     true -> dangerous()
   }
   let attempted = unsafe {

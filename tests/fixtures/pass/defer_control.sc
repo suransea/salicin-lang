@@ -1,19 +1,19 @@
 let unsafety = core.unsafe.unsafety
 let defer = core.control.defer
 
-let allocate(): ptr(mut)(i32) with(unsafety) = {
+let allocate: with(unsafety)(): ptr(mut)(i32) = {
   unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
 }
 
-let release(counter: ptr(mut)(i32)): () with(unsafety) = {
+let release: with(unsafety)(counter: ptr(mut)(i32)): () = {
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
 }
 
-let set(counter: ptr(mut)(i32))(expected: i32, next: i32): () with(unsafety) = {
+let set: with(unsafety)(counter: ptr(mut)(i32))(expected: i32, next: i32): () = {
   unsafe {
     if *counter == expected {
       *counter = next
@@ -23,13 +23,13 @@ let set(counter: ptr(mut)(i32))(expected: i32, next: i32): () with(unsafety) = {
   }
 }
 
-let increment(counter: ptr(mut)(i32)): () with(unsafety) = {
+let increment: with(unsafety)(counter: ptr(mut)(i32)): () = {
   unsafe {
     *counter = *counter + 1
   }
 }
 
-let return_with_defer(counter: ptr(mut)(i32)): i32 with(unsafety) = {
+let return_with_defer: with(unsafety)(counter: ptr(mut)(i32)): i32 = {
   defer {
       unsafe {
         increment(counter)

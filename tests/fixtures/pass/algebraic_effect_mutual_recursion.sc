@@ -2,12 +2,12 @@ let tick = effect {
   let tick(): i32
 }
 
-let even(count: i32): i32 with(tick) = {
+let even: with(tick)(count: i32): i32 = {
   if count == 0 { return(0) }
   tick.tick() + odd(count - 1)
 }
 
-let odd(count: i32): i32 with(tick) = {
+let odd: with(tick)(count: i32): i32 = {
   if count == 0 { return(0) }
   tick.tick() + even(count - 1)
 }

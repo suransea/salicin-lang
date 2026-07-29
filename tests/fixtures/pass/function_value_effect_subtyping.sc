@@ -2,7 +2,7 @@ let unsafety = core.unsafe.unsafety
 
 let pure(): i32 = { 42 }
 
-let invoke(action: (): i32 with(unsafety))(): i32 with(unsafety) = { action() }
+let invoke: with(unsafety)(action: with(unsafety)((): i32))(): i32 = { action() }
 
 let main(): i32 = {
   unsafe { invoke(pure)() }

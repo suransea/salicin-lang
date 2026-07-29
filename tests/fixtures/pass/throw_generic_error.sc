@@ -1,7 +1,7 @@
 let result = core.result
 let throwing = core.error.throwing
 
-let fail(comptime e: type)(move error: e): i32 with(throwing(e)) = {
+let fail(comptime e: type): with(throwing(e))(move error: e): i32 = {
   throw(error)
 }
 

@@ -28,7 +28,7 @@ let repeat(move action: (): ()): () = {
   action()
 }
 
-let effect_once(comptime e: effects)(move action: (): i32 with(e)): i32 with(e) = {
+let effect_once(comptime e: effects): with(e)(move action: with(e)((): i32)): i32 = {
   action()
 }
 

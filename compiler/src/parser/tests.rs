@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn parses_prefix_effect_callable_declarations_and_types() {
+    let program = parse(
+        "let apply(comptime e: effects): with(e)\n\
+           (action: with(e)((i32): i32))\n\
+           (value: i32): i32 = { action(value) }\n\
+         let pure(value: i32): i32 = { value }\n",
+    )
+    .expect("prefix effect callable syntax must parse");
+    let Item::Function(apply) = &program.items[0] else {
+        panic!("expected apply function");
+    };
+    assert_eq!(apply.effects.parameters, ["e"]);
+    let Type::Function { effects, .. } = &apply.groups[0][0].ty else {
+        panic!("expected callable action parameter");
+    };
+    assert_eq!(effects.parameters, ["e"]);
+    let Item::Function(pure) = &program.items[1] else {
+        panic!("expected pure function");
+    };
+    assert_eq!(pure.effects, FunctionEffects::default());
+}
+
+#[test]
+fn prefix_with_requires_a_callable_operand_and_accepts_an_empty_row() {
+    let program = parse("let use(action: with()((i32): i32)): i32 = { action(1) }\n")
+        .expect("an empty effect row is a pure callable");
+    let Item::Function(function) = &program.items[0] else {
+        panic!("expected function");
+    };
+    let Type::Function { effects, .. } = &function.groups[0][0].ty else {
+        panic!("expected callable parameter");
+    };
+    assert_eq!(effects, &FunctionEffects::default());
+
+    let error = parse("let value: with(io)(i32) = 1\n")
+        .expect_err("with must reject a non-callable operand");
+    assert!(
+        error.message.contains("accepts only a callable type")
+            || error.message.contains("parameter name"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn parses_contextual_test_declarations_as_private_bool_functions() {
     let program = parse("test(\"arithmetic works\") {\n  20 + 22 == 42\n}\n").unwrap();
     let [Item::Function(test)] = program.items.as_slice() else {
@@ -901,7 +946,7 @@ fn rejects_mixed_or_misordered_compile_parameter_groups() {
     let cases = [
         (
             "let bad(value: i32)(comptime t: type): i32 = { value }\n",
-            "must precede runtime",
+            "cannot be mixed",
         ),
         (
             "let bad(comptime t: type, value: t): t = { value }\n",
@@ -2222,7 +2267,7 @@ fn parses_trait_self_effect_parameter_in_member_rows() {
     let program = parse(
             "let handle = trait(comptime self: effect) {\n\
                let clauses(comptime value: type, comptime answer: type): parameters\n\
-               let handle(comptime value: type, comptime answer: type, comptime rest: effects) ...clauses(value, answer) (move action: (): value with(self, rest)): answer with(rest)\n\
+               let handle(comptime value: type, comptime answer: type, comptime rest: effects): with(rest) ...clauses(value, answer) (move action: with(self, rest)((): value)): answer\n\
              }\n",
         )
         .unwrap();
@@ -2382,9 +2427,9 @@ fn parses_variadic_match_control_contract() {
                comptime output: type,\n\
                comptime e: effects,\n\
                comptime ...cases: parameters,\n\
-             )\n\
+             ): with(e)\n\
                (move input: input)\n\
-               ...cases: output with(e)\n",
+               ...cases: output\n",
     )
     .unwrap();
     let Item::Function(function) = &program.items[0] else {

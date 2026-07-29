@@ -112,6 +112,27 @@ This direction is checked against Koka's row-polymorphic effect model:
 
 - [Programming with Row-polymorphic Effect Types](https://koka-lang.github.io/koka/doc/book.html)
 
+### Effect Rows Construct Callable Types
+
+Reviewed on 2026-07-30. Salicin spells an effectful callable
+`with(E)(F)`, where `F` must be callable and `E` is one normalized row. This
+makes effect tracking an explicit constructor around the complete callable,
+not a decoration on its result. Declarations use a callable-type/body boundary
+only when this constructor is present; pure declarations retain their compact
+form.
+
+The surface migration preserves the existing function/effect IR and therefore
+does not alter handler lowering, cleanup, or ownership. This matches recent
+modal-effect work that separates effect tracking from the underlying arrow,
+while the resource-safety results below motivate keeping non-local control and
+destruction semantics invariant during the rewrite.
+
+Primary references:
+
+- [Rows and Capabilities as Modal Effects (POPL 2026)](https://doi.org/10.1145/3776674)
+- [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
+- [Handling Exceptions and Effects with Automatic Resource Analysis (OOPSLA 2026)](https://arxiv.org/abs/2603.02260)
+
 ### Host Authority and Host Errors Are Separate
 
 The accepted [standard-library surface](../project/standard-library-surface.md)

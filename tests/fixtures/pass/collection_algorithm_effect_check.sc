@@ -6,11 +6,11 @@ let inspect = effect {
 
 let read(value: borrow(i32)): i32 = { value }
 
-let effect_greater_than_ten(value: borrow(i32)): bool with(inspect) = {
+let effect_greater_than_ten: with(inspect)(value: borrow(i32)): bool = {
   inspect.accepted(read(value))
 }
 
-let locate(values: borrow(slice(i32))): option(u64) with(inspect) = {
+let locate: with(inspect)(values: borrow(slice(i32))): option(u64) = {
   values.position(effect_greater_than_ten)
 }
 

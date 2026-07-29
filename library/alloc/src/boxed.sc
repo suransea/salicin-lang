@@ -74,7 +74,7 @@ extend(box(t)) {
   /// Allocates a new box containing `value`.
   let new(value: t): box(t) = { box_new(value) }
   /// Rebuilds unique ownership from a pointer returned by `Box.into_raw`.
-  let from_raw(pointer: ptr(mut)(t)): box(t) with(core.unsafe.unsafety) = {
+  let from_raw: with(core.unsafe.unsafety)(pointer: ptr(mut)(t)): box(t) = {
     box(t) { pointer: pointer }
   }
   /// Borrows the boxed value with the requested access.

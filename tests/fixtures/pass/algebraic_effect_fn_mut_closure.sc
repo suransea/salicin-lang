@@ -5,7 +5,7 @@ let ask = effect {
 let main(): i32 = {
   ask.handle value { (resume) -> resume(10) } action {
       let mut total = 0
-      let mut action: (i32): i32 with(ask) = { (value: i32) ->
+      let mut action: with(ask)((i32): i32)  = { (value: i32) ->
         total = total + value
         ask.value() + total
       }

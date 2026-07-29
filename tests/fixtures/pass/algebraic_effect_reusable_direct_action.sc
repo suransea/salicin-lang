@@ -2,7 +2,7 @@ let ask = effect {
   let value(): i32
 }
 
-let run()(move action: (): i32 with(ask)): i32 = {
+let run()(move action: with(ask)((): i32)): i32 = {
   ask.handle value { (resume) -> resume(10) } action {
       action()
     }

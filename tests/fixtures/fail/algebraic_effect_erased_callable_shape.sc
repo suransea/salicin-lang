@@ -2,18 +2,18 @@ let ask = effect {
   let value(): i32
 }
 
-let apply(action: (): i32 with(ask)): i32 with(ask) = {
+let apply: with(ask)(action: with(ask)((): i32)): i32 = {
   action()
 }
 
-let run(move action: (): i32 with(ask)): i32 = {
+let run(move action: with(ask)((): i32)): i32 = {
   ask.handle value { (resume) -> resume(42) } action {
       apply(action)
     }
 }
 
 let main(): i32 = {
-  let action: (): i32 with(ask) = { () ->
+  let action: with(ask)((): i32)  = { () ->
     ask.value()
   }
   run(action)

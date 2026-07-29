@@ -22,14 +22,14 @@ let main(): i32 = {
   let result = abort.handle stop { (resume) -> 40 } action {
       let left_resource = resource { counter: counter }
       let right_resource = resource { counter: counter }
-      let left: (): i32 with(abort) = { () ->
+      let left: with(abort)((): i32)  = { () ->
         abort.stop() + consume(left_resource)
       }
-      let right: (): i32 with(abort) = { () ->
+      let right: with(abort)((): i32)  = { () ->
         abort.stop() + consume(right_resource)
       }
-      let first: (): i32 with(abort) = if true { left } else { right }
-      let second: (): i32 with(abort) = if true { right } else { left }
+      let first: with(abort)((): i32)  = if true { left } else { right }
+      let second: with(abort)((): i32)  = if true { right } else { left }
       let mut selected = first
       selected = second
       selected()

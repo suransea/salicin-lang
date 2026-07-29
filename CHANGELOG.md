@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.228.0 - 2026-07-30
+
+- Made `with(E)(F)` the canonical effect-row constructor for callable type
+  `F`, applying one normalized row to the complete multi-group callable and
+  rejecting non-callable operands.
+- Added the effectful declaration boundary syntax
+  `let f(comptime e: effects): with(e)(value: i32): i32`, while preserving the
+  compact `let f(value: i32): i32` spelling for pure functions.
+- Migrated core, alloc, std, examples, fixtures, formatter coverage, grammar,
+  specification, and effect documentation to prefix syntax. Edition 2026
+  retains postfix parsing only as a transitional, non-canonical migration
+  path.
+
 ## 0.227.0 - 2026-07-30
 
 - Completed ITER-1 with source-backed `find`, `position`, `contains`, `any`,

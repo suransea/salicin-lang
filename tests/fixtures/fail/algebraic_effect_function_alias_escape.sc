@@ -2,11 +2,11 @@ let ask = effect {
   let value(): i32
 }
 
-let ask(): i32 with(ask) = {
+let ask: with(ask)(): i32 = {
   ask.value()
 }
 
-let leak(): (): i32 with(ask) = {
+let leak: with(ask)(): (): i32 = {
   ask.handle value { (resume) -> resume(42) } action {
       let action = ask
       action

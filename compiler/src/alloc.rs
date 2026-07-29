@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn rejects_box_from_raw_without_unsafety() {
         let source = alloc_source().replacen(
-            "let from_raw(pointer: ptr(mut)(t)): box(t) with(core.unsafe.unsafety) = {",
+            "let from_raw: with(core.unsafe.unsafety)(pointer: ptr(mut)(t)): box(t) = {",
             "let from_raw(pointer: ptr(mut)(t)): box(t) = {",
             1,
         );

@@ -478,8 +478,8 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
     }));
 
     let malformed_defer = EDITION_2026_CONTROL.replace(
-        "(move action: (): () with(e)): () with(e) = builtin()",
-        "(move action: (): bool with(e)): () with(e) = builtin()",
+        ": with(e)(move action: with(e)((): ())): () = builtin()",
+        ": with(e)(move action: with(e)((): bool)): () = builtin()",
     );
     assert_ne!(malformed_defer, EDITION_2026_CONTROL);
     let modules = edition_2026_test_modules(&[("control", &malformed_defer)]);
@@ -687,36 +687,36 @@ fn rejects_malformed_control_contracts() {
             (
                 "continue",
                 EDITION_2026_CONTROL.replace(
-                    "pub let continue(): never with(iteration_skip)",
-                    "pub let continue(): () with(iteration_skip)",
+                    "pub let continue: with(iteration_skip)(): never",
+                    "pub let continue: with(iteration_skip)(): ()",
                 ),
             ),
             (
                 "return",
                 EDITION_2026_CONTROL.replace(
-                    "(move value: t): never with(function_exit(t))",
-                    "(value: t): never with(function_exit(t))",
+                    ": with(function_exit(t))(move value: t): never",
+                    ": with(function_exit(t))(value: t): never",
                 ),
             ),
             (
                 "do",
                 EDITION_2026_CONTROL.replace(
-                    "  (move while: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)",
-                    "  (move until: (): bool with(core.control.loop_exit(()), core.control.iteration_skip, e)): () with(e)",
+                    "(move while: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): bool)): ()",
+                    "(move until: with(core.control.loop_exit(()), core.control.iteration_skip, e)((): bool)): ()",
                 ),
             ),
             (
                 "if",
                 EDITION_2026_CONTROL.replace(
-                    "  (condition: bool)\n  (move then: (): t with(e))",
-                    "  (condition: i32)\n  (move then: (): t with(e))",
+                    ": with(e)(condition: bool)(move then: with(e)((): t))",
+                    ": with(e)(condition: i32)(move then: with(e)((): t))",
                 ),
             ),
             (
                 "match",
                 EDITION_2026_CONTROL.replace(
-                    "  ...cases: output with(e)",
-                    "  (case: input): output with(e)",
+                    "  ...cases: output",
+                    "  (case: input): output",
                 ),
             ),
             (
@@ -740,8 +740,8 @@ fn rejects_malformed_control_contracts() {
         }
 
     let malformed = EDITION_2026_UNSAFE.replace(
-            "pub let unsafe(comptime e: effects, comptime t: type)\n  (move action: (): t with(core.unsafe.unsafety, e)): t with(e)",
-            "pub let unsafe(comptime e: effects, comptime t: type)\n  (move action: (): t with(e)): t with(e)",
+            "pub let unsafe(comptime e: effects, comptime t: type): with(e)(move action: with(core.unsafe.unsafety, e)((): t)): t",
+            "pub let unsafe(comptime e: effects, comptime t: type): with(e)(move action: with(e)((): t)): t",
         );
     let modules = edition_2026_test_modules(&[("unsafe", &malformed)]);
     let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -822,8 +822,8 @@ fn rejects_malformed_control_contracts() {
         .any(|diagnostic| diagnostic.contains("lang item `handle`")));
 
     let malformed = EDITION_2026_ERROR.replace(
-            "pub let throw(comptime error: type)\n  (move error: error): never with(core.error.throwing(error))",
-            "pub let throw(comptime error: type)\n  (move error: error): never",
+            "pub let throw(comptime error: type): with(core.error.throwing(error))(move error: error): never",
+            "pub let throw(comptime error: type)(move error: error): never",
         );
     let modules = edition_2026_test_modules(&[("error", &malformed)]);
     let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -858,15 +858,15 @@ fn rejects_malformed_async_contracts() {
         (
             "async",
             EDITION_2026_ASYNC.replace(
-                "(move action: (): t with(core.async.suspension, e)): f",
-                "(move action: (): t with(e)): f",
+                "(move action: with(core.async.suspension, e)((): t)): f",
+                "(move action: with(e)((): t)): f",
             ),
         ),
         (
             "await",
             EDITION_2026_ASYNC.replace(
-                "(move future: f): t with(core.async.suspension, e)",
-                "(move future: f): t with(e)",
+                ": with(core.async.suspension, e)(move future: f): t",
+                ": with(e)(move future: f): t",
             ),
         ),
     ] {
@@ -943,9 +943,9 @@ fn rejects_malformed_flow_operator_contracts() {
         .any(|diagnostic| diagnostic.contains("lang item `chain`")));
 
     let malformed = EDITION_2026_FLOW.replace(
-            "let coalesce(comptime e: effects)\n    (self)\n    (fallback: (): item with(e)): item with(e)",
-            "let coalesce(move self)\n    (move fallback: (): item): item",
-        );
+        "let coalesce(comptime e: effects): with(e)(self)(fallback: with(e)((): item)): item",
+        "let coalesce(move self)\n    (move fallback: (): item): item",
+    );
     let modules = edition_2026_test_modules(&[("flow", &malformed)]);
     let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
     assert!(error
@@ -963,7 +963,7 @@ fn rejects_malformed_flow_operator_contracts() {
         .any(|diagnostic| diagnostic.contains("lang item `unwrap`")));
 
     let malformed = EDITION_2026_FLOW.replace(
-        "let raise(move self): output with(core.error.throwing(error))",
+        "let raise: with(core.error.throwing(error))(move self): output",
         "let raise(move self): output",
     );
     let modules = edition_2026_test_modules(&[("flow", &malformed)]);

@@ -21,7 +21,7 @@ let main(): i32 = {
   unsafe { *counter = 0 }
   let result = abort.handle stop { (resume) -> 41 } action {
       let resource = resource { counter: counter }
-      let action: (): i32 with(abort) = { () ->
+      let action: with(abort)((): i32)  = { () ->
         let value = abort.stop()
         value + consume(resource)
       }

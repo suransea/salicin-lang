@@ -22,15 +22,15 @@ let main(): i32 = {
   let result = abort.handle stop { (resume) -> 40 } action {
       let left_resource = resource { counter: counter }
       let right_resource = resource { counter: counter }
-      let left: (): i32 with(abort) = { () ->
+      let left: with(abort)((): i32)  = { () ->
         let value = abort.stop()
         value + consume(left_resource)
       }
-      let right: (): i32 with(abort) = { () ->
+      let right: with(abort)((): i32)  = { () ->
         let value = abort.stop()
         value + consume(right_resource)
       }
-      let action: (): i32 with(abort) = if true { left } else { right }
+      let action: with(abort)((): i32)  = if true { left } else { right }
       action()
     }
   let drops = unsafe { *counter }
