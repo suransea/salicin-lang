@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.232.0 - 2026-07-30
+
+- Accepted the structured test-support contract: a source-backed one-shot
+  failure effect carries an owned optional formatted message and is
+  interpreted independently for every registration after exactly-once
+  cleanup.
+- Fixed `false` as a migration adapter into the same outcome model and a
+  dedicated, framed runner pipe as the authoritative multi-result channel;
+  program stdout/stderr and process exit codes are not report protocols.
+- Refined TEST-1 implementation and evidence requirements using current
+  effect-handler, region, and destructor-safety research.
+
 ## 0.231.0 - 2026-07-30
 
 - Implemented validated file open/create options, unique owned file handles,

@@ -85,8 +85,10 @@ common source-backed search, predicates, membership, and folds across arrays,
 slices, and vectors. The accepted
 [effect-callable syntax](effect-callable-syntax.md) and the accepted
 [synchronous host I/O contract](host-io.md), including console, process, and
-filesystem basics, is implemented. The active slice is now structured test
-failure.
+filesystem basics, is implemented. The accepted
+[structured test-support contract](test-support.md) fixes per-registration
+failure handling, cleanup, message ownership, boolean migration, and a
+dedicated result channel. The active slice is its implementation.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

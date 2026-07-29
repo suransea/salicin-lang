@@ -25,10 +25,12 @@ status and changelog instead of remaining as a checked archive.
 ### Test support
 
 - [ ] **TEST-1 — Structured test failure.** Replace boolean-only failure as
-  the sole test contract with a source-backed failure path that carries an
-  optional formatted message, is interpreted per registration, cleans test
-  resources exactly once, and allows later registrations to run. Preserve a
-  simple boolean migration path while the compiler is experimental.
+  the sole test contract according to the accepted
+  [structured test-support contract](test-support.md): add the one-shot
+  source-backed failure handler and owned optional message, normalize `false`
+  through the same outcome model, interpret every registration after
+  exactly-once cleanup, and send validated length-delimited results over a
+  dedicated runner pipe so later registrations still run.
 
 - [ ] **TEST-2 — Common assertions.** Add `assert`, `assert_eq`, `assert_ne`,
   `fail`, and common `option`/`result` expectation helpers with static

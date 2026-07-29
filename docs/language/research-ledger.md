@@ -183,6 +183,26 @@ Current research and specifications:
 - [Rust 1.97 `Write`](https://doc.rust-lang.org/std/io/trait.Write.html)
 - [POSIX.1-2024 Issue 8](https://standards.ieee.org/ieee/1003.1/7700/)
 
+### Test Failure Is a Handled, Resource-Safe Outcome
+
+Reviewed on 2026-07-30 for the accepted
+[structured test-support contract](../project/test-support.md). A registration
+may transfer an owned optional message through one compiler-handled
+`core.test.failure` operation. The runner interprets that operation once,
+after ordinary cleanup, records the resulting outcome, and continues with the
+next registration. A boolean `false` is normalized to the same unmessaged
+outcome rather than retained as a second protocol.
+
+The result channel is a separate framed pipe instead of stderr or an exit-code
+index, so test output cannot be mistaken for runner metadata and more than one
+failure can be represented.
+
+Current research:
+
+- [Building Extensible Program Logics through Effect Handlers (2026)](https://arxiv.org/abs/2607.12642)
+- [Yarrow: Reconciling Effect Handlers and Region-Based Memory Management (2026)](https://arxiv.org/abs/2607.15876)
+- [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
+
 ## Review Gate
 
 Before extending the static language:
