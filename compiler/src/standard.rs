@@ -17,12 +17,14 @@ const EDITION_2026_LIB: &str = include_str!("../../library/std/src/lib.sc");
 const EDITION_2026_ASYNC: &str = include_str!("../../library/std/src/async.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/std/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/std/src/functional.sc");
+const EDITION_2026_IO: &str = include_str!("../../library/std/src/io.sc");
 
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("async", EDITION_2026_ASYNC),
     ("algebra", EDITION_2026_ALGEBRA),
     ("functional", EDITION_2026_FUNCTIONAL),
+    ("io", EDITION_2026_IO),
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<StdBundle, StdBundleError>> = OnceLock::new();
@@ -339,7 +341,7 @@ mod tests {
     fn edition_2026_std_bundle_owns_policy_without_mirrors() {
         let bundle = StdBundle::for_edition(Edition::Edition2026).unwrap();
         assert!(!bundle.program().items.is_empty());
-        assert_eq!(bundle.exports().len(), 6);
+        assert_eq!(bundle.exports().len(), 9);
         assert!(bundle.exports().iter().any(|export| {
             export.module == "algebra"
                 && export.name == "semigroup"
@@ -350,10 +352,64 @@ mod tests {
                 && export.name == "spin"
                 && export.target == ["std", "async", "spin"]
         }));
+        assert!(bundle.exports().iter().any(|export| {
+            export.module == "io" && export.name == "io" && export.target == ["std", "io", "io"]
+        }));
+        assert!(bundle.exports().iter().any(|export| {
+            export.module == "io"
+                && export.name == "io_error"
+                && export.target == ["std", "io", "io_error"]
+        }));
         assert!(bundle
             .exports()
             .iter()
             .all(|export| export.target.first().is_some_and(|root| root == "std")));
+
+        let io = bundle
+            .program()
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Effect(effect) if effect.name == "std::io::io" => Some(effect),
+                _ => None,
+            })
+            .expect("std.io.io must be the canonical embedded authority identity");
+        assert!(io.compile_groups.is_empty());
+        assert!(io.operations.is_empty());
+
+        let kinds = bundle
+            .program()
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Enum(definition) if definition.name == "std::io::io_error_kind" => {
+                    Some(definition)
+                }
+                _ => None,
+            })
+            .expect("std.io.io_error_kind must be embedded")
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                "not_found",
+                "permission_denied",
+                "already_exists",
+                "invalid_input",
+                "invalid_data",
+                "interrupted",
+                "would_block",
+                "write_zero",
+                "unexpected_eof",
+                "broken_pipe",
+                "unsupported",
+                "out_of_memory",
+                "other",
+            ]
+        );
     }
 
     #[test]

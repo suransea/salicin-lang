@@ -24,12 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Synchronous host I/O
 
-- [ ] **IO-1 — Explicit host I/O contract.** Define the `io` authority effect,
-  entry-point handling, `io_error`, byte-versus-text boundaries, partial
-  operations, interruption, resource ownership, close behavior, and the
-  supported host matrix. No safe host operation may silently acquire
-  `unsafety` or ambient authority.
-
 - [ ] **IO-2 — Console and process support.** Implement process arguments and
   synchronous stdin, stdout, and stderr byte/text operations, including flush,
   EOF, invalid UTF-8, broken pipes, short reads/writes, `read_line`, and

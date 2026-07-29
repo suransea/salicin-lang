@@ -37,6 +37,9 @@ public naming, prelude exclusions, ownership modes, failure policy, error
 families, explicit `io` authority, initial native target matrix, and minimum
 text, collection, conversion, I/O, and test APIs. Its source-backed canonical
 layers and target boundary are implemented; host APIs remain planned work.
+The accepted [synchronous host I/O contract](host-io.md) now fixes authority,
+entry handling, errors, byte/text boundaries, partial progress, interruption,
+resource cleanup, close behavior, and the two supported native targets.
 
 The command-line surface is:
 
@@ -58,6 +61,8 @@ Implemented lexical and declaration features include:
 - uniform `let` declarations and mutable local value bindings;
 - prefix effect callable types `with(E)(F)` and effectful declaration
   boundaries, with compact boundary-free syntax retained for pure functions;
+- the compiler-validated `std.io.io` authority identity, accepted only at the
+  native `main` boundary, plus source-defined `io_error_kind` and `io_error`;
 - private, package, and public visibility;
 - contextual control, passing, sort, and borrow words;
 - compiler-owned abstract sorts written `let name: sort(2)`;

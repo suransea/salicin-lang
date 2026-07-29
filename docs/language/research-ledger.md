@@ -153,6 +153,31 @@ Primary references reviewed on 2026-07-27:
 - [Rows and Capabilities as Modal Effects (HOPE 2025)](https://conf.researchr.org/details/icfp-splash-2025/hope-2025-papers/5/Rows-and-Capabilities-as-Modal-Effects-Extended-Abstract)
 - [Zero-Overhead Lexical Effect Handlers (OOPSLA 2025)](https://cs.uwaterloo.ca/~yizhou/papers/zero-oopsla2025.pdf)
 
+### Host Effects and Resource Handles Are Complementary Capabilities
+
+Reviewed on 2026-07-30 for the accepted
+[synchronous host I/O contract](../project/host-io.md). The exact embedded
+`std.io.io` identity represents authority to ask the native environment to
+perform I/O. An opened file is instead an owned, unforgeable runtime handle
+that attenuates authority to one resource. Recoverable failures remain
+`io_error` values, not effects.
+
+The entry boundary may discharge only this exact standard identity. Resource
+destruction is a once-only obligation across return, effect transfer, handler
+abort, and ordinary scope exit; explicit close consumes the owner even when
+the native close reports failure. Primitive reads and writes expose partial
+progress and interruption, while bounded helpers define retry, EOF,
+`write_zero`, and `unexpected_eof` behavior.
+
+Current research and specifications:
+
+- [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
+- [Securing Agents With Tracked Capabilities (ACM CAIS 2026)](https://doi.org/10.1145/3786335.3813127)
+- [Rows and Capabilities as Modal Effects (POPL 2026)](https://doi.org/10.1145/3776674)
+- [WASI Capabilities](https://github.com/WebAssembly/WASI/blob/main/docs/Capabilities.md)
+- [Rust 1.97 `Read`](https://doc.rust-lang.org/std/io/trait.Read.html)
+- [Rust 1.97 `Write`](https://doc.rust-lang.org/std/io/trait.Write.html)
+
 ## Review Gate
 
 Before extending the static language:

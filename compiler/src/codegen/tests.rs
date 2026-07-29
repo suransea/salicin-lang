@@ -6624,6 +6624,31 @@ fn entry_point_cannot_export_an_unsafety() {
 }
 
 #[test]
+fn entry_point_accepts_only_the_validated_standard_io_authority() {
+    compile_resolved_text("let main: with(std.io.io)(): i32 = { 42 }\n")
+        .expect("the native boundary handles the validated std.io.io identity");
+
+    let errors = compile_resolved_text(
+        "let host: with(std.io.io)(): i32 = { 42 }\n\
+         let main(): i32 = { host() }\n",
+    )
+    .unwrap_err();
+    assert!(errors.iter().any(|error| {
+        error
+            .message
+            .contains("requires custom effect `std::io::io`")
+    }));
+
+    let errors = compile_resolved_text("let io = effect {}\nlet main: with(io)(): i32 = { 42 }\n")
+        .unwrap_err();
+    assert!(errors.iter().any(|error| {
+        error
+            .message
+            .contains("`main` cannot expose unhandled custom effects")
+    }));
+}
+
+#[test]
 fn effect_compile_parameters_select_pure_or_unsafe_instances() {
     compile_resolved_text(
         r#"

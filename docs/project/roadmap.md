@@ -83,8 +83,9 @@ slice extension, and copy mutation for vectors. The accepted
 [collection-algorithms contract](collection-algorithms.md) now completes
 common source-backed search, predicates, membership, and folds across arrays,
 slices, and vectors. The accepted
-[effect-callable syntax](effect-callable-syntax.md) is implemented. The active
-slice is now the explicit synchronous host I/O contract.
+[effect-callable syntax](effect-callable-syntax.md) and the accepted
+[synchronous host I/O contract](host-io.md) are implemented. The active slice
+is now console and process support.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

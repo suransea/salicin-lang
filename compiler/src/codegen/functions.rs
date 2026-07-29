@@ -448,10 +448,15 @@ impl Analyzer {
         if self.function_effects_unsafe(&self.collection.functions["main"].effects) {
             self.error("`main` cannot expose an unhandled `unsafe` effect");
         }
-        if !self
-            .function_effects_custom_identities(&self.collection.functions["main"].effects)
-            .is_empty()
-        {
+        let unhandled_custom = self.collection.functions["main"]
+            .effects
+            .custom
+            .iter()
+            .filter(|effect| {
+                !self.is_standard_unsafety_source(effect) && !self.is_standard_io_source(effect)
+            })
+            .collect::<Vec<_>>();
+        if !unhandled_custom.is_empty() {
             self.error("`main` cannot expose unhandled custom effects");
         }
         if let Some(error) = &signature.failure_error {

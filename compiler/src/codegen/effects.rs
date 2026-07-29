@@ -148,6 +148,14 @@ impl Analyzer {
         )
     }
 
+    pub(super) fn is_standard_io_source(&self, effect: &Type) -> bool {
+        matches!(
+            effect,
+            Type::Named(name, arguments)
+                if name == "std::io::io" && arguments.is_empty()
+        )
+    }
+
     pub(super) fn source_effects_include_standard_unsafe(&self, effects: &[Type]) -> bool {
         effects
             .iter()

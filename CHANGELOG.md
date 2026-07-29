@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.229.0 - 2026-07-30
+
+- Accepted the synchronous host I/O contract covering exact `io` authority,
+  native entry handling, portable errors, byte/text boundaries, partial
+  progress, interruption, owned handles, once-only close, and the supported
+  Linux/x86-64 and macOS/arm64 matrix.
+- Added the compiler-validated `std.io.io` effect plus allocation-free
+  `io_error_kind` and `io_error` declarations. Native `main` may expose only
+  this exact standard host effect; same-named user effects remain unhandled.
+- Fixed the evidence required of upcoming console, process, and filesystem
+  implementations and recorded the 2026 capability/effect/resource-safety
+  research basis.
+
 ## 0.228.0 - 2026-07-30
 
 - Made `with(E)(F)` the canonical effect-row constructor for callable type

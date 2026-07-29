@@ -279,6 +279,9 @@ and return `invalid_data` rather than replacement text.
 
 ## Host authority
 
+The detailed Edition 2026 rules are fixed by the accepted
+[synchronous host I/O contract](host-io.md).
+
 `io` is a compiler-validated standard effect identity. Only the native entry
 boundary may install its host handler. Naming a user effect `io`, declaring a
 same-shaped operation, or forging a file value grants no authority.
