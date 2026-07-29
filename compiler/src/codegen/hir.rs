@@ -752,6 +752,7 @@ pub(super) enum HirExprKind {
         anchor: HirPlace,
     },
     RawSliceLen(Box<HirExpr>),
+    RawSlicePtr(Box<HirExpr>),
     RawSliceAt {
         slice: Box<HirExpr>,
         index: Box<HirExpr>,

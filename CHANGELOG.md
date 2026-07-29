@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.225.0 - 2026-07-29
+
+- Completed COLL-3 with common array and slice `swap`, `reverse`, `fill`,
+  equal-length `copy_from`, and overlap-safe `copy_within` operations.
+- Prevalidated every index, range, destination extent, and source length
+  before mutation. Resource reordering moves without copying or dropping,
+  while copy operations remain restricted to `copyable` elements.
+- Added the access-preserving unsafe `raw_slice_ptr` core intrinsic used by
+  the safe mutation kernel, and fixed concrete slice method API boundaries to
+  narrow with private element types.
+- Added native forward/backward overlap, empty-range, resource cleanup, bounds
+  trap, alias rejection, copy-bound, and intrinsic authority coverage.
+
 ## 0.224.0 - 2026-07-29
 
 - Completed COLL-2 with direct shared and mutable borrowed iteration for

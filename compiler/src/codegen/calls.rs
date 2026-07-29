@@ -410,6 +410,9 @@ impl Analyzer {
             if name == "raw_slice_len" {
                 return self.lower_raw_slice_len(&groups, context);
             }
+            if name == "raw_slice_ptr" {
+                return self.lower_raw_slice_ptr(&groups, context);
+            }
             if name == "raw_slice_at" {
                 return self.lower_raw_slice_at(&groups, expected, context);
             }

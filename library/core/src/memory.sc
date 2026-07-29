@@ -65,6 +65,41 @@ extend(array(t)(l)) {
     let values = self.as_slice(a)()
     values.last(a)()
   }
+
+  /// Swaps two elements, trapping before mutation when either index is invalid.
+  let swap(self: borrow(mut)(self))(left: u64, right: u64): () = {
+    let values = self.as_slice(mut)()
+    values.swap(left, right)
+  }
+
+  /// Reverses all elements in place.
+  let reverse(self: borrow(mut)(self))(): () = {
+    let values = self.as_slice(mut)()
+    values.reverse()
+  }
+}
+
+/// Provides copy-based mutation for fixed-size arrays.
+extend(array(t)(l))
+where t: core.marker.copyable {
+  /// Replaces every element with a copy of `value`.
+  let fill(self: borrow(mut)(self))(copy value: t): () = {
+    let values = self.as_slice(mut)()
+    values.fill(value)
+  }
+
+  /// Copies an equally sized source slice into this array.
+  let copy_from(self: borrow(mut)(self))(source: borrow(slice(t))): () = {
+    let values = self.as_slice(mut)()
+    values.copy_from(source)
+  }
+
+  /// Copies a source range within this array with overlap-safe semantics.
+  let copy_within(self: borrow(mut)(self))
+    (source_start: u64, source_end: u64, destination_start: u64): () = {
+    let values = self.as_slice(mut)()
+    values.copy_within(source_start, source_end, destination_start)
+  }
 }
 
 /// Provides operations on a borrowed contiguous sequence.
@@ -117,6 +152,136 @@ extend(slice(t)) {
       core.option.none
     } else {
       self.get(a)(length - 1)
+    }
+  }
+
+  /// Swaps two elements, trapping before mutation when either index is invalid.
+  let swap(self: borrow(mut)(self))(left: u64, right: u64): () = {
+    let length = self.len(mut)()
+    if left >= length || right >= length {
+      unsafe {
+        raw_trap()
+      }
+    }
+    if left != right {
+      let values = unsafe {
+        raw_slice_ptr(mut)(self)
+      }
+      let left_pointer = unsafe {
+        raw_offset(values, left)
+      }
+      let right_pointer = unsafe {
+        raw_offset(values, right)
+      }
+      let left_value = unsafe {
+        raw_take(left_pointer)
+      }
+      let right_value = unsafe {
+        raw_take(right_pointer)
+      }
+      unsafe {
+        raw_init(left_pointer, right_value)
+        raw_init(right_pointer, left_value)
+      }
+    }
+  }
+
+  /// Reverses all elements in place.
+  let reverse(self: borrow(mut)(self))(): () = {
+    let length = self.len(mut)()
+    let mut left: u64 = 0
+    while { left < length / 2 } {
+      self.swap(left, length - 1 - left)
+      left = left + 1
+    }
+  }
+}
+
+/// Provides copy-based mutation for borrowed contiguous sequences.
+extend(slice(t))
+where t: core.marker.copyable {
+  /// Replaces every element with a copy of `value`.
+  let fill(self: borrow(mut)(self))(copy value: t): () = {
+    let length = self.len(mut)()
+    if length > 0 {
+      let values = unsafe {
+        raw_slice_ptr(mut)(self)
+      }
+      let mut index: u64 = 0
+      while { index < length } {
+        unsafe {
+          *raw_offset(values, index) = value
+        }
+        index = index + 1
+      }
+    }
+  }
+
+  /// Copies `source` into this slice, trapping before mutation on a length mismatch.
+  let copy_from(self: borrow(mut)(self))(source: borrow(slice(t))): () = {
+    let length = self.len(mut)()
+    if source.len() != length {
+      unsafe {
+        raw_trap()
+      }
+    }
+    if length > 0 {
+      let source_values = unsafe {
+        raw_slice_ptr(source)
+      }
+      let destination_values = unsafe {
+        raw_slice_ptr(mut)(self)
+      }
+      let mut index: u64 = 0
+      while { index < length } {
+        unsafe {
+          *raw_offset(destination_values, index) = *raw_offset(source_values, index)
+        }
+        index = index + 1
+      }
+    }
+  }
+
+  /// Copies `[source_start, source_end)` to `destination_start`.
+  ///
+  /// Overlap is supported. All bounds are validated before the first write.
+  let copy_within(self: borrow(mut)(self))
+    (source_start: u64, source_end: u64, destination_start: u64): () = {
+    let length = self.len(mut)()
+    if source_start > source_end || source_end > length {
+      unsafe {
+        raw_trap()
+      }
+    }
+    let count = source_end - source_start
+    if destination_start > length || count > length - destination_start {
+      unsafe {
+        raw_trap()
+      }
+    }
+    if count > 0 {
+      let values = unsafe {
+        raw_slice_ptr(mut)(self)
+      }
+      if destination_start > source_start {
+        let mut remaining = count
+        while { remaining > 0 } {
+          remaining = remaining - 1
+          unsafe {
+            *raw_offset(values, destination_start + remaining) =
+              *raw_offset(values, source_start + remaining)
+          }
+        }
+      } else {
+        let mut offset: u64 = 0
+        while { offset < count } {
+          unsafe {
+            *raw_offset(values, destination_start + offset) =
+              *raw_offset(values, source_start + offset)
+          }
+          offset = offset + 1
+        }
+      }
     }
   }
 }

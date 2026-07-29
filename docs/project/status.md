@@ -519,6 +519,14 @@ yielded mutable element must end before the iterator advances. Resource
 elements remain in place and are dropped by their owner. `vec` iteration
 consumes elements and drops an unyielded suffix exactly once on early exit.
 
+Arrays and slices expose in-place `swap` and `reverse` for concrete sized
+elements, including resources. Copyable elements additionally expose `fill`,
+equal-length `copy_from`, and overlap-safe `copy_within`. Every fallible bound
+or length precondition is checked before the first write. `copy_within`
+selects backward copying whenever the destination starts after the source, so
+overlap has memmove semantics. These operations do not allocate or invoke user
+effects; resource reordering neither copies nor drops elements.
+
 ## Quality Gates
 
 Repository gates cover:

@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Arrays, slices, vectors, and iteration
 
-- [ ] **COLL-3 — `array` and `slice` mutation.** Add swap, reverse, copy/fill
-  where element bounds permit, and overlap-safe copy behavior for mutable
-  arrays and slices. Validate bounds before mutation and define partial
-  progress and cleanup for every effectful operation.
-
 - [ ] **COLL-4 — Common `vec` operations.** Add checked access and slice-based
   extension/copy operations that complement the existing push, insert,
   remove, append, truncate, reverse, and capacity APIs. Allocation failure,

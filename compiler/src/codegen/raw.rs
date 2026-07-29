@@ -761,6 +761,94 @@ impl Analyzer {
         }
     }
 
+    pub(super) fn lower_raw_slice_ptr(
+        &mut self,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_slice_ptr` requires an `unsafe` block");
+            return error_expr();
+        }
+        let (required_mutable, runtime) = match groups {
+            [runtime] => (false, *runtime),
+            [access, runtime] => {
+                let [argument] = *access else {
+                    self.error("`raw_slice_ptr` access group expects exactly one argument");
+                    return error_expr();
+                };
+                let mutable = match &argument.value {
+                    Expr::Name(value) if access_mutability(value).is_some() => {
+                        access_mutability(value).expect("access member was checked")
+                    }
+                    _ => {
+                        self.error("`raw_slice_ptr` access argument must be `shared` or `mut`");
+                        return error_expr();
+                    }
+                };
+                (mutable, *runtime)
+            }
+            _ => {
+                self.error(
+                    "`raw_slice_ptr` expects one runtime group and at most one access group",
+                );
+                return error_expr();
+            }
+        };
+        let names = ["slice".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_slice_ptr", 1, runtime, &names)
+        else {
+            return error_expr();
+        };
+        let slice = match self.probe_expr_ty(&arguments[0].value, None, context) {
+            super::lower::TypeProbe::Known(expected)
+            | super::lower::TypeProbe::KnownSource(expected, _)
+                if matches!(
+                    &expected,
+                    Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_))
+                ) =>
+            {
+                self.lower_reference_value_expr(&arguments[0].value, &expected, context)
+            }
+            _ => self.lower_expr(&arguments[0].value, None, context),
+        };
+        let Ty::Reference {
+            pointee, mutable, ..
+        } = &slice.ty
+        else {
+            self.error(format!(
+                "`raw_slice_ptr` requires a borrowed slice, found `{}`",
+                slice.ty
+            ));
+            return error_expr();
+        };
+        let Ty::Slice(element) = pointee.as_ref() else {
+            self.error(format!(
+                "`raw_slice_ptr` requires a borrowed slice, found `{}`",
+                slice.ty
+            ));
+            return error_expr();
+        };
+        if *mutable != required_mutable {
+            self.error(format!(
+                "`raw_slice_ptr` requires a {}slice borrow",
+                if required_mutable {
+                    "mutable "
+                } else {
+                    "shared "
+                }
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::Pointer {
+                pointee: element.clone(),
+                mutable: required_mutable,
+            },
+            kind: HirExprKind::RawSlicePtr(Box::new(slice)),
+        }
+    }
+
     pub(super) fn lower_raw_slice_at(
         &mut self,
         groups: &[&[CallArg]],

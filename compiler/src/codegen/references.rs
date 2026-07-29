@@ -400,6 +400,7 @@ impl Analyzer {
             | HirExprKind::Field { base: value, .. }
             | HirExprKind::ReferenceRead(value)
             | HirExprKind::RawSliceLen(value)
+            | HirExprKind::RawSlicePtr(value)
             | HirExprKind::RawStrCast(value)
             | HirExprKind::RawLoad(value)
             | HirExprKind::RawTake(value)

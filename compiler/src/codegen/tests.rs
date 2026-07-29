@@ -4415,6 +4415,20 @@ let main(): i32 = { use_hidden() }
 }
 
 #[test]
+fn slice_inherent_member_boundaries_include_concrete_element_types() {
+    compile_unresolved_text(
+        r#"
+let hidden = struct { value: i32 }
+let reorder(values: borrow(mut)(slice(hidden))): () = {
+  values.reverse()
+}
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect("private slice elements must narrow concrete core member APIs");
+}
+
+#[test]
 fn trait_impl_associated_types_cannot_widen_beyond_trait_and_target_access() {
     let errors = compile_unresolved_text(
         r#"

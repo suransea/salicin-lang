@@ -116,6 +116,7 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
         "raw_pointer_write.sc",
         "raw_pointer_access_family.sc",
         "raw_pointer_projected_place.sc",
+        "raw_slice_pointer.sc",
         "do_forwards_unsafe_color.sc",
     ];
     for (name, output) in batched_native_fixture_outputs(&fixtures) {
@@ -164,6 +165,11 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
             "expects one empty runtime argument group",
         ),
         ("raw_borrow_safe.sc", "requires an `unsafe` block"),
+        ("raw_slice_ptr_safe.sc", "requires an `unsafe` block"),
+        (
+            "raw_slice_ptr_mut_shared.sc",
+            "requires a mutable slice borrow",
+        ),
         (
             "raw_pointer_projected_place_safe.sc",
             "requires an `unsafe` block",
@@ -410,6 +416,50 @@ fn alloc_vec_owns_copy_and_resource_elements() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid borrowed array iterator fixture");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn arrays_and_slices_mutate_with_prevalidated_overlap_safe_bounds() {
+    let successful = ["array_slice_mutation.sc", "array_slice_reorder_resource.sc"];
+    for (name, output) in batched_native_fixture_outputs(&successful) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let trapping = [
+        "array_swap_out_of_bounds.sc",
+        "slice_copy_within_source_out_of_bounds.sc",
+        "slice_copy_within_destination_out_of_bounds.sc",
+        "slice_copy_from_length_mismatch.sc",
+    ];
+    for (name, output) in trapping_fixture_outputs_in_parallel(&trapping) {
+        assert!(
+            !output.status.success(),
+            "{name} did not trap: {}",
+            output_text(&output)
+        );
+    }
+
+    for (name, expected) in [
+        ("array_fill_resource.sc", "unknown method `fill`"),
+        ("slice_copy_from_alias.sc", "mutably borrowed"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid array or slice mutation fixture");
         assert!(!output.status.success(), "{name} unexpectedly compiled");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),

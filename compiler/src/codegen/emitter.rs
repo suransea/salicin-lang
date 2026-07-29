@@ -1603,6 +1603,21 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(length),
                 })
             }
+            HirExprKind::RawSlicePtr(slice) => {
+                let slice = self.emit_expr(slice)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer} = extractvalue {{ ptr, i64 }} {}, 0",
+                    slice.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(pointer),
+                })
+            }
             HirExprKind::RawSliceAt { slice, index } => {
                 let slice = self.emit_expr(slice)?;
                 if self.terminated {

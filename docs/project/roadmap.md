@@ -75,7 +75,9 @@ string writer, and the first concrete display/debug implementations. The
 accepted [contiguous-access contract](contiguous-access.md) is implemented for
 arrays, slices, and vectors. The accepted
 [borrowed-iteration contract](borrowed-iteration.md) is implemented for arrays
-and slices. The active slice is common array and slice mutation.
+and slices. The accepted
+[collection-mutation contract](collection-mutation.md) is implemented for
+arrays and slices. The active slice is common vector operations.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

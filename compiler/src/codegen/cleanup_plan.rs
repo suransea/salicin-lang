@@ -903,6 +903,13 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawSlicePtr(slice) => {
+                let Some(cursor) = self.walk_expr(slice, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::RawStrCast(source) => {
                 let Some(cursor) = self.walk_expr(source, cursor, ResultUse::Discard)? else {
                     return Ok(None);

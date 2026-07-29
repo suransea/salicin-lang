@@ -3338,6 +3338,11 @@ impl Analyzer {
             vec![element_source.clone()],
         );
         for extension in self.collection.slice_inherent_extensions.clone() {
+            let member_access = self.restrict_access_boundary_to_type(
+                &extension.access,
+                element,
+                &extension.origin,
+            );
             let mut substitutions = HashMap::new();
             substitutions.insert(extension.element_parameter.clone(), element_source.clone());
             let mut predicates = extension.where_predicates.clone();
@@ -3364,7 +3369,7 @@ impl Analyzer {
                 &owner,
                 slice,
                 members,
-                &extension.access,
+                &member_access,
                 &extension.origin,
             );
         }
