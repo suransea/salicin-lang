@@ -233,6 +233,108 @@ fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
 }
 
 #[test]
+fn standard_test_assertions_evaluate_once_and_report_stable_messages() {
+    let temporary = TestDirectory::new();
+    let passing = temporary.write(
+        "assertions-pass.sc",
+        "let evaluate(counter: borrow(mut)(i32)): i64 = {\n\
+           counter = counter + 1\n\
+           42\n\
+         }\n\
+         let common_assertions_pass: with(core.testing.failure)(): bool = {\n\
+           let mut counter = 0\n\
+           std.test.assert(true)\n\
+           std.test.assert_eq(evaluate(counter))(evaluate(counter))\n\
+           let same: i64 = 42\n\
+           let different: i64 = 43\n\
+           std.test.assert_ne(i64)(same)(different)\n\
+           let some_value: core.option(i32) = core.option.some(40)\n\
+           let none_value: core.option(i64) = core.option.none\n\
+           let ok_value: core.result(i64)(i32) = core.result.ok(2)\n\
+           let error_value: core.result(i64)(i64) = core.result.err(7)\n\
+           let some = std.test.expect_some(i32)(some_value)\n\
+           std.test.expect_none(i64)(none_value)\n\
+           let ok = std.test.expect_ok(i64, i32)(ok_value)\n\
+           let error = std.test.expect_err(i64, i64)(error_value)\n\
+           some + ok == 42 && error == 7 && counter == 2\n\
+         }\n\
+         test(\"common assertions pass\") { common_assertions_pass() }\n",
+    );
+    let passed = salic()
+        .arg("test")
+        .arg(passing)
+        .output()
+        .expect("run standard passing assertions");
+    assert_eq!(passed.status.code(), Some(0), "{}", output_text(&passed));
+
+    let failing = temporary.write(
+        "assertions-fail.sc",
+        "let fail_assert: with(core.testing.failure)(): bool = {\n\
+           std.test.assert(false)\n\
+           true\n\
+         }\n\
+         let fail_assert_eq: with(core.testing.failure)(): bool = {\n\
+           let left: i64 = 1\n\
+           let right: i64 = 2\n\
+           std.test.assert_eq(i64)(left)(right)\n\
+           true\n\
+         }\n\
+         let fail_assert_ne: with(core.testing.failure)(): bool = {\n\
+           let value: i64 = 7\n\
+           std.test.assert_ne(i64)(value)(value)\n\
+           true\n\
+         }\n\
+         let fail_expect_some: with(core.testing.failure)(): bool = {\n\
+           let value: core.option(i64) = core.option.none\n\
+           std.test.expect_some(i64)(value) == 0\n\
+         }\n\
+         let fail_expect_none: with(core.testing.failure)(): bool = {\n\
+           let value: core.option(i64) = core.option.some(9)\n\
+           std.test.expect_none(i64)(value)\n\
+           true\n\
+         }\n\
+         let fail_expect_ok: with(core.testing.failure)(): bool = {\n\
+           let value: core.result(i64)(i64) = core.result.err(0)\n\
+           std.test.expect_ok(i64, i64)(value) == 0\n\
+         }\n\
+         let fail_expect_err: with(core.testing.failure)(): bool = {\n\
+           let value: core.result(i64)(i64) = core.result.ok(11)\n\
+           std.test.expect_err(i64, i64)(value) == 0\n\
+         }\n\
+         test(\"assert\") { fail_assert() }\n\
+         test(\"assert_eq\") { fail_assert_eq() }\n\
+         test(\"assert_ne\") { fail_assert_ne() }\n\
+         test(\"expect_some\") { fail_expect_some() }\n\
+         test(\"expect_none\") { fail_expect_none() }\n\
+         test(\"expect_ok\") { fail_expect_ok() }\n\
+         test(\"expect_err\") { fail_expect_err() }\n\
+         test(\"fail\") { std.test.fail(\"explicit failure\") }\n",
+    );
+    let failed = salic()
+        .arg("test")
+        .arg(failing)
+        .output()
+        .expect("run standard failing assertions");
+    assert_eq!(failed.status.code(), Some(1), "{}", output_text(&failed));
+    assert_eq!(
+        String::from_utf8_lossy(&failed.stderr),
+        "salic: test \"assert\" failed: assertion failed\n\
+         salic: test \"assert_eq\" failed: assert_eq failed\n\
+         left: 1\n\
+         right: 2\n\
+         salic: test \"assert_ne\" failed: assert_ne failed\n\
+         both: 7\n\
+         salic: test \"expect_some\" failed: expect_some failed: found none\n\
+         salic: test \"expect_none\" failed: expect_none failed: found some(9)\n\
+         salic: test \"expect_ok\" failed: expect_ok failed: found err(0)\n\
+         salic: test \"expect_err\" failed: expect_err failed: found ok(11)\n\
+         salic: test \"fail\" failed: explicit failure\n",
+        "{}",
+        output_text(&failed)
+    );
+}
+
+#[test]
 fn structured_test_abort_runs_owned_cleanup_once() {
     let temporary = TestDirectory::new();
     let source = temporary.write(

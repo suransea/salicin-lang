@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.234.0 - 2026-07-30
+
+- Completed TEST-2 with source-backed `std.test.fail`, boolean, equality,
+  inequality, and common `option`/`result` expectation helpers.
+- Added static comparison and assertion-formatting bounds, single evaluation
+  of equality operands, deterministic owned diagnostic messages, and exact
+  runner output without compiler-generated names.
+- Renamed the private runner bridge module to the documented public
+  `std.test` module and retained the compact declaration syntax for pure
+  functions; only effectful declarations use the callable-type/body colon
+  boundary.
+
 ## 0.233.0 - 2026-07-30
 
 - Completed TEST-1 with the source-backed `core.testing.failure` effect,

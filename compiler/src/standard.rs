@@ -18,7 +18,7 @@ const EDITION_2026_ASYNC: &str = include_str!("../../library/std/src/async.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/std/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/std/src/functional.sc");
 const EDITION_2026_IO: &str = include_str!("../../library/std/src/io.sc");
-const EDITION_2026_TESTING: &str = include_str!("../../library/std/src/testing.sc");
+const EDITION_2026_TEST: &str = include_str!("../../library/std/src/test.sc");
 
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
@@ -26,7 +26,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("algebra", EDITION_2026_ALGEBRA),
     ("functional", EDITION_2026_FUNCTIONAL),
     ("io", EDITION_2026_IO),
-    ("testing", EDITION_2026_TESTING),
+    ("test", EDITION_2026_TEST),
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<StdBundle, StdBundleError>> = OnceLock::new();
@@ -343,7 +343,7 @@ mod tests {
     fn edition_2026_std_bundle_owns_policy_without_mirrors() {
         let bundle = StdBundle::for_edition(Edition::Edition2026).unwrap();
         assert!(!bundle.program().items.is_empty());
-        assert_eq!(bundle.exports().len(), 33);
+        assert_eq!(bundle.exports().len(), 42);
         assert!(bundle.exports().iter().any(|export| {
             export.module == "algebra"
                 && export.name == "semigroup"
@@ -361,6 +361,11 @@ mod tests {
             export.module == "io"
                 && export.name == "io_error"
                 && export.target == ["std", "io", "io_error"]
+        }));
+        assert!(bundle.exports().iter().any(|export| {
+            export.module == "test"
+                && export.name == "assert_eq"
+                && export.target == ["std", "test", "assert_eq"]
         }));
         assert!(bundle
             .exports()

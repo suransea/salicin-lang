@@ -89,8 +89,8 @@ slices, and vectors. The accepted
 filesystem basics, is implemented. The accepted
 [structured test-support contract](test-support.md) implements
 per-registration failure handling, cleanup, message ownership, boolean
-migration, and a dedicated result channel. The active slice is common
-assertions.
+migration, a dedicated result channel, and common source-backed assertions.
+The active slice is deterministic runner selection and reporting.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

@@ -1,6 +1,6 @@
 # Programming-Language Research Ledger
 
-Last reviewed: 2026-07-27
+Last reviewed: 2026-07-30
 
 This ledger records research that materially changes Salicin's language model. It is a repeatable
 review gate, not a claim that any language can remain “advanced” without continuing comparison,
@@ -209,6 +209,15 @@ The implementation deliberately keeps test failure one-shot. Work on
 multi-shot continuations shows why copying or virtualizing handler stacks is a
 separate runtime problem; TEST-1 needs only abortive transfer and therefore
 retains Salicin's existing exactly-once cleanup model.
+
+The common assertion layer preserves that same interpretation boundary:
+operands are bound once before comparison, formatting is selected through
+static traits, and deterministic owned messages cross the failure operation.
+This also keeps nondeterminism control outside assertion internals; recent
+flaky-test work reinforces that replay or API control belongs at an explicit
+runner boundary rather than in hidden repeated operand evaluation.
+
+- [Detecting Flaky Tests by Controlling Nondeterministic API Behavior (PACMPL 2026)](https://doi.org/10.1145/3798265)
 
 ## Review Gate
 

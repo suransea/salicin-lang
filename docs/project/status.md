@@ -17,7 +17,9 @@ current capability inventory. It does not record release history; see the
 - compile-time `test("name") { ... }` registrations collected into one native
   runner by `salic test`, with source-order execution, source-backed
   structured failure, owned optional UTF-8 messages, all-failure reporting,
-  and a dedicated framed parent channel;
+  a dedicated framed parent channel, and `std.test` failure, boolean,
+  equality, inequality, and `option`/`result` expectation helpers with static
+  comparison/diagnostic-formatting bounds and single operand evaluation;
 - source-declared pass-fixture tests batched into native runners by semantic
   group, while process-terminating fixtures remain isolated;
 - package and virtual workspace manifests, explicit workspace members,

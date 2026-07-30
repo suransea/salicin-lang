@@ -24,11 +24,6 @@ status and changelog instead of remaining as a checked archive.
 
 ### Test support
 
-- [ ] **TEST-2 — Common assertions.** Add `assert`, `assert_eq`, `assert_ne`,
-  `fail`, and common `option`/`result` expectation helpers with static
-  `eq`/formatting bounds, single evaluation of operands, useful failure
-  messages, and no generated names in output.
-
 - [ ] **TEST-3 — Runner selection and reporting.** Add deterministic
   `salic test --list` and name filtering, selected/failed/passed counts, and
   clear exit behavior. Keep source order, duplicate-name diagnostics, package

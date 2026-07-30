@@ -180,7 +180,7 @@ fn test_runner_program(
             }],
         );
         let reported = ast::Expr::Call(
-            Box::new(ast::Expr::Name("std::testing::report".to_owned())),
+            Box::new(ast::Expr::Name("std::test::report".to_owned())),
             vec![
                 ast::CallArg {
                     label: None,
@@ -210,7 +210,7 @@ fn test_runner_program(
     let body = ast::Expr::Block(
         statements,
         Some(Box::new(ast::Expr::Call(
-            Box::new(ast::Expr::Name("std::testing::finish".to_owned())),
+            Box::new(ast::Expr::Name("std::test::finish".to_owned())),
             vec![
                 ast::CallArg {
                     label: None,

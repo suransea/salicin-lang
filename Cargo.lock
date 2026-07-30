@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "salicin-lang"
-version = "0.233.0"
+version = "0.234.0"
 dependencies = [
  "libc",
  "same-file",

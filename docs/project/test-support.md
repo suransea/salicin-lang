@@ -4,8 +4,8 @@ Status: implemented contract
 
 This document fixes the first source and runner contract for built-in test
 registrations. It covers structured failure, cleanup, result transport, and
-the boolean migration path. Assertion vocabulary, selection, and final
-reporting ergonomics remain separate TODO items.
+the boolean migration path and common assertion vocabulary. Selection and
+final reporting ergonomics remain separate TODO items.
 
 ## Registration Contract
 
@@ -55,10 +55,25 @@ through the existing source-backed formatting writer and makes its lifetime
 independent of assertion operands and the registration stack. An absent
 message is distinct from an empty message.
 
-TEST-2 will expose convenient `std.test.fail`, `assert`, equality, inequality,
-and expectation helpers over this contract. TEST-1 may expose only the
-minimal source constructor needed to prove the structured path; it must not
-freeze the full assertion API early.
+`std.test` exposes `fail`, `assert`, `assert_eq`, `assert_ne`, `expect_some`,
+`expect_none`, `expect_ok`, and `expect_err` over this contract. Equality
+helpers evaluate each operand once and require both `core.cmp.eq(t)` and the
+static `std.test.assertion_debug` formatting contract. Expectations consume
+their `option` or `result`, return the selected payload, and format only an
+unexpected payload.
+
+`assertion_debug` returns owned diagnostic text. Standard implementations
+cover the core diagnostic scalar and owned-text types; user types opt in with
+an ordinary extension. This keeps formatting selection static, makes the
+writer choice private to `std.test`, and avoids reflection or generated
+temporary names in output.
+
+Failure messages are deterministic:
+
+- `assert` reports `assertion failed`;
+- equality and inequality report their formatted operands;
+- expectation helpers identify the unexpected variant and payload; and
+- `fail` preserves the supplied UTF-8 message exactly.
 
 ## Per-Registration Interpretation
 
