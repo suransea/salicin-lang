@@ -1378,10 +1378,10 @@ impl Parser {
 
     fn requires_parameter_group(&mut self) -> Result<Vec<WherePredicate>, ParseError> {
         self.expect(&TokenKind::LParen, "`(` before `requires:`")?;
-        let label = self.expect_ident("`requires` constraint parameter label")?;
+        let label = self.expect_ident("`requires` boolean requirement header label")?;
         if label != "requires" {
             return Err(self.error_here(format!(
-                "expected constraint parameter label `requires`, found `{label}`"
+                "expected boolean requirement header label `requires`, found `{label}`"
             )));
         }
         self.expect(&TokenKind::Colon, "`:` after `requires`")?;

@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.250.0 - 2026-07-30
+
+- Completed syntax-contract acceptance with token-preserving, idempotent
+  formatter coverage for `test`, function-body `requires`, and labeled trait
+  and extension requirements.
+- Added explicit missing-contract validation for the edition-owned `test` and
+  `requires` lang items and proved that `extend` has no callable lang item.
+  Header diagnostics now describe `requires:` as a boolean requirement rather
+  than a declaration or constraint parameter.
+- Kept future reflection and metaprogramming sorts deferred to META-1. The
+  grammar and specification explicitly introduce no static sort for the fixed
+  syntax forms, and the research ledger records the required scope-safety and
+  staging obligations.
+
 ## 0.249.0 - 2026-07-30
 
 - Removed the premature `declaration` sort introduced in 0.248.0. Fixed

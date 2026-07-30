@@ -477,6 +477,18 @@ mod tests {
     }
 
     #[test]
+    fn preserves_minimal_syntax_contract_tokens_idempotently() {
+        let source = "let marker = trait {}\nlet bounded = trait(requires: self is marker) {\n}\nlet cell(comptime t: type) = struct { value: t }\nextend(cell(t))\n(requires: t is marker) {\n}\nlet guarded(comptime t: type)(value: t): t = requires(t is marker) {\nvalue\n}\ntest(\"minimal contracts\") {\nlet value = 1\n}\n";
+        let expected = "let marker = trait {}\nlet bounded = trait(requires: self is marker) {\n}\nlet cell(comptime t: type) = struct { value: t }\nextend(cell(t))\n(requires: t is marker) {\n}\nlet guarded(comptime t: type)(value: t): t = requires(t is marker) {\n  value\n}\ntest(\"minimal contracts\") {\n  let value = 1\n}\n";
+        let formatted = format_source(source).expect("format minimal syntax contracts");
+        assert_eq!(formatted, expected);
+        assert_eq!(
+            format_source(&formatted).expect("format output again"),
+            formatted
+        );
+    }
+
+    #[test]
     fn does_not_treat_closure_parameters_as_declaration_continuations() {
         let source = "let main(): i32 = {\nlet closure = {\n(left: i32) -> do {\nleft\n}\n}\nclosure(42)\n}\n";
         let expected = "let main(): i32 = {\n  let closure = {\n    (left: i32) -> do {\n      left\n    }\n  }\n  closure(42)\n}\n";

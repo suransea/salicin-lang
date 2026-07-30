@@ -409,6 +409,37 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
         .iter()
         .any(|diagnostic| diagnostic == "missing lang item `builtin`"));
 
+    for (name, declaration) in [
+        (
+            "test",
+            "pub let test(comptime name: string)(\n  move body: with(core.error.throwing(core.string.string))((): ()),\n): () = builtin()\n",
+        ),
+        (
+            "requires",
+            "pub let requires(\n  comptime condition: bool,\n  comptime e: effects,\n  comptime result: type,\n): with(e)(\n  move body: with(e)((): result),\n): result = builtin()\n",
+        ),
+    ] {
+        let missing = EDITION_2026_LIB.replace(declaration, "");
+        assert_ne!(missing, EDITION_2026_LIB);
+        let modules = edition_2026_test_modules(&[("lib", &missing)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic == &format!("missing lang item `{name}`")),
+            "{:?}",
+            error.diagnostics()
+        );
+    }
+
+    assert!(
+        LangItemKind::ALL
+            .iter()
+            .all(|kind| kind.source_name() != "extend"),
+        "`extend` is parser-owned declaration syntax, not a callable lang item"
+    );
+
     for (module, name, malformed) in [
         (
             "foreign",

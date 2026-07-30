@@ -20,15 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Syntax Declaration Contracts
-
-- [ ] **SYN-3 — Syntax-contract acceptance.** Migrate grammar, formatter token
-  preservation, fixtures, diagnostics, and docs for the minimal contracts:
-  `test(name, unit throwing body)`, function-only
-  `requires(condition: bool, body)`, and labeled boolean requirements in trait
-  and extension headers. Prove `extend` has no decorative callable contract.
-
-## P1: Semantic Navigation
+## P0: Semantic Navigation
 
 - [ ] **NAV-1 — Semantic occurrence index.** Define stable snapshot-local
   identities and source occurrences for declarations, aliases, fields,
@@ -42,7 +34,7 @@ status and changelog instead of remaining as a checked archive.
   with explicit refusal for ambiguous, generated, foreign-symbol, or
   dependency-owned targets.
 
-## P2: Registry Source Dependencies
+## P1: Registry Source Dependencies
 
 - [ ] **PKG-1 — Registry input contract.** Finalize manifest spelling, registry
   identity/configuration, immutable index snapshot format, archive layout,

@@ -48,36 +48,7 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Syntax Declaration Contracts
-
-`test("name") { ... }`, `extend(...) { ... }`, and
-`requires(goals) expression` now use the minimal source-backed model. `test`
-passes its static string name and a unit-returning `throwing(string)` closure.
-Function-body `requires` passes a compile-time `bool` and a delayed closure.
-Trait and extension requirements are labeled compile-time boolean header
-parameters; `extend` itself has no callable contract.
-
-The erased `constraint` classifier remains the solver boundary. The premature
-`declaration` classifier has been removed: the current fixed syntax does not
-need first-class declaration fragments. Active work is the acceptance pass
-across formatting, diagnostics, fixtures, and documentation.
-
-Exit conditions:
-
-- constraint fragments have explicit normalization and phase separation;
-- the `test` contract includes its static string name and accepts only a
-  unit-returning closure with exactly `throwing(string)`;
-- function-body `requires` uses its validated boolean/closure contract, while
-  trait and extension requirements remain boolean header parameters;
-- `extend` has no decorative builtin signature;
-- missing or malformed edition contracts fail core-bundle validation;
-- grammar, formatter preservation, diagnostics, core sources, fixtures, and
-  documentation agree on one contract shape.
-
-Additional reflection and syntax-fragment sorts are ordered later under
-META-1 rather than being inferred from these fixed forms.
-
-## Later: Semantic Navigation
+## Now: Semantic Navigation
 
 Navigation follows the LSP baseline because it needs long-lived analysis
 snapshots and stable source identities. The compiler will expose a semantic

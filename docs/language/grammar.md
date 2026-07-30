@@ -323,6 +323,11 @@ trait_ref =
 trait_argument = [ IDENT, ":" ], type_expr ;
 ```
 
+The `requires:` group in a trait or extension header is a labeled
+compile-time boolean requirement, not a callable declaration and not a new
+static sort. `extend` is parser-owned declaration syntax and has no
+corresponding `extend` function or language item.
+
 An associated type projection equality follows the trait constraint whose
 evidence owns that projection. A generic associated constructor equation
 declares its local binders on the projection, for example

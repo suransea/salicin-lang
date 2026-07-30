@@ -250,7 +250,10 @@ metadata payload is a runtime value.
 The function-definition form `= requires(condition) { body }` supplies a
 compile-time `bool` and a delayed parameterless closure to `core.requires`.
 Trait and extension requirements instead occupy their declaration header as
-the labeled compile-time boolean parameter `(requires: condition)`.
+the labeled compile-time boolean parameter `(requires: condition)`. `extend`
+itself is parser-owned syntax: there is no decorative `extend` callable or
+language item. Additional reflection and metaprogramming sorts remain deferred
+until META-1 defines their phase, scope, equality, and resource contracts.
 
 ## 4. Types and Compile-Time Parameters
 

@@ -562,6 +562,10 @@ without a consumer.
 Reviewed on 2026-07-30 after the declaration-fragment design was withdrawn.
 The current forms require no general quotation facility: delayed closures
 preserve evaluation, while normalized boolean goals preserve solver behavior.
+Re-reviewed during SYN-3 acceptance against the latest 2026 work on dynamic
+scope checks and staged let insertion. Both reinforce that a code/decl
+classifier needs a defined scope discipline and evaluation semantics; neither
+is needed for today's fixed boolean guards.
 
 - [Contextual Metaprogramming for Session Types
   (2026)](https://arxiv.org/abs/2601.15180) demonstrates why future code
@@ -572,6 +576,12 @@ preserve evaluation, while normalized boolean goals preserve solver behavior.
   (2026)](https://arxiv.org/abs/2602.19951) makes scope safety a first-class
   metaprogramming obligation. META-1 must establish that invariant before a
   declaration or syntax sort becomes source-visible.
+- [Handling Scope Checks
+  (2026)](https://arxiv.org/abs/2601.18793) compares static environment
+  classifiers with dynamic scope-extrusion checks. Salicin postpones choosing
+  either discipline until reflection has concrete fragment producers and
+  consumers instead of predeclaring a classifier with no enforceable scope
+  contract.
 - [When Do Staging Annotations Preserve Semantics?
   (2026)](https://arxiv.org/abs/2606.30854) shows that fragment manipulation
   can alter evaluation order. The minimal `requires(condition, body)` contract

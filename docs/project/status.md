@@ -147,7 +147,7 @@ Implemented lexical and declaration features include:
 - ordinary closed enums usable as compile-time value types;
 - explicit core-private `builtin()` initializers for compiler-owned
   functions, types, type constructors, and extension methods.
-- canonical private `builtin`, `foreign`, and legacy `test` syntax declarations plus
+- canonical private `builtin`, `foreign`, `test`, and `requires` syntax declarations plus
   identity-validated passing and control-exit contracts;
 - explicit erased inputs for those syntax declarations:
   the one- and two-argument `foreign` overloads select the finite
@@ -156,7 +156,9 @@ Implemented lexical and declaration features include:
   receives the UTF-8 name and unit-returning throwing body;
   `core.requires` receives a compile-time boolean and delayed function body.
   Trait and extension requirements remain labeled boolean header parameters,
-  and `extend` has no fake callable declaration.
+  and `extend` has no callable lang item. Formatter acceptance preserves all
+  four surface forms idempotently, and missing or malformed edition contracts
+  fail core-bundle validation.
 
 Types, traits, functions, values, modules, parameters, and ordinary sorts use
 `snake_case`.
