@@ -22,11 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Syntax Declaration Contracts
 
-- [ ] **SYN-1 — Static fragment sorts.** Define erased `constraint` and
-  `declaration` classifiers, equality/normalization boundaries, permitted
-  producers, and diagnostics that prevent runtime values or effects from
-  entering either sort.
-
 - [ ] **SYN-2 — Contract-driven elaboration.** Make `test`, `extend`, and
   `requires` source-visible compiler contracts that participate in surface
   elaboration. The `test` contract must include its static string name and

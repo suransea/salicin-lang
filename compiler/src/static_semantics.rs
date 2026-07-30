@@ -59,6 +59,25 @@ impl StaticValue {
     }
 }
 
+/// Equality and construction policy for compiler-owned surface fragments.
+///
+/// Fragments preserve source provenance and binder identity, so they are not
+/// user-comparable or source-constructible. The elaborator is their sole
+/// producer; constraints normalize into [`Constraint`] before solver use,
+/// while declarations remain ordered surface trees until elaboration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaticFragmentPolicy {
+    pub source_constructible: bool,
+    pub runtime_lowerable: bool,
+    pub user_comparable: bool,
+}
+
+pub const STATIC_FRAGMENT_POLICY: StaticFragmentPolicy = StaticFragmentPolicy {
+    source_constructible: false,
+    runtime_lowerable: false,
+    user_comparable: false,
+};
+
 /// An associated-type equation attached to a trait constraint.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProjectionEquation {
@@ -165,6 +184,20 @@ mod tests {
             }
             .sort(),
             constructor_sort
+        );
+    }
+
+    #[test]
+    fn static_fragment_policy_forbids_source_construction_runtime_lowering_and_comparison() {
+        assert!(Sort::Fragment(crate::ast::StaticFragmentKind::Constraint).is_static_fragment());
+        assert!(Sort::Fragment(crate::ast::StaticFragmentKind::Declaration).is_static_fragment());
+        assert_eq!(
+            STATIC_FRAGMENT_POLICY,
+            StaticFragmentPolicy {
+                source_constructible: false,
+                runtime_lowerable: false,
+                user_comparable: false,
+            }
         );
     }
 

@@ -1774,6 +1774,13 @@ impl Analyzer {
                         ));
                         false
                     }
+                    Sort::Fragment(kind) => {
+                        self.error(format!(
+                            "{} fragment parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type",
+                            describe_compile_sort(Sort::Fragment(kind))
+                        ));
+                        false
+                    }
                     Sort::ParameterPack => {
                         self.error(format!(
                             "parameter-group pack `{name}` in `{trait_name}.{member_name}` can only be used through a complete repeated-group expansion"

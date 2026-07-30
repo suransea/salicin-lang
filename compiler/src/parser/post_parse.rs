@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AssociatedTypeBinding, Binding, CompileParam, Expr, ExtendMember, Function, FunctionEffects,
-    Item, Sort, Stmt, TraitMember, Type, USizeConst, VariantFields,
+    Item, Sort, StaticFragmentKind, Stmt, TraitMember, Type, USizeConst, VariantFields,
 };
 
 pub(crate) fn infer_extend_parameters(items: &mut [Item]) -> Result<(), String> {
@@ -507,6 +507,15 @@ fn validate_function_scopes(
         }
     }
     let mut compile_names = HashSet::new();
+    let fragments = function
+        .compile_groups
+        .iter()
+        .flatten()
+        .filter_map(|parameter| match parameter.kind {
+            Sort::Fragment(kind) => Some((parameter.name.clone(), kind)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
     for parameter in function.compile_groups.iter().flatten() {
         if !compile_names.insert(parameter.name.clone()) {
             return Err(format!(
@@ -531,12 +540,14 @@ fn validate_function_scopes(
         validate_type_regions(&parameter.ty, &regions)?;
         validate_type_accesses(&parameter.ty, &accesses)?;
         validate_type_effects(&parameter.ty, &effects)?;
+        validate_type_static_fragments(&parameter.ty, &fragments)?;
     }
     if let Some(return_type) = &mut function.return_type {
         normalize_type_region_qualifiers(return_type, &regions, &accesses)?;
         validate_type_regions(return_type, &regions)?;
         validate_type_accesses(return_type, &accesses)?;
         validate_type_effects(return_type, &effects)?;
+        validate_type_static_fragments(return_type, &fragments)?;
     }
     for parameter in &function.effects.parameters {
         if !effects.contains(parameter) {
@@ -548,6 +559,7 @@ fn validate_function_scopes(
         validate_type_regions(effect, &regions)?;
         validate_type_accesses(effect, &accesses)?;
         validate_type_effects(effect, &effects)?;
+        validate_type_static_fragments(effect, &fragments)?;
     }
     for predicate in &mut function.where_predicates {
         normalize_type_region_qualifiers(&mut predicate.subject, &regions, &accesses)?;
@@ -556,6 +568,8 @@ fn validate_function_scopes(
         validate_type_regions(&predicate.trait_ref, &regions)?;
         validate_type_effects(&predicate.subject, &effects)?;
         validate_trait_ref_effects(&predicate.trait_ref, &effects)?;
+        validate_type_static_fragments(&predicate.subject, &fragments)?;
+        validate_type_static_fragments(&predicate.trait_ref, &fragments)?;
         for binding in &mut predicate.associated_types {
             validate_associated_binding_scopes(binding, &regions, &accesses, &effects)?;
         }
@@ -908,6 +922,88 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
     }
+}
+
+fn validate_type_static_fragments(
+    ty: &Type,
+    fragments: &HashMap<String, StaticFragmentKind>,
+) -> Result<(), String> {
+    match ty {
+        Type::Named(name, arguments) => {
+            if arguments.is_empty() {
+                if let Some(kind) = fragments.get(name) {
+                    let sort = match kind {
+                        StaticFragmentKind::Constraint => "constraint",
+                        StaticFragmentKind::Declaration => "declaration",
+                    };
+                    return Err(format!(
+                        "{sort} fragment parameter `{name}` cannot be used as a runtime type"
+                    ));
+                }
+            }
+            for argument in arguments {
+                validate_type_static_fragments(argument, fragments)?;
+            }
+        }
+        Type::NamedArgs(name, arguments) => {
+            if arguments.is_empty() {
+                if let Some(kind) = fragments.get(name) {
+                    let sort = match kind {
+                        StaticFragmentKind::Constraint => "constraint",
+                        StaticFragmentKind::Declaration => "declaration",
+                    };
+                    return Err(format!(
+                        "{sort} fragment parameter `{name}` cannot be used as a runtime type"
+                    ));
+                }
+            }
+            for argument in arguments {
+                validate_type_static_fragments(&argument.ty, fragments)?;
+            }
+        }
+        Type::Borrow { pointee, .. }
+        | Type::Array(pointee, _)
+        | Type::ArrayApplication {
+            element: pointee, ..
+        } => validate_type_static_fragments(pointee, fragments)?,
+        Type::Tuple(fields) => {
+            for field in fields {
+                validate_type_static_fragments(field, fragments)?;
+            }
+        }
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            for ty in groups.iter().flatten() {
+                validate_type_static_fragments(ty, fragments)?;
+            }
+            if let Some(error) = &effects.failure {
+                validate_type_static_fragments(error, fragments)?;
+            }
+            for effect in &effects.custom {
+                validate_type_static_fragments(effect, fragments)?;
+            }
+            validate_type_static_fragments(result, fragments)?;
+        }
+        Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::U128
+        | Type::USize
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
+    }
+    Ok(())
 }
 
 fn validate_trait_ref_effects(trait_ref: &Type, effects: &HashSet<String>) -> Result<(), String> {

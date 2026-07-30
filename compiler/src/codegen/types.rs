@@ -1111,6 +1111,7 @@ impl Analyzer {
             }
             Sort::Region
             | Sort::Parameters
+            | Sort::Fragment(_)
             | Sort::ParameterPack
             | Sort::EffectConstructor { .. } => None,
             Sort::Named(compile_type) => match expression {
@@ -1227,6 +1228,7 @@ impl Analyzer {
             },
             Sort::Region
             | Sort::Parameters
+            | Sort::Fragment(_)
             | Sort::ParameterPack
             | Sort::ParameterModifier
             | Sort::EffectConstructor { .. } => None,
@@ -1415,6 +1417,7 @@ impl Analyzer {
             }
             Sort::Region => false,
             Sort::Parameters => false,
+            Sort::Fragment(_) => false,
             Sort::ParameterPack => false,
             Sort::ParameterModifier => self
                 .probe_parameter_modifier_source(expression, &context.type_substitutions)

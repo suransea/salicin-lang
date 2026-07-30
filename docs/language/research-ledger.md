@@ -540,6 +540,14 @@ elaboration validate all three contracts.
   tracks staged let insertion as an effect to preserve evaluation semantics.
   Salicin's narrower contract must likewise keep declaration fragments erased
   and prevent runtime effects or values from crossing into syntax metadata.
+- [First-Class Constrained Types: Elaboration, Type Inference, Approximation,
+  and a Characterization (ICFP
+  2026)](https://icfp26.sigplan.org/details/icfp-2026-icfp-papers/29/First-Class-Constrained-Types-Elaboration-Type-Inference-Approximation-and-a-Char)
+  separates the surface representation of constraints from their elaborated
+  typing meaning. Salicin adopts the narrower compiler-owned boundary:
+  `constraint` fragments normalize into solver IR, while `declaration`
+  fragments retain order and provenance; neither is source-constructible,
+  user-comparable, or runtime-lowerable.
 
 ## Review Gate
 

@@ -127,7 +127,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 421);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 422);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -511,16 +511,20 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
 fn constraint_query_contracts_are_explicit_and_bounded() {
     for malformed in [
         EDITION_2026_SORTS.replace("pub let constraint: sort(2)", "pub let constraint: sort(1)"),
+        EDITION_2026_SORTS.replace(
+            "pub let declaration: sort(2)",
+            "pub let declaration: sort(1)",
+        ),
+        EDITION_2026_SORTS.replace("pub let declaration: sort(2)", ""),
         EDITION_2026_SORTS.replace("comptime right: constraint", "comptime right: type"),
         EDITION_2026_SORTS.replace("): bool = builtin()", "): usize = builtin()"),
     ] {
         let modules = edition_2026_test_modules(&[("sorts", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(
-            error
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.contains("constraint")),
+            error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains("constraint") || diagnostic.contains("declaration")
+            }),
             "{:?}",
             error.diagnostics()
         );

@@ -2297,6 +2297,43 @@ fn parses_effect_parameters_in_with_clauses() {
 }
 
 #[test]
+fn parses_compiler_owned_static_fragment_sorts_and_rejects_defaults() {
+    let program =
+        parse("let inspect(comptime c: constraint, comptime d: declaration)(): () = { () }\n")
+            .unwrap();
+    let Item::Function(function) = &program.items[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(
+        function.compile_groups[0][0].kind,
+        Sort::Fragment(crate::ast::StaticFragmentKind::Constraint)
+    );
+    assert_eq!(
+        function.compile_groups[0][1].kind,
+        Sort::Fragment(crate::ast::StaticFragmentKind::Declaration)
+    );
+
+    let constraint = parse("let bad(comptime c: constraint = value)(): () = { () }\n").unwrap_err();
+    assert!(constraint
+        .message
+        .contains("defaults for constraint fragments are not supported"));
+    let declaration =
+        parse("let bad(comptime d: declaration = value)(): () = { () }\n").unwrap_err();
+    assert!(declaration
+        .message
+        .contains("defaults for declaration fragments are not supported"));
+
+    let runtime = parse("let bad(comptime d: declaration)(value: d): () = { () }\n").unwrap_err();
+    assert!(
+        runtime
+            .message
+            .contains("declaration fragment parameter `d` cannot be used as a runtime type"),
+        "{}",
+        runtime.message
+    );
+}
+
+#[test]
 fn parses_trait_self_effect_parameter_in_member_rows() {
     let program = parse(
             "let handle = trait(comptime self: effect) {\n\

@@ -342,6 +342,9 @@ pub enum Sort {
     /// A normalized, order-insensitive row of zero or more effect identities.
     Effects,
     Parameters,
+    /// A compiler-produced, erased surface fragment. Source expressions
+    /// cannot construct or lower values of either fragment sort.
+    Fragment(StaticFragmentKind),
     /// A variadic pack of `parameters` schemas used as repeated runtime groups
     /// by compiler-validated control contracts such as `match`.
     ParameterPack,
@@ -356,6 +359,12 @@ pub enum Sort {
     },
     /// A value whose compile-time type is a source-declared closed type.
     Named(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StaticFragmentKind {
+    Constraint,
+    Declaration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -385,6 +394,10 @@ impl Sort {
 
     pub fn is_parameter_modifier(&self) -> bool {
         matches!(self, Self::ParameterModifier)
+    }
+
+    pub fn is_static_fragment(&self) -> bool {
+        matches!(self, Self::Fragment(_))
     }
 }
 

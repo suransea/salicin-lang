@@ -590,6 +590,7 @@ impl Analyzer {
                     // concrete instance is lowered again after substituting its selected row.
                     Sort::Effect | Sort::Effects => EFFECT_UNSAFE_MARKER.to_owned(),
                     Sort::Parameters => continue,
+                    Sort::Fragment(_) => continue,
                     Sort::ParameterPack => continue,
                     Sort::ParameterModifier => PARAMETER_MODIFIER_MOVE_MARKER.to_owned(),
                     Sort::Region => continue,
@@ -865,6 +866,7 @@ impl Analyzer {
                         }
                         Sort::Region
                         | Sort::Parameters
+                        | Sort::Fragment(_)
                         | Sort::ParameterPack
                         | Sort::TypeConstructor { .. }
                         | Sort::EffectConstructor { .. } => continue,
@@ -1488,6 +1490,7 @@ fn compile_parameter_sort_label(kind: &Sort) -> String {
         Sort::Effect => "effect".to_owned(),
         Sort::Effects => "effects".to_owned(),
         Sort::Parameters => "parameters".to_owned(),
+        Sort::Fragment(kind) => describe_compile_sort(Sort::Fragment(*kind)),
         Sort::ParameterPack => "parameter pack".to_owned(),
         Sort::ParameterModifier => "parameter modifier".to_owned(),
         Sort::TypeConstructor { parameter_groups } => {

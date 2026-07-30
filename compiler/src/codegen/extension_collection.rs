@@ -255,6 +255,7 @@ impl Analyzer {
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
+                | Sort::Fragment(_)
                 | Sort::Named(_) => {
                     unreachable!("associated types only store type sorts")
                 }
@@ -1918,6 +1919,7 @@ impl Analyzer {
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
+                | Sort::Fragment(_)
                 | Sort::Named(_) => {
                     unreachable!("associated types only store type sorts")
                 }
@@ -2094,6 +2096,7 @@ impl Analyzer {
                 | Sort::USize
                 | Sort::Effect
                 | Sort::Effects
+                | Sort::Fragment(_)
                 | Sort::Named(_) => {
                     unreachable!("associated types only store type sorts")
                 }

@@ -192,7 +192,11 @@ compiler-owned abstract sorts use `: sort(2)`, while user-defined finite sorts u
 Finite members are named through their Sort, as in `optimization.release`.
 
 `type`, `region`, `effect`, `effects`, and `parameters` are compiler-owned
-abstract compile-time sorts. `string` is an ordinary runtime type accepted by
+abstract compile-time sorts. `constraint` and `declaration` are erased static
+fragment sorts produced only by syntax elaboration: source cannot construct,
+default, explicitly pass, compare, store, or use either as a runtime type.
+Constraint fragments normalize into solver goals; declaration fragments retain
+ordered surface structure and provenance until elaboration. `string` is an ordinary runtime type accepted by
 CTFE. `access` is the finite sort `sort(1) { shared mut }`. `bool` remains an ordinary
 closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
 or defined finite sort can be used the same way.

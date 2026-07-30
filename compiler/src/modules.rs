@@ -3468,6 +3468,8 @@ impl Resolver {
                     | "effect"
                     | "effects"
                     | "parameters"
+                    | "constraint"
+                    | "declaration"
             ) {
                 continue;
             }

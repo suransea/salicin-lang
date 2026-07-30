@@ -163,6 +163,8 @@ compile_parameter_sort =
   | contextual("effect")
   | contextual("effects")
   | contextual("parameters")
+  | contextual("constraint")
+  | contextual("declaration")
   | IDENT
   | constructor_sort ;
 
@@ -177,6 +179,10 @@ constructor_sort_group =
 constructor_sort_parameter =
     contextual("comptime"), IDENT, ":", compile_parameter_sort ;
 ```
+
+`constraint` and `declaration` classify compiler-produced static fragments.
+They cannot have defaults, be supplied as explicit source arguments, or occur
+as runtime types. Their only producer is syntax-contract elaboration.
 
 A compile-time parameter is always introduced by `comptime`. Whether a
 parenthesized declaration group is compile-time or runtime is therefore

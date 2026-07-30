@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.248.0 - 2026-07-30
+
+- Added compiler-owned `constraint` and `declaration` static fragment sorts.
+  They cannot have defaults, be supplied explicitly by source, appear as
+  runtime types, lower to runtime storage, or participate in user equality.
+- Core-bundle validation now requires the exact public abstract `sort(2)`
+  declarations for both fragment classifiers. Parser and semantic diagnostics
+  distinguish the two fragment kinds instead of treating them as ordinary
+  named sorts.
+- Recorded the phase boundary for the following contract-elaboration work:
+  the existing `test` declaration remains an incomplete legacy contract, and
+  `extend` and `requires` do not gain decorative runtime-callable stand-ins.
+
 ## 0.247.0 - 2026-07-30
 
 - Completed LSP-5 by separating protocol input, analysis, and publication.

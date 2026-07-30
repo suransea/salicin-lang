@@ -57,8 +57,10 @@ the unit-returning `throwing(string)` body without representing the static
 name. The other two forms cannot be described honestly with an ordinary
 runtime callable because their operands include constraints and declarations.
 
-This milestone introduces erased classifiers for constraint and declaration
-fragments, then makes all three forms elaborate through compiler-validated
+The erased `constraint` and `declaration` classifiers are now implemented:
+only syntax elaboration may produce them, and neither can cross into runtime
+types, storage, effects, explicit source arguments, or user equality. The
+active work now makes all three forms elaborate through compiler-validated
 source contracts. Surface source locations remain authoritative for
 diagnostics; no generated contract invocation may leak into user errors.
 

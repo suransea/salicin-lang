@@ -1939,6 +1939,8 @@ impl Parser {
                 "effect" => Some(Sort::Effect),
                 "effects" => Some(Sort::Effects),
                 "parameters" => Some(Sort::Parameters),
+                "constraint" => Some(Sort::Fragment(crate::ast::StaticFragmentKind::Constraint)),
+                "declaration" => Some(Sort::Fragment(crate::ast::StaticFragmentKind::Declaration)),
                 _ => Some(Sort::Named(kind)),
             };
             if let Some(parameter_kind) = parameter_kind {
@@ -2161,6 +2163,12 @@ impl Parser {
             Sort::Parameters => {
                 return Err(self
                     .error_here("defaults for parameter-schema parameters are not supported yet"));
+            }
+            Sort::Fragment(kind) => {
+                return Err(self.error_here(format!(
+                    "defaults for {} fragments are not supported",
+                    static_fragment_name(kind)
+                )));
             }
             Sort::ParameterPack => {
                 return Err(self.error_here("parameter packs cannot have defaults"));
@@ -5306,6 +5314,13 @@ impl Parser {
             line: token.line,
             column: token.column,
         }
+    }
+}
+
+fn static_fragment_name(kind: crate::ast::StaticFragmentKind) -> &'static str {
+    match kind {
+        crate::ast::StaticFragmentKind::Constraint => "constraint",
+        crate::ast::StaticFragmentKind::Declaration => "declaration",
     }
 }
 

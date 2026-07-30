@@ -1410,6 +1410,14 @@ impl Analyzer {
                         ));
                         return None;
                     }
+                    Sort::Fragment(kind) => {
+                        self.error(format!(
+                            "explicit {} fragment argument `{}` in `{owner}` is not allowed; static fragments are produced only by syntax elaboration",
+                            describe_compile_sort(Sort::Fragment(kind)),
+                            parameter.name
+                        ));
+                        return None;
+                    }
                     Sort::ParameterPack => {
                         self.error(format!(
                             "explicit parameter-group pack argument `{}` in `{owner}` is not supported; it is inferred from the trailing case groups",

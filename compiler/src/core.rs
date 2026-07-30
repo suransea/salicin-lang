@@ -12,8 +12,8 @@ use std::sync::OnceLock;
 
 use crate::ast::{
     AssociatedKind, CompileParam, CompileParamDefault, EnumDef, Function, FunctionEffects, Item,
-    ItemOrigin, PassMode, Program, Sort, TraitDef, TraitMember, Type, TypeFormDef, VariantDef,
-    VariantFields, Visibility,
+    ItemOrigin, PassMode, Program, Sort, StaticFragmentKind, TraitDef, TraitMember, Type,
+    TypeFormDef, VariantDef, VariantFields, Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -1841,30 +1841,29 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
 }
 
 fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<String>) {
-    let constraints = program
-        .items
-        .iter()
-        .enumerate()
-        .filter(
-            |(_, item)| matches!(item, Item::Sort(definition) if definition.name == "constraint"),
-        )
-        .collect::<Vec<_>>();
-    if constraints.len() != 1 {
-        diagnostics.push(
-            "core must declare exactly one `pub let constraint: sort(2)` contract".to_owned(),
-        );
-    } else {
-        let (index, Item::Sort(definition)) = constraints[0] else {
+    for name in ["constraint", "declaration"] {
+        let fragments = program
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches!(item, Item::Sort(definition) if definition.name == name))
+            .collect::<Vec<_>>();
+        if fragments.len() != 1 {
+            diagnostics.push(format!(
+                "core must declare exactly one `pub let {name}: sort(2)` contract"
+            ));
+            continue;
+        }
+        let (index, Item::Sort(definition)) = fragments[0] else {
             unreachable!()
         };
         if definition.level != 2
             || definition.members.is_some()
             || program.item_visibilities[index] != Visibility::Public
         {
-            diagnostics.push(
-                "compile-time constraint sort must have shape `pub let constraint: sort(2)`"
-                    .to_owned(),
-            );
+            diagnostics.push(format!(
+                "compile-time {name} fragment sort must have shape `pub let {name}: sort(2)`"
+            ));
         }
     }
 
@@ -1963,7 +1962,7 @@ fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<S
                                     },
                                     CompileParam {
                                         name: "right".to_owned(),
-                                        kind: Sort::Named("constraint".to_owned()),
+                                        kind: Sort::Fragment(StaticFragmentKind::Constraint),
                                         default: None,
                                     },
                                 ]]
@@ -2252,6 +2251,7 @@ fn is_core_support_item(name: &str) -> bool {
             | "sort_of"
             | "type_of"
             | "constraint"
+            | "declaration"
             | "is"
     )
 }

@@ -234,9 +234,11 @@ pub(super) fn static_value_from_source(source: &Type, sort: &Sort) -> Option<Sta
             }
             _ => None,
         },
-        Sort::Universe(_) | Sort::Parameters | Sort::ParameterPack | Sort::ParameterModifier => {
-            None
-        }
+        Sort::Universe(_)
+        | Sort::Parameters
+        | Sort::Fragment(_)
+        | Sort::ParameterPack
+        | Sort::ParameterModifier => None,
     }
 }
 
@@ -579,6 +581,8 @@ fn render_sort(sort: &Sort) -> String {
         Sort::Effect => "effect".to_owned(),
         Sort::Effects => "effects".to_owned(),
         Sort::Parameters => "parameters".to_owned(),
+        Sort::Fragment(crate::ast::StaticFragmentKind::Constraint) => "constraint".to_owned(),
+        Sort::Fragment(crate::ast::StaticFragmentKind::Declaration) => "declaration".to_owned(),
         Sort::ParameterPack => "...parameters".to_owned(),
         Sort::ParameterModifier => "(P: parameters): parameters".to_owned(),
         Sort::TypeConstructor { parameter_groups } => {
