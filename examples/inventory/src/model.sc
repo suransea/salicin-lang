@@ -1,19 +1,19 @@
 let string = core.string.string
 
 /// Product data owns its validated UTF-8 name.
-pub(package) let product = struct {
-  name: string,
-  units: i32,
-  unit_price: i32,
+pub let product = struct {
+  pub name: string,
+  pub units: i64,
+  pub unit_price: i64,
 }
 
 /// Computes a value without exposing a product's representation.
-pub(package) let valued = trait {
-  let value(self: borrow(self))(): i32
+pub let valued = trait {
+  let value(self: borrow(self))(): i64
 }
 
 extend(product) {
-  let new(move name: string, units: i32, unit_price: i32): product = {
+  let new(move name: string, units: i64, unit_price: i64): product = {
     product { name: name, units: units, unit_price: unit_price }
   }
 
@@ -23,7 +23,7 @@ extend(product) {
 }
 
 extend(product, valued) {
-  let value(self: borrow(self))(): i32 = {
+  let value(self: borrow(self))(): i64 = {
     self.units * self.unit_price
   }
 }

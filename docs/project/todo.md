@@ -20,22 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Standard Library Usability
-
-### Acceptance
-
-- [ ] **STD-3 — Practical standard-library acceptance.** Add a multi-module
-  command-line example and native suites that read arguments or input, parse
-  text, process arrays/slices/vectors, format output, use files where
-  available, and exercise unit-returning, string-throwing standard assertions.
-  Verify Unicode boundaries,
-  errors, early exits, allocation balance, deterministic output, and
-  documentation examples.
-
-P1 is complete only when every workstream above and the roadmap milestone exit
-conditions are satisfied.
-
-## P2: Persistent Incremental Builds
+## P0: Persistent Incremental Builds
 
 - [ ] **INCR-2 — Persistent cache contract.** Specify the cache root, schema
   version, fingerprint mapping, LLVM IR payload, metadata, atomic publication,
@@ -64,7 +49,10 @@ conditions are satisfied.
   aliases, module paths, source bytes, corrupt entries, failed compilation,
   and concurrent readers.
 
-## P2: LSP Diagnostics Baseline
+P0 is complete only when every workstream above and the roadmap milestone exit
+conditions are satisfied.
+
+## P1: LSP Diagnostics Baseline
 
 - [ ] **LSP-1 — Structured diagnostic origins.** Replace resolver
   message-parsing and remaining location fallbacks with structured document

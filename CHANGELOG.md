@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.237.0 - 2026-07-30
+
+- Completed STD-3 and the standard-library usability milestone with a
+  multi-module `examples/inventory` command that parses arguments, processes
+  arrays, slices, vectors, and Unicode text, formats deterministic output,
+  and writes through explicit file/stdout authority.
+- Added source assertions plus native success, malformed/missing input,
+  repeat-output, file, early-exit, and replacement-allocator coverage;
+  allocations balance after both normal return and `throwing(string)`.
+- Updated the research ledger, status, standard-library conformance, README,
+  TODO, and roadmap, promoting persistent incremental builds to the active
+  milestone.
+
 ## 0.236.0 - 2026-07-30
 
 - Replaced boolean-returning test registrations and the dedicated

@@ -59,6 +59,17 @@ reads and writes, `fsync`, three-origin seek, and bounded whole-file helpers.
 Paths are existing UTF-8 `str` views passed byte-exactly after embedded-NUL
 validation.
 
+The standard-library usability milestone is complete. The multi-module
+`examples/inventory` command parses process arguments, owns Unicode product
+names, processes fixed arrays, borrowed slices, and vectors, formats one
+stable report, and writes it byte-exactly to stdout and a caller-selected
+file. Its source registrations cover successful and invalid parsing,
+collection summaries, UTF-8 byte boundaries, and exact formatting. Native
+acceptance additionally covers missing/invalid arguments, early exits,
+repeat-run determinism, stdin and file failures, and a replacement-allocator
+probe that observes zero live allocations after both normal return and
+`throwing(string)` transfer.
+
 The command-line surface is:
 
 ```text
@@ -585,6 +596,8 @@ Repository gates cover:
 - batched native execution fixtures that use one generated test runner and
   link per compatible group, with independent processes for expected traps;
 - cleanup, alias, escape, and allocation behavior;
+- the practical multi-module standard-library command, its source assertions,
+  deterministic files/stdout, errors, early exits, and allocation balance;
 - deterministic diagnostics, IR, symbol ordering, and lockfiles;
 - classified documentation examples;
 - formatting and warning-free Clippy.
@@ -603,14 +616,11 @@ The editor API remains transport-independent. Structured resolver diagnostics,
 versioned in-memory document state, incremental parsing, and an LSP transport
 are not yet implemented.
 
-The `examples/inventory` package is the current nontrivial library acceptance program. It combines
-modules, owning strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
-
 ## Known Boundaries
 
 The principal incomplete areas are:
 
-- host-facing modules within `std`;
+- persistent reuse of unchanged compilation artifacts;
 - complete asynchronous execution;
 - stable ABI and package distribution.
 

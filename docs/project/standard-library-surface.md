@@ -349,8 +349,9 @@ Each public operation needs:
 - deterministic output and diagnostics independent of checkout path;
 - no allocator leaks or double cleanup in success, error, and early-exit paths.
 
-The milestone is complete only when the multi-module acceptance example in
-`STD-3` uses this public surface without private helpers.
+The completed milestone is evidenced by the multi-module
+`examples/inventory` command and native acceptance suites using the public
+surface without private runtime helpers.
 
 ## Research basis
 

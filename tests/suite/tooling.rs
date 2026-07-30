@@ -723,20 +723,66 @@ fn ledger_example_exercises_the_m0_core_as_a_complete_program() {
 }
 
 #[test]
-fn inventory_example_exercises_lib1_across_modules() {
+fn inventory_example_is_a_practical_multimodule_standard_library_acceptance() {
     let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/inventory");
+    let temporary = TestDirectory::new();
+    let executable = temporary.join("inventory");
 
     let checked = salic()
         .arg("check")
         .arg(&package)
         .output()
-        .expect("check LIB1 inventory example");
+        .expect("check inventory acceptance example");
     assert!(checked.status.success(), "{}", output_text(&checked));
 
-    let output = salic()
-        .arg("run")
+    let tests = salic()
+        .arg("test")
         .arg(&package)
         .output()
-        .expect("run LIB1 inventory example");
-    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+        .expect("run inventory source assertions");
+    assert_eq!(tests.status.code(), Some(0), "{}", output_text(&tests));
+    assert_eq!(
+        String::from_utf8_lossy(&tests.stderr),
+        "salic: test result: 4 passed; 0 failed; 4 selected\n"
+    );
+
+    let built = salic()
+        .arg("build")
+        .arg(&package)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("build inventory acceptance example");
+    assert!(built.status.success(), "{}", output_text(&built));
+
+    let expected = b"items=2\ntotal=41\nname_bytes=4\n";
+    for name in ["first.txt", "second.txt"] {
+        let report = temporary.join(name);
+        let output = Command::new(&executable)
+            .arg(&report)
+            .args(["A", "2", "10", "柳", "3", "7"])
+            .output()
+            .expect("run inventory acceptance example");
+        assert_eq!(output.status.code(), Some(0), "{}", output_text(&output));
+        assert_eq!(output.stdout, expected);
+        assert!(output.stderr.is_empty(), "{}", output_text(&output));
+        assert_eq!(fs::read(report).expect("read inventory report"), expected);
+    }
+
+    let invalid = Command::new(&executable)
+        .args(["unused.txt", "A", "not-a-number", "10", "柳", "3", "7"])
+        .output()
+        .expect("run invalid inventory input");
+    assert_eq!(invalid.status.code(), Some(3), "{}", output_text(&invalid));
+    assert!(invalid.stdout.is_empty(), "{}", output_text(&invalid));
+    assert_eq!(invalid.stderr, b"invalid first units\n");
+
+    let missing = Command::new(&executable)
+        .output()
+        .expect("run inventory without arguments");
+    assert_eq!(missing.status.code(), Some(2), "{}", output_text(&missing));
+    assert_eq!(
+        missing.stderr,
+        b"usage: inventory OUTPUT NAME UNITS PRICE NAME UNITS PRICE\n"
+    );
 }

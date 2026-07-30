@@ -1090,6 +1090,94 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
 }
 
 #[test]
+fn standard_library_acceptance_balances_allocations_on_return_and_throw() {
+    let directory = TestDirectory::new();
+    let source = directory.write(
+        "main.sc",
+        r#"let live_allocations(): i64 = foreign(c, "live_allocations")
+
+let exercise: with(core.error.throwing(core.string.string))(fail: bool): () = {
+  let mut writer = alloc.string.string_writer.new()
+  "柳".display(writer)
+  let number: i64 = 42
+  number.display(writer)
+  let text = writer.finish()
+  let mut values = alloc.vec.vec(core.string.string).new()
+  values.push(text)
+  values.push("done")
+  if fail {
+    core.error.throw("stop")
+  }
+}
+
+let main(): i32 = {
+  let success: core.result(core.string.string)(()) = try { exercise(false) }
+  match success
+    { err(_) -> return(1) }
+    { ok(_) -> () }
+  if unsafe { live_allocations() } != 0 { return(2) }
+
+  let failure: core.result(core.string.string)(()) = try { exercise(true) }
+  match failure
+    { ok(_) -> return(3) }
+    { err(message) ->
+      let expected: string = "stop"
+      if message != expected { return(4) }
+    }
+  if unsafe { live_allocations() } == 0 { 42 } else { 5 }
+}"#,
+    );
+    let ir = directory.join("main.ll");
+    let executable = directory.join("main");
+    let custom = directory.write(
+        "custom.c",
+        "#define _POSIX_C_SOURCE 200112L\n\
+         #include <stdint.h>\n\
+         #include <stdlib.h>\n\
+         static int64_t live;\n\
+         void *salicin_alloc(uint64_t size, uint64_t align) {\n\
+           void *pointer = NULL;\n\
+           if (size == 0) return NULL;\n\
+           if (align < sizeof(void *)) align = sizeof(void *);\n\
+           if (posix_memalign(&pointer, (size_t)align, (size_t)size) != 0) return NULL;\n\
+           live += 1;\n\
+           return pointer;\n\
+         }\n\
+         void salicin_dealloc(void *pointer, uint64_t size, uint64_t align) {\n\
+           (void)size; (void)align;\n\
+           if (pointer != NULL) { live -= 1; free(pointer); }\n\
+         }\n\
+         int64_t live_allocations(void) { return live; }\n",
+    );
+    let emitted = salic()
+        .args(["emit-ir"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("emit standard-library allocation probe");
+    assert!(emitted.status.success(), "{}", output_text(&emitted));
+
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/allocator.c");
+    let linked = Command::new("/usr/bin/clang")
+        .args(["-Wno-override-module", "-x", "ir"])
+        .arg(&ir)
+        .args(["-x", "c", "-std=c11"])
+        .arg(&custom)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link standard-library allocation probe");
+    assert!(linked.status.success(), "{}", output_text(&linked));
+
+    let output = Command::new(&executable)
+        .output()
+        .expect("run standard-library allocation probe");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m1_struct_programs_run_with_expected_result() {
     let fixtures = [
         "struct_fields.sc",

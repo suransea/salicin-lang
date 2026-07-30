@@ -26,8 +26,15 @@ cargo build --release
 target/release/salic run examples/basics.sc
 ```
 
-`examples/inventory` is the main library acceptance example. It combines modules, owning UTF-8
-strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
+`examples/inventory` is the practical standard-library acceptance example. It
+parses command-line fields, processes arrays, slices, vectors, and Unicode
+text across modules, formats a deterministic report, writes it to a file and
+stdout, and carries explicit `io` authority.
+
+```sh
+salic run examples/inventory -- report.txt A 2 10 柳 3 7
+salic test examples/inventory
+```
 
 Common commands:
 

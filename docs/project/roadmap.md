@@ -47,109 +47,7 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Standard Library Usability
-
-The language core can already express ownership-sensitive containers and
-effectful programs, but the library surface is not yet sufficient for ordinary
-command-line applications. `string` owns validated UTF-8 and exposes borrowed
-text, but lacks mutation, character iteration, search, and formatting.
-`array`, `slice`, and `vec` do not yet share a consistent safe-access and
-algorithm vocabulary.
-The source-backed `std` ownership layer and native target boundary are in place, but
-its host-facing modules are not yet implemented. `test("name")` registrations
-now have structured per-registration failure, but do not yet have standard
-assertion helpers.
-The accepted [runtime text contract](text-runtime.md) now fixes literal
-storage, scalar validity, borrowed-view regions, UTF-8 validation and
-boundaries, equality, conversion failure, and iteration behavior. Static
-literal storage, the checked Unicode scalar domain, the loan-retaining
-borrowed view, and checked borrowed UTF-8 validation are implemented.
-Boundary-safe subviews, exact text equality, and ownership-preserving byte
-conversion with precise invalid-prefix offsets are implemented. Core `string`
-construction, capacity management, scalar/text append, and checked truncation
-are implemented. Checked owned ranges, ordering, prefix/suffix checks, and
-forward search complete the core `string` operations. Byte and Unicode-scalar
-iteration, scalar counting, and checked scalar lookup complete runtime text.
-The accepted [parsing and formatting contract](formatting.md) now has strict
-64-bit radix parsing, scalar/ASCII writer dispatch, an allocation-backed
-string writer, and the first concrete display/debug implementations. The
-accepted [contiguous-access contract](contiguous-access.md) is implemented for
-arrays, slices, and vectors. The accepted
-[borrowed-iteration contract](borrowed-iteration.md) is implemented for arrays
-and slices. The accepted
-[collection-mutation contract](collection-mutation.md) is implemented for
-arrays and slices. The accepted
-[vector-operations contract](vector-operations.md) completes checked access,
-slice extension, and copy mutation for vectors. The accepted
-[collection-algorithms contract](collection-algorithms.md) now completes
-common source-backed search, predicates, membership, and folds across arrays,
-slices, and vectors. The accepted
-[effect-callable syntax](effect-callable-syntax.md) and the accepted
-[synchronous host I/O contract](host-io.md), including console, process, and
-filesystem basics, is implemented. The accepted
-[structured test-support contract](test-support.md) implements
-per-registration failure handling, cleanup, message ownership, boolean
-migration, a dedicated result channel, and common source-backed assertions.
-The runner now lists and filters registrations deterministically, rejects
-duplicate names, and reports selected, passed, and failed counts. The active
-slice is practical multi-module standard-library acceptance.
-
-This milestone fills those gaps before adding more language features. It is
-delivered in small end-to-end slices:
-
-1. extend the implemented edition-matched `std` layer according to the
-   accepted [module, error, naming, and ownership contract](standard-library-surface.md);
-2. complete UTF-8 text and common collection operations;
-3. add parsing and source-backed formatting needed by I/O and test messages;
-4. add explicit synchronous console, process, and filesystem authority;
-5. build assertion helpers and runner ergonomics on the same formatting and I/O
-   contracts.
-
-The small prelude remains small. APIs live in explicit `std` modules, safe
-operations preserve UTF-8 and collection initialization invariants, and host
-operations require visible authority rather than introducing ambient I/O.
-
-Exit conditions:
-
-- the accepted [standard-library surface](standard-library-surface.md) records the initial module map,
-  naming conventions, ownership modes, error types, trap-versus-`option` or
-  `result` behavior, and portability boundary;
-- the accepted [runtime text contract](text-runtime.md) records literal
-  linkage, scalar validity, UTF-8 validation, borrow regions, byte boundaries,
-  conversion ownership, equality, iteration, and non-goals;
-- text has a zero-allocation runtime string literal, an invariant-preserving
-  borrowed UTF-8 view, a Unicode scalar value, byte and scalar iteration,
-  boundary-safe slicing, comparison, common search, and corresponding
-  `string` construction and mutation operations;
-- `array`, `slice`, and `vec` share `len`, `is_empty`, checked access,
-  first/last access, slicing or slice conversion, shared and mutable
-  iteration, common mutation, and search/fold predicates where their ownership
-  permits;
-- `option` and `result` expose common inspection, borrowing, transformation,
-  and fallback operations, and primitive numbers expose bounded conversion
-  and basic utility functions without bypassing checked arithmetic;
-- integer, boolean, Unicode scalar, and text parsing or formatting is
-  sufficient for diagnostics, console output, and assertion messages without
-  macros or reflection;
-- a real `std` host layer provides process arguments, synchronous stdin,
-  stdout and stderr, and deterministic file open/read/write/close with
-  explicit io authority and recoverable errors;
-- standard test support provides `assert`, equality and inequality
-  assertions, explicit failure, common `option`/`result` expectations, and
-  messages that identify the failing registration without aborting the
-  remaining runner;
-- `salic test` can list and filter registrations, while dependency tests
-  remain isolated unless their package is selected;
-- native examples exercise text parsing, collection processing, file or
-  console I/O, and standard assertions with deterministic cleanup and no
-  allocation leaks.
-
-The first milestone does not include Unicode normalization, locale-sensitive
-case mapping or collation, grapheme segmentation, regex, hash collections,
-networking, asynchronous I/O, formatting macros or interpolation syntax,
-property testing, mocking, or benchmarking.
-
-## Later: Persistent Incremental Builds
+## Now: Persistent Incremental Builds
 
 The existing schema-1 fingerprint already identifies the semantic and native
 inputs to one selected package-graph target. This milestone turns that
@@ -182,7 +80,7 @@ This milestone does not promise per-package reuse, cross-compiler cache
 compatibility, remote caching, eviction policy, or a stable binary artifact
 format.
 
-## Later: LSP Diagnostics Baseline
+## Next: LSP Diagnostics Baseline
 
 The transport-independent editor API already exposes UTF-8 byte ranges,
 UTF-16 positions, tokens, and phased diagnostics. This milestone adds a

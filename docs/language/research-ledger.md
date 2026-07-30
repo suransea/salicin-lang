@@ -205,6 +205,29 @@ Current research:
 - [Yarrow: Reconciling Effect Handlers and Region-Based Memory Management (2026)](https://arxiv.org/abs/2607.15876)
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
 - [A Relational Separation Logic for Effect Handlers (POPL 2026)](https://doi.org/10.1145/3776676)
+
+### Practical Acceptance Uses Independent End-to-End Oracles
+
+Reviewed on 2026-07-30 for the completed standard-library usability
+milestone. Library acceptance is not inferred from isolated API compilation.
+The repository runs a multi-module command as an external native process,
+supplies fixed Unicode and numeric arguments, and compares stdout and file
+bytes with an independently written oracle. Separate cases cover malformed
+input, missing input, throwing cleanup, stdin behavior, host errors, and live
+allocation balance.
+
+This follows recent evidence in two ways:
+
+- [Safe Coding (CACM 2026)](https://doi.org/10.1145/3795888) treats complete
+  user journeys and expected error conditions as integration evidence for
+  safely composed abstractions.
+- [On the Risk of Coding Before Testing (2026)](https://arxiv.org/abs/2607.05139)
+  finds that implementation-derived tests can reproduce the same fault in
+  their oracle, motivating fixed external expected bytes and error statuses.
+- [Handling Exceptions and Effects with Automatic Resource Analysis
+  (OOPSLA 2026)](https://2026.splashcon.org/details/oopsla-2026/8/Handling-Exceptions-and-Effects-with-Automatic-Resource-Analysis)
+  reinforces checking resource behavior across non-local control transfer;
+  Salicin therefore probes allocation balance after both return and throw.
 - [Virtualizing Continuations (PLDI 2026)](https://pldi26.sigplan.org/details/pldi-2026-papers/46/Virtualizing-Continuations)
 
 The implementation deliberately keeps test failure one-shot. Work on
