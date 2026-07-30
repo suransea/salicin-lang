@@ -22,13 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Standard Library Usability
 
-### Test support
-
-- [ ] **TEST-3 — Runner selection and reporting.** Add deterministic
-  `salic test --list` and name filtering, selected/failed/passed counts, and
-  clear exit behavior. Keep source order, duplicate-name diagnostics, package
-  selection, dependency isolation, and one-runner batching.
-
 ### Acceptance
 
 - [ ] **STD-3 — Practical standard-library acceptance.** Add a multi-module

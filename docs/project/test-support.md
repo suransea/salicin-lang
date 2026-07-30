@@ -129,6 +129,34 @@ result source. The descriptor number is passed in the private
 placed in the environment. The dedicated descriptor is compiler-owned and is
 not exposed as general source I/O authority.
 
+## Selection and Reporting
+
+`salic test --list` prints the selected package's registration names to
+stdout, one exact UTF-8 name per line in source order, and does not link or run
+the native runner. `--filter TEXT` selects names containing the non-empty
+UTF-8 text with case-sensitive matching. Listing and filtering compose, and a
+filter with no matches is a successful empty selection.
+
+Registration names must be unique across the selected package. Duplicate
+names are diagnosed before filtering, including duplicates from distinct file
+modules, and diagnostics never expose encoded compiler names. Dependency
+registrations remain excluded unless that dependency is selected as the
+primary package.
+
+An executing selection is compiled into one native runner and retains source
+order. After all selected registrations finish, stderr receives the stable
+summary:
+
+```text
+salic: test result: P passed; F failed; S selected
+```
+
+where `P + F = S`. Individual failures precede the summary in source order.
+Exit status is `0` for listing or an execution with no selected failures
+(including an empty selection), `1` for source/compiler errors, malformed
+runner reports, native runner failures, or any failed registration, and `2`
+for invalid CLI, package, or target selection.
+
 ## Diagnostics and Migration
 
 - A test body that returns neither `bool` under the compatibility rule nor the
@@ -145,7 +173,7 @@ second runner protocol.
 
 ## Required Evidence
 
-TEST-1 is complete only with:
+The complete test-support contract requires:
 
 - source-backed normal, unmessaged, and messaged outcome tests;
 - multiple failures and a later passing registration in one native runner;
@@ -154,12 +182,16 @@ TEST-1 is complete only with:
   transfer, and subsequent registration;
 - malformed/truncated report-channel tests;
 - static rejection of an escaping unrelated effect;
-- ordinary-build exclusion and dependency isolation; and
+- ordinary-build exclusion and dependency isolation;
+- source-order listing and case-sensitive UTF-8 substring filtering;
+- zero-, one-, and multiple-match count and exit-status coverage;
+- cross-module duplicate-name rejection without generated names;
+- primary-package listing, dependency isolation, and one-runner batching; and
 - formatter, grammar, specification, status, and CLI documentation updates.
 
 ## Non-Goals
 
-This slice does not add test filtering, listing, duplicate-name policy,
+This slice does not add regex or glob filters, historical prioritization,
 parallel execution, subprocess isolation per registration, panic recovery,
 captured user output, source locations in failure records, property testing,
 mocking, snapshots, or benchmarks.
@@ -178,3 +210,13 @@ Reviewed on 2026-07-30:
   2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
   motivates requiring destruction on the exceptional transfer path and
   interpreting failure only after that cleanup.
+- [DANTE: Data-Driven Test Case Selection and Prioritization for Long-Running
+  Test Suites (ICST 2026)](https://conf.researchr.org/details/icst-2026/icst-2026-research/44/DANTE-Data-Driven-Test-Case-Selection-and-Prioritization-for-Long-Running-Test-Suite)
+  reports that simple selection heuristics can outperform costly learned
+  policies under distribution shift. Salicin therefore starts with an
+  explicit stable filter and no hidden historical reordering.
+- [How Far Are We from Detecting Flaky Tests? On the Limits of Code-Based
+  Detection (2026)](https://arxiv.org/abs/2607.09345) finds that execution
+  evidence and environment often matter beyond test code. Salicin's summary
+  therefore records the exact selected execution population rather than
+  inferring or suppressing flaky outcomes.

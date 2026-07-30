@@ -986,10 +986,17 @@ fn collect_symbols(
                             unit.source.path, previous.source_path
                         ));
                     } else if !overloads.insert(shape) && !(name == "foreign" && function.builtin) {
-                        diagnostics.push(format!(
-                            "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
-                            unit.source.path, previous.source_path
-                        ));
+                        if let Some(test_name) = decode_test_registration_name(name) {
+                            diagnostics.push(format!(
+                                "{}: error: duplicate test registration name {test_name:?}",
+                                unit.source.path
+                            ));
+                        } else {
+                            diagnostics.push(format!(
+                                "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
+                                unit.source.path, previous.source_path
+                            ));
+                        }
                     }
                 } else if type_value_pair
                     && !occupied.contains(&namespace)
@@ -1069,6 +1076,18 @@ fn collect_symbols(
     }
 
     (symbols, module_paths, diagnostics)
+}
+
+fn decode_test_registration_name(name: &str) -> Option<String> {
+    let encoded = name.strip_prefix("$test$")?;
+    if !encoded.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
 }
 
 fn install_standard_namespaces(

@@ -172,6 +172,18 @@ fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
         .output()
         .expect("run primary package tests");
     assert_eq!(package.status.code(), Some(0), "{}", output_text(&package));
+
+    let listed = salic()
+        .args(["test", "--list"])
+        .arg(workspace.join("app"))
+        .output()
+        .expect("list only primary package tests");
+    assert_eq!(listed.status.code(), Some(0), "{}", output_text(&listed));
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout),
+        "primary package test\n"
+    );
+    assert!(listed.stderr.is_empty(), "{}", output_text(&listed));
 }
 
 #[test]
@@ -201,7 +213,8 @@ fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
         "salic: test \"messaged\" failed: 盐: expected 42\n\
          salic: test \"boolean migration\" failed\n\
          salic: test \"empty message\" failed: \n\
-         salic: test \"later registration\" failed: later still ran\n",
+         salic: test \"later registration\" failed: later still ran\n\
+         salic: test result: 0 passed; 4 failed; 4 selected\n",
         "{}",
         output_text(&output)
     );
@@ -328,10 +341,156 @@ fn standard_test_assertions_evaluate_once_and_report_stable_messages() {
          salic: test \"expect_none\" failed: expect_none failed: found some(9)\n\
          salic: test \"expect_ok\" failed: expect_ok failed: found err(0)\n\
          salic: test \"expect_err\" failed: expect_err failed: found ok(11)\n\
-         salic: test \"fail\" failed: explicit failure\n",
+         salic: test \"fail\" failed: explicit failure\n\
+         salic: test result: 0 passed; 8 failed; 8 selected\n",
         "{}",
         output_text(&failed)
     );
+}
+
+#[test]
+fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write(
+        "selection.sc",
+        "test(\"zeta\") { false }\n\
+         test(\"alpha\") { true }\n\
+         test(\"alphabet\") { false }\n",
+    );
+
+    let listed = salic()
+        .args(["test", "--list"])
+        .arg(&source)
+        .output()
+        .expect("list tests");
+    assert_eq!(listed.status.code(), Some(0), "{}", output_text(&listed));
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout),
+        "zeta\nalpha\nalphabet\n"
+    );
+    assert!(listed.stderr.is_empty(), "{}", output_text(&listed));
+
+    let filtered_list = salic()
+        .args(["test", "--list", "--filter", "alpha"])
+        .arg(&source)
+        .output()
+        .expect("list filtered tests");
+    assert_eq!(
+        filtered_list.status.code(),
+        Some(0),
+        "{}",
+        output_text(&filtered_list)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&filtered_list.stdout),
+        "alpha\nalphabet\n"
+    );
+    assert!(
+        filtered_list.stderr.is_empty(),
+        "{}",
+        output_text(&filtered_list)
+    );
+
+    let multiple = salic()
+        .args(["test", "--filter", "alpha"])
+        .arg(&source)
+        .output()
+        .expect("run passing and failing substring matches");
+    assert_eq!(
+        multiple.status.code(),
+        Some(1),
+        "{}",
+        output_text(&multiple)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&multiple.stderr),
+        "salic: test \"alphabet\" failed\n\
+         salic: test result: 1 passed; 1 failed; 2 selected\n"
+    );
+
+    let repeated = salic()
+        .args(["test", "--filter", "alpha"])
+        .arg(&source)
+        .output()
+        .expect("repeat deterministic filter");
+    assert_eq!(repeated.stderr, multiple.stderr);
+
+    let one = salic()
+        .args(["test", "--filter", "zeta"])
+        .arg(&source)
+        .output()
+        .expect("run one selected test");
+    assert_eq!(one.status.code(), Some(1), "{}", output_text(&one));
+    assert_eq!(
+        String::from_utf8_lossy(&one.stderr),
+        "salic: test \"zeta\" failed\n\
+         salic: test result: 0 passed; 1 failed; 1 selected\n"
+    );
+
+    let missing = salic()
+        .args(["test", "--filter", "missing"])
+        .arg(&source)
+        .output()
+        .expect("run an empty selection");
+    assert_eq!(missing.status.code(), Some(0), "{}", output_text(&missing));
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stderr),
+        "salic: test result: 0 passed; 0 failed; 0 selected\n"
+    );
+
+    let same_source = temporary.write(
+        "duplicate.sc",
+        "test(\"same name\") { true }\n\
+         test(\"same name\") { true }\n",
+    );
+    let same_source_rejected = salic()
+        .args(["test", "--list"])
+        .arg(same_source)
+        .output()
+        .expect("reject same-source duplicate test names");
+    assert_eq!(
+        same_source_rejected.status.code(),
+        Some(1),
+        "{}",
+        output_text(&same_source_rejected)
+    );
+    let same_source_diagnostic = String::from_utf8_lossy(&same_source_rejected.stderr);
+    assert!(
+        same_source_diagnostic.contains("duplicate test registration name \"same name\""),
+        "{}",
+        output_text(&same_source_rejected)
+    );
+    assert!(
+        !same_source_diagnostic.contains("$test$"),
+        "{}",
+        output_text(&same_source_rejected)
+    );
+
+    let duplicate = TestDirectory::new();
+    duplicate.write(
+        "salicin.toml",
+        "[package]\nname = \"duplicate-tests\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    duplicate.write("src/main.sc", "test(\"same name\") { true }\n");
+    duplicate.write("src/other.sc", "test(\"same name\") { true }\n");
+    let rejected = salic()
+        .args(["test", "--list"])
+        .arg(&duplicate.0)
+        .output()
+        .expect("reject duplicate test names");
+    assert_eq!(
+        rejected.status.code(),
+        Some(1),
+        "{}",
+        output_text(&rejected)
+    );
+    let diagnostic = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        diagnostic.contains("duplicate test registration name \"same name\""),
+        "{}",
+        output_text(&rejected)
+    );
+    assert!(!diagnostic.contains("$test$"), "{}", output_text(&rejected));
 }
 
 #[test]

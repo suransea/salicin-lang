@@ -219,6 +219,14 @@ runner boundary rather than in hidden repeated operand evaluation.
 
 - [Detecting Flaky Tests by Controlling Nondeterministic API Behavior (PACMPL 2026)](https://doi.org/10.1145/3798265)
 
+The first runner-selection surface is deliberately explicit and
+order-preserving: a case-sensitive substring chooses a source-order subset,
+listing observes that same order, and the summary records its exact execution
+population. It does not infer priorities from test code or CI history.
+
+- [DANTE: Data-Driven Test Case Selection and Prioritization for Long-Running Test Suites (ICST 2026)](https://conf.researchr.org/details/icst-2026/icst-2026-research/44/DANTE-Data-Driven-Test-Case-Selection-and-Prioritization-for-Long-Running-Test-Suite)
+- [How Far Are We from Detecting Flaky Tests? On the Limits of Code-Based Detection (2026)](https://arxiv.org/abs/2607.09345)
+
 ## Review Gate
 
 Before extending the static language:

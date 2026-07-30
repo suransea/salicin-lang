@@ -73,8 +73,17 @@ pub struct TestCompilation {
 /// Compile all contextual `test("name") { ... }` registrations in one source
 /// file into a single native-runner module.
 pub fn compile_test_source(source: &str) -> Result<TestCompilation, Vec<String>> {
+    compile_test_source_filtered(source, None)
+}
+
+/// Compile the contextual registrations whose names contain `filter`.
+/// Selection is case-sensitive and retains source order.
+pub fn compile_test_source_filtered(
+    source: &str,
+    filter: Option<&str>,
+) -> Result<TestCompilation, Vec<String>> {
     let program = parse_and_resolve_single_source(source)?;
-    compile_test_program(program, None)
+    compile_test_program(program, None, filter)
 }
 
 /// Resolve and compile a Salicin binary from multiple source units to textual
@@ -95,19 +104,29 @@ pub fn compile_source_packages(packages: &[modules::SourcePackage]) -> Result<St
 pub fn compile_test_source_packages(
     packages: &[modules::SourcePackage],
 ) -> Result<TestCompilation, Vec<String>> {
+    compile_test_source_packages_filtered(packages, None)
+}
+
+/// Resolve a package graph and compile only primary-package registrations
+/// whose names contain `filter`, preserving primary source order.
+pub fn compile_test_source_packages_filtered(
+    packages: &[modules::SourcePackage],
+    filter: Option<&str>,
+) -> Result<TestCompilation, Vec<String>> {
     let primary_package = packages
         .iter()
         .find(|package| package.is_primary)
         .map(|package| package.id.0);
     let program = modules::resolve_packages(packages)?;
-    compile_test_program(program, primary_package)
+    compile_test_program(program, primary_package, filter)
 }
 
 fn compile_test_program(
     program: ast::Program,
     primary_package: Option<usize>,
+    filter: Option<&str>,
 ) -> Result<TestCompilation, Vec<String>> {
-    let (program, names) = test_runner_program(program, primary_package)?;
+    let (program, names) = test_runner_program(program, primary_package, filter)?;
     let ir = codegen::compile(&program).map_err(format_codegen_diagnostics)?;
     Ok(TestCompilation { ir, names })
 }
@@ -115,8 +134,9 @@ fn compile_test_program(
 fn test_runner_program(
     mut program: ast::Program,
     primary_package: Option<usize>,
+    filter: Option<&str>,
 ) -> Result<(ast::Program, Vec<String>), Vec<String>> {
-    let tests = program
+    let all_tests = program
         .items
         .iter()
         .zip(&program.item_origins)
@@ -132,15 +152,38 @@ fn test_runner_program(
             Some((function.name.clone(), name))
         })
         .collect::<Vec<_>>();
-    if tests.is_empty() {
+    if all_tests.is_empty() {
         return Err(vec![
             "error: test target contains no test declarations".to_owned()
         ]);
     }
+    let mut seen = std::collections::HashSet::new();
+    let mut reported = std::collections::HashSet::new();
+    let duplicate_diagnostics = all_tests
+        .iter()
+        .filter_map(|(_, name)| {
+            if seen.insert(name.clone()) || !reported.insert(name.clone()) {
+                None
+            } else {
+                Some(format!("error: duplicate test registration name {name:?}"))
+            }
+        })
+        .collect::<Vec<_>>();
+    if !duplicate_diagnostics.is_empty() {
+        return Err(duplicate_diagnostics);
+    }
+    let tests = all_tests
+        .into_iter()
+        .filter(|(_, name)| filter.is_none_or(|filter| name.contains(filter)))
+        .collect::<Vec<_>>();
     let names = tests
         .iter()
         .map(|(_, name)| name.clone())
         .collect::<Vec<_>>();
+    let selected_functions = tests
+        .iter()
+        .map(|(function, _)| function.clone())
+        .collect::<std::collections::HashSet<_>>();
 
     let mut retained_items = Vec::with_capacity(program.items.len() + 1);
     let mut retained_visibilities = Vec::with_capacity(program.items.len() + 1);
@@ -151,8 +194,9 @@ fn test_runner_program(
         .zip(program.item_visibilities)
         .zip(program.item_origins)
     {
-        let is_unselected_test = primary_package
-            .is_some_and(|package| origin.package != package && is_test_registration(&item));
+        let is_unselected_test = is_test_registration(&item)
+            && matches!(&item, ast::Item::Function(function)
+                if !selected_functions.contains(&function.name));
         if matches!(&item, ast::Item::Function(function) if function.name == "main")
             || is_unselected_test
         {
@@ -394,6 +438,24 @@ mod tests {
         .expect("test registrations should compile into one runner");
         assert_eq!(compilation.names, ["arithmetic", "utf-8: 盐"]);
         assert!(compilation
+            .ir
+            .contains("define i32 @main(i32 %argc, ptr %argv)"));
+
+        let filtered = compile_test_source_filtered(
+            "test(\"alpha\") { true }\n\
+             test(\"beta\") { false }\n\
+             test(\"alphabet\") { true }\n",
+            Some("alpha"),
+        )
+        .expect("filtered registrations should compile into one runner");
+        assert_eq!(filtered.names, ["alpha", "alphabet"]);
+        assert!(!filtered.ir.contains("62657461"));
+
+        let empty_selection =
+            compile_test_source_filtered("test(\"available\") { true }\n", Some("missing"))
+                .expect("a filter with no matches should compile an empty runner");
+        assert!(empty_selection.names.is_empty());
+        assert!(empty_selection
             .ir
             .contains("define i32 @main(i32 %argc, ptr %argv)"));
 

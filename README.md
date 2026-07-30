@@ -38,6 +38,8 @@ salic fingerprint main.sc
 salic build main.sc -o main
 salic run main.sc -- argument
 salic test main.sc
+salic test main.sc --list
+salic test main.sc --filter arithmetic
 ```
 
 Tests use compile-time registrations and are linked into one runner:

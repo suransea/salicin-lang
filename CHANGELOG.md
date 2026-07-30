@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.235.0 - 2026-07-30
+
+- Completed TEST-3 with source-order `salic test --list`, case-sensitive UTF-8
+  substring filtering, successful empty selections, and one-runner execution
+  of the selected registrations.
+- Added stable passed/failed/selected summaries, explicit exit behavior,
+  package-wide duplicate registration-name diagnostics, and primary-package
+  dependency isolation for listing and filtering.
+- Kept selection deterministic and free of hidden history-based
+  prioritization; updated the test-support contract, specification, status,
+  roadmap, TODO, CLI help, and research ledger.
+
 ## 0.234.0 - 2026-07-30
 
 - Completed TEST-2 with source-backed `std.test.fail`, boolean, equality,

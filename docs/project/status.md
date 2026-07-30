@@ -20,6 +20,9 @@ current capability inventory. It does not record release history; see the
   a dedicated framed parent channel, and `std.test` failure, boolean,
   equality, inequality, and `option`/`result` expectation helpers with static
   comparison/diagnostic-formatting bounds and single operand evaluation;
+  source-order `--list`, case-sensitive UTF-8 `--filter`, package-wide
+  duplicate-name diagnostics, one-runner selected execution, and stable
+  selected/passed/failed summaries;
 - source-declared pass-fixture tests batched into native runners by semantic
   group, while process-terminating fixtures remain isolated;
 - package and virtual workspace manifests, explicit workspace members,
@@ -63,7 +66,7 @@ salic emit-ir SOURCE -o OUTPUT
 salic fingerprint SOURCE
 salic build SOURCE -o OUTPUT
 salic run SOURCE -- ARGUMENTS
-salic test SOURCE
+salic test SOURCE [--list] [--filter TEXT]
 ```
 
 ## Source Model

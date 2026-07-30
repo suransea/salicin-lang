@@ -90,7 +90,9 @@ filesystem basics, is implemented. The accepted
 [structured test-support contract](test-support.md) implements
 per-registration failure handling, cleanup, message ownership, boolean
 migration, a dedicated result channel, and common source-backed assertions.
-The active slice is deterministic runner selection and reporting.
+The runner now lists and filters registrations deterministically, rejects
+duplicate names, and reports selected, passed, and failed counts. The active
+slice is practical multi-module standard-library acceptance.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

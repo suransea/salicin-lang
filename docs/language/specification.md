@@ -154,6 +154,14 @@ message. A target with no registrations is an error. Results use the dedicated
 schema-1 channel specified by the
 [structured test-support contract](../project/test-support.md).
 
+Registration names are unique across the selected package. `--list` emits
+them in source order without running the native runner. `--filter TEXT`
+performs case-sensitive substring selection over the decoded UTF-8 names;
+zero matches is a successful empty selection. Filtering never selects
+dependency registrations and never reorders matches. An executing selection
+uses one runner, reports every failure in source order, then reports exact
+passed, failed, and selected counts.
+
 ### 3.3 Sorts
 
 A sort classifies compile-time values. An abstract sort has no source-enumerable set of values and

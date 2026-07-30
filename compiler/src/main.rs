@@ -23,7 +23,7 @@ use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, S
 use salicin_lang::{
     check_library_source, check_library_source_packages, check_source, check_source_packages,
     compile_library_source, compile_library_source_packages, compile_source,
-    compile_source_packages, compile_test_source, compile_test_source_packages,
+    compile_source_packages, compile_test_source_filtered, compile_test_source_packages_filtered,
     formatter::format_source,
     incremental::{fingerprint_package_graph, IncrementalTarget},
 };
@@ -39,7 +39,7 @@ Usage:
   salic fingerprint [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic fmt [path] [--check]
   salic run [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-- <args>...]
-  salic test [path] [-p <package>] [--bin <name>] [--locked | --frozen]
+  salic test [path] [-p <package>] [--bin <name>] [--locked | --frozen] [--list] [--filter <text>]
   salic [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-o <path>]
 
 Commands:
@@ -56,6 +56,8 @@ Options:
       --check          Check formatting without writing (fmt only)
       --bin <name>     Select a binary target from salicin.toml
       --lib            Select the library target (check and emit-ir only)
+      --list           List selected test names without running them (test only)
+      --filter <text>  Select test names containing UTF-8 text (test only)
   -p, --package <name> Select a workspace package
       --locked         Require salicin.lock to be present and current
       --frozen         Require the lockfile and forbid dependency network access
@@ -115,6 +117,8 @@ enum Action {
         package: Option<String>,
         lock_mode: LockMode,
         bin: Option<String>,
+        list: bool,
+        filter: Option<String>,
     },
 }
 
@@ -241,16 +245,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Action::Format { input, check }
         }
         Some("run") => parse_run(&args[1..])?,
-        Some("test") => {
-            let parsed = parse_compile_args("test", &args[1..], false, false)?;
-            let bin = selection_bin(parsed.target, "test")?;
-            Action::Test {
-                input: parsed.input,
-                package: parsed.package,
-                lock_mode: parsed.lock_mode,
-                bin,
-            }
-        }
+        Some("test") => parse_test(&args[1..])?,
         _ if starts_with_dash(first)
             && !matches!(
                 first.to_str(),
@@ -437,6 +432,47 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
     })
 }
 
+fn parse_test(args: &[OsString]) -> Result<Action, String> {
+    let mut compile_args = Vec::new();
+    let mut list = false;
+    let mut filter = None;
+    let mut index = 0;
+    while index < args.len() {
+        let argument = &args[index];
+        if is(argument, "--list") {
+            if list {
+                return Err("'test' accepts '--list' only once".into());
+            }
+            list = true;
+        } else if is(argument, "--filter") {
+            if filter.is_some() {
+                return Err("'test' accepts only one name filter".into());
+            }
+            index += 1;
+            let Some(value) = args.get(index).and_then(|value| value.to_str()) else {
+                return Err("'--filter' requires UTF-8 text".into());
+            };
+            if value.is_empty() {
+                return Err("'--filter' requires non-empty text".into());
+            }
+            filter = Some(value.to_owned());
+        } else {
+            compile_args.push(argument.clone());
+        }
+        index += 1;
+    }
+    let parsed = parse_compile_args("test", &compile_args, false, false)?;
+    let bin = selection_bin(parsed.target, "test")?;
+    Ok(Action::Test {
+        input: parsed.input,
+        package: parsed.package,
+        lock_mode: parsed.lock_mode,
+        bin,
+        list,
+        filter,
+    })
+}
+
 fn execute(action: Action) -> i32 {
     match action {
         Action::Build {
@@ -603,6 +639,8 @@ fn execute(action: Action) -> i32 {
             package,
             lock_mode,
             bin,
+            list,
+            filter,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -614,12 +652,20 @@ fn execute(action: Action) -> i32 {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
-            let compilation = match compile_test_target(&target) {
+            let compilation = match compile_test_target(&target, filter.as_deref()) {
                 Ok(compilation) => compilation,
                 Err(()) => return 1,
             };
+            if list {
+                for name in compilation.names {
+                    println!("{name}");
+                }
+                return 0;
+            }
+            let selected = compilation.names.len();
             match compile_and_run_tests(&compilation.ir, compilation.names.len()) {
                 Ok(run) => {
+                    let failed = run.failures.len();
                     for failure in run.failures {
                         let name = &compilation.names[failure.index];
                         match failure.message {
@@ -629,6 +675,10 @@ fn execute(action: Action) -> i32 {
                             None => eprintln!("salic: test {name:?} failed"),
                         }
                     }
+                    eprintln!(
+                        "salic: test result: {} passed; {failed} failed; {selected} selected",
+                        selected - failed
+                    );
                     run.exit_code
                 }
                 Err(message) => {
@@ -1337,14 +1387,20 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
     report_project_compilation(&target.source, result)
 }
 
-fn compile_test_target(target: &ResolvedTarget) -> Result<salicin_lang::TestCompilation, ()> {
+fn compile_test_target(
+    target: &ResolvedTarget,
+    filter: Option<&str>,
+) -> Result<salicin_lang::TestCompilation, ()> {
     if target.project.is_none() {
         let text = read_source(&target.source)?;
-        return report_compilation(&target.source, compile_test_source(&text));
+        return report_compilation(&target.source, compile_test_source_filtered(&text, filter));
     }
 
     let packages = read_source_packages(target)?;
-    report_project_compilation(&target.source, compile_test_source_packages(&packages))
+    report_project_compilation(
+        &target.source,
+        compile_test_source_packages_filtered(&packages, filter),
+    )
 }
 
 fn fingerprint_target(
@@ -1913,6 +1969,41 @@ fn starts_with_dash(argument: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_cli_parses_listing_and_one_nonempty_filter() {
+        let parsed = parse_args(
+            ["test", "suite.sc", "--list", "--filter", "盐"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+        )
+        .expect("parse test selection");
+        let ParsedArgs::Action(Action::Test {
+            input,
+            list,
+            filter,
+            ..
+        }) = parsed
+        else {
+            panic!("expected test action");
+        };
+        assert_eq!(input.as_deref(), Some(Path::new("suite.sc")));
+        assert!(list);
+        assert_eq!(filter.as_deref(), Some("盐"));
+
+        for arguments in [
+            vec!["test", "--list", "--list"],
+            vec!["test", "--filter"],
+            vec!["test", "--filter", ""],
+            vec!["test", "--filter", "a", "--filter", "b"],
+        ] {
+            assert!(
+                parse_args(arguments.into_iter().map(OsString::from).collect()).is_err(),
+                "invalid test selection arguments were accepted"
+            );
+        }
+    }
 
     fn frame(index: u64, status: u8, has_message: u8, length: u64, payload: &[u8]) -> Vec<u8> {
         let mut frame = Vec::from(*b"SLT1");
