@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::ast::SourceLocation;
 use crate::lexer::{lex, TokenKind};
 use crate::modules::{resolve_sources_diagnostics, ResolverDiagnostic, SourceUnit};
@@ -76,6 +80,301 @@ pub struct WorkspaceDocumentAnalysis {
 pub struct WorkspaceAnalysis {
     pub documents: Vec<WorkspaceDocumentAnalysis>,
     pub diagnostics: Vec<EditorDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorkspaceSnapshotId {
+    pub session: u64,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshotDocument {
+    pub path: String,
+    pub module_path: Vec<String>,
+    pub source: String,
+    pub is_root: bool,
+    /// The client version for an open overlay, or `None` for baseline text.
+    pub version: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshot {
+    pub id: WorkspaceSnapshotId,
+    pub target: DocumentTarget,
+    pub documents: Vec<WorkspaceSnapshotDocument>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceSnapshotAnalysis {
+    pub id: WorkspaceSnapshotId,
+    pub document_versions: Vec<(String, Option<i64>)>,
+    pub analysis: WorkspaceAnalysis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceSessionError {
+    DuplicateDocument(String),
+    UnknownDocument(String),
+    DocumentAlreadyOpen(String),
+    DocumentNotOpen(String),
+    StaleDocumentVersion {
+        document: String,
+        current: i64,
+        received: i64,
+    },
+    RevisionExhausted,
+}
+
+impl fmt::Display for WorkspaceSessionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateDocument(document) => {
+                write!(formatter, "duplicate workspace document `{document}`")
+            }
+            Self::UnknownDocument(document) => {
+                write!(formatter, "unknown workspace document `{document}`")
+            }
+            Self::DocumentAlreadyOpen(document) => {
+                write!(formatter, "workspace document `{document}` is already open")
+            }
+            Self::DocumentNotOpen(document) => {
+                write!(formatter, "workspace document `{document}` is not open")
+            }
+            Self::StaleDocumentVersion {
+                document,
+                current,
+                received,
+            } => write!(
+                formatter,
+                "workspace document `{document}` has version {current}; rejected stale version {received}"
+            ),
+            Self::RevisionExhausted => {
+                formatter.write_str("workspace snapshot revision space is exhausted")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceSessionError {}
+
+#[derive(Debug, Clone)]
+struct SessionDocument {
+    path: String,
+    module_path: Vec<String>,
+    baseline: String,
+    is_root: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OpenDocument {
+    version: i64,
+    source: String,
+}
+
+/// Mutable editor state whose analyses always run against immutable snapshots.
+///
+/// Baseline source text is supplied by the caller. Opening or changing a
+/// document only updates an in-memory overlay; this type performs no file I/O.
+pub struct WorkspaceSession {
+    id: u64,
+    revision: u64,
+    target: DocumentTarget,
+    documents: Vec<SessionDocument>,
+    document_indexes: HashMap<String, usize>,
+    open_documents: HashMap<String, OpenDocument>,
+}
+
+static NEXT_WORKSPACE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+impl WorkspaceSession {
+    pub fn new(
+        sources: &[EditorSource<'_>],
+        target: DocumentTarget,
+    ) -> Result<Self, WorkspaceSessionError> {
+        let mut document_indexes = HashMap::with_capacity(sources.len());
+        let mut documents = Vec::with_capacity(sources.len());
+        for source in sources {
+            let index = documents.len();
+            if document_indexes
+                .insert(source.path.to_owned(), index)
+                .is_some()
+            {
+                return Err(WorkspaceSessionError::DuplicateDocument(
+                    source.path.to_owned(),
+                ));
+            }
+            documents.push(SessionDocument {
+                path: source.path.to_owned(),
+                module_path: source.module_path.to_vec(),
+                baseline: source.source.to_owned(),
+                is_root: source.is_root,
+            });
+        }
+        Ok(Self {
+            id: NEXT_WORKSPACE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+            revision: 0,
+            target,
+            documents,
+            document_indexes,
+            open_documents: HashMap::new(),
+        })
+    }
+
+    pub fn snapshot_id(&self) -> WorkspaceSnapshotId {
+        WorkspaceSnapshotId {
+            session: self.id,
+            revision: self.revision,
+        }
+    }
+
+    pub fn open_document(
+        &mut self,
+        document: &str,
+        version: i64,
+        source: impl Into<String>,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
+        self.require_document(document)?;
+        if self.open_documents.contains_key(document) {
+            return Err(WorkspaceSessionError::DocumentAlreadyOpen(
+                document.to_owned(),
+            ));
+        }
+        self.bump_revision()?;
+        self.open_documents.insert(
+            document.to_owned(),
+            OpenDocument {
+                version,
+                source: source.into(),
+            },
+        );
+        Ok(self.snapshot_id())
+    }
+
+    pub fn change_document(
+        &mut self,
+        document: &str,
+        version: i64,
+        source: impl Into<String>,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
+        self.require_document(document)?;
+        let current = self
+            .open_documents
+            .get(document)
+            .ok_or_else(|| WorkspaceSessionError::DocumentNotOpen(document.to_owned()))?
+            .version;
+        if version <= current {
+            return Err(WorkspaceSessionError::StaleDocumentVersion {
+                document: document.to_owned(),
+                current,
+                received: version,
+            });
+        }
+        self.bump_revision()?;
+        self.open_documents.insert(
+            document.to_owned(),
+            OpenDocument {
+                version,
+                source: source.into(),
+            },
+        );
+        Ok(self.snapshot_id())
+    }
+
+    pub fn close_document(
+        &mut self,
+        document: &str,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
+        self.require_document(document)?;
+        if !self.open_documents.contains_key(document) {
+            return Err(WorkspaceSessionError::DocumentNotOpen(document.to_owned()));
+        }
+        self.bump_revision()?;
+        self.open_documents.remove(document);
+        Ok(self.snapshot_id())
+    }
+
+    /// Replace caller-owned baseline text without touching the filesystem.
+    /// An open overlay continues to take precedence until it is closed.
+    pub fn update_baseline(
+        &mut self,
+        document: &str,
+        source: impl Into<String>,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
+        let index = self.require_document(document)?;
+        self.bump_revision()?;
+        self.documents[index].baseline = source.into();
+        Ok(self.snapshot_id())
+    }
+
+    pub fn snapshot(&self) -> WorkspaceSnapshot {
+        let documents = self
+            .documents
+            .iter()
+            .map(|document| {
+                let overlay = self.open_documents.get(&document.path);
+                WorkspaceSnapshotDocument {
+                    path: document.path.clone(),
+                    module_path: document.module_path.clone(),
+                    source: overlay
+                        .map(|overlay| overlay.source.clone())
+                        .unwrap_or_else(|| document.baseline.clone()),
+                    is_root: document.is_root,
+                    version: overlay.map(|overlay| overlay.version),
+                }
+            })
+            .collect();
+        WorkspaceSnapshot {
+            id: self.snapshot_id(),
+            target: self.target,
+            documents,
+        }
+    }
+
+    /// Accept only an analysis produced for the current immutable snapshot.
+    /// A superseded result is consumed and dropped.
+    pub fn accept_analysis(&self, result: WorkspaceSnapshotAnalysis) -> Option<WorkspaceAnalysis> {
+        (result.id == self.snapshot_id()).then_some(result.analysis)
+    }
+
+    fn require_document(&self, document: &str) -> Result<usize, WorkspaceSessionError> {
+        self.document_indexes
+            .get(document)
+            .copied()
+            .ok_or_else(|| WorkspaceSessionError::UnknownDocument(document.to_owned()))
+    }
+
+    fn bump_revision(&mut self) -> Result<(), WorkspaceSessionError> {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(WorkspaceSessionError::RevisionExhausted)?;
+        Ok(())
+    }
+}
+
+impl WorkspaceSnapshot {
+    pub fn analyze(&self) -> WorkspaceSnapshotAnalysis {
+        let sources = self
+            .documents
+            .iter()
+            .map(|document| EditorSource {
+                path: &document.path,
+                module_path: &document.module_path,
+                source: &document.source,
+                is_root: document.is_root,
+            })
+            .collect::<Vec<_>>();
+        WorkspaceSnapshotAnalysis {
+            id: self.id,
+            document_versions: self
+                .documents
+                .iter()
+                .map(|document| (document.path.clone(), document.version))
+                .collect(),
+            analysis: analyze_workspace(&sources, self.target),
+        }
+    }
 }
 
 /// Lex, parse, resolve, and type-check one editor document without generating
@@ -582,6 +881,190 @@ mod tests {
         let range = diagnostic.range.expect("cross-file semantic range");
         assert_eq!((range.start.line, range.start.utf16_character), (1, 2));
         assert_eq!((range.end.line, range.end.utf16_character), (1, 9));
+    }
+
+    #[test]
+    fn workspace_session_overlays_versions_and_discards_superseded_results() {
+        let root_module = Vec::new();
+        let part_module = ["part".to_owned()];
+        let root = "let main(): i32 = { part.answer() }\n";
+        let part = "pub(package) let answer(): i32 = { 42 }\n";
+        let mut session = WorkspaceSession::new(
+            &[
+                EditorSource {
+                    path: "main.sc",
+                    module_path: &root_module,
+                    source: root,
+                    is_root: true,
+                },
+                EditorSource {
+                    path: "part.sc",
+                    module_path: &part_module,
+                    source: part,
+                    is_root: false,
+                },
+            ],
+            DocumentTarget::Binary,
+        )
+        .expect("workspace session");
+
+        let initial = session.snapshot();
+        assert_eq!(initial.id.revision, 0);
+        assert!(initial.analyze().analysis.diagnostics.is_empty());
+
+        session
+            .open_document(
+                "part.sc",
+                1,
+                "pub(package) let answer(): i32 = { missing }\n",
+            )
+            .expect("open overlay");
+        let stale_snapshot = session.snapshot();
+        let stale_worker = std::thread::spawn(move || stale_snapshot.analyze());
+
+        session
+            .change_document("part.sc", 2, "pub(package) let answer(): i32 = { 42 }\n")
+            .expect("newer overlay");
+        let stale_result = stale_worker.join().expect("stale analysis completes");
+        assert!(stale_result
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.document == "part.sc"));
+        assert!(
+            session.accept_analysis(stale_result).is_none(),
+            "superseded analysis must be consumed and dropped"
+        );
+
+        let current_snapshot = session.snapshot();
+        assert_eq!(
+            current_snapshot
+                .documents
+                .iter()
+                .find(|document| document.path == "part.sc")
+                .and_then(|document| document.version),
+            Some(2)
+        );
+        let current_result = current_snapshot.analyze();
+        assert_eq!(
+            current_result.document_versions,
+            vec![
+                ("main.sc".to_owned(), None),
+                ("part.sc".to_owned(), Some(2))
+            ]
+        );
+        let accepted = session
+            .accept_analysis(current_result)
+            .expect("current result");
+        assert!(accepted.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn workspace_session_rejects_stale_versions_and_close_restores_baseline() {
+        let root_module = Vec::new();
+        let mut session = WorkspaceSession::new(
+            &[EditorSource {
+                path: "main.sc",
+                module_path: &root_module,
+                source: "let main(): i32 = { 42 }\n",
+                is_root: true,
+            }],
+            DocumentTarget::Binary,
+        )
+        .expect("workspace session");
+        session
+            .open_document("main.sc", 7, "let main(): i32 = { missing }\n")
+            .expect("open document");
+        let before_rejection = session.snapshot_id();
+        assert!(matches!(
+            session.change_document("main.sc", 7, "let main(): i32 = { 0 }\n"),
+            Err(WorkspaceSessionError::StaleDocumentVersion {
+                current: 7,
+                received: 7,
+                ..
+            })
+        ));
+        assert_eq!(session.snapshot_id(), before_rejection);
+
+        session
+            .update_baseline("main.sc", "let main(): i32 = { 41 + 1 }\n")
+            .expect("replace baseline");
+        assert!(
+            !session.snapshot().analyze().analysis.diagnostics.is_empty(),
+            "open text must continue to override a newer baseline"
+        );
+        session.close_document("main.sc").expect("close document");
+        let closed = session.snapshot();
+        assert_eq!(closed.documents[0].version, None);
+        assert_eq!(closed.documents[0].source, "let main(): i32 = { 41 + 1 }\n");
+        assert!(closed.analyze().analysis.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn workspace_sessions_validate_identity_without_writing_source_files() {
+        let unique = format!(
+            "salicin-editor-session-{}-{}",
+            std::process::id(),
+            NEXT_WORKSPACE_SESSION_ID.load(Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        std::fs::create_dir(&directory).expect("create editor session fixture");
+        let path = directory.join("main.sc");
+        let baseline = "let main(): i32 = { 42 }\n";
+        std::fs::write(&path, baseline).expect("write editor session fixture");
+        let path_string = path.to_string_lossy().into_owned();
+        let root_module = Vec::new();
+        let sources = [EditorSource {
+            path: &path_string,
+            module_path: &root_module,
+            source: baseline,
+            is_root: true,
+        }];
+        let mut session =
+            WorkspaceSession::new(&sources, DocumentTarget::Binary).expect("workspace session");
+        let duplicate_sources = [
+            EditorSource {
+                path: &path_string,
+                module_path: &root_module,
+                source: baseline,
+                is_root: true,
+            },
+            EditorSource {
+                path: &path_string,
+                module_path: &root_module,
+                source: baseline,
+                is_root: false,
+            },
+        ];
+        assert!(matches!(
+            WorkspaceSession::new(&duplicate_sources, DocumentTarget::Binary),
+            Err(WorkspaceSessionError::DuplicateDocument(_))
+        ));
+        let other =
+            WorkspaceSession::new(&sources, DocumentTarget::Binary).expect("second session");
+        let foreign_result = other.snapshot().analyze();
+        assert!(session.accept_analysis(foreign_result).is_none());
+        assert!(matches!(
+            session.open_document("unknown.sc", 1, ""),
+            Err(WorkspaceSessionError::UnknownDocument(_))
+        ));
+        assert!(matches!(
+            session.close_document(&path_string),
+            Err(WorkspaceSessionError::DocumentNotOpen(_))
+        ));
+        session
+            .open_document(&path_string, 1, "let main(): i32 = { 0 }\n")
+            .expect("open memory overlay");
+        assert!(matches!(
+            session.open_document(&path_string, 2, ""),
+            Err(WorkspaceSessionError::DocumentAlreadyOpen(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read unchanged source"),
+            baseline
+        );
+        std::fs::remove_file(&path).expect("remove editor session fixture");
+        std::fs::remove_dir(&directory).expect("remove editor session directory");
     }
 
     #[test]

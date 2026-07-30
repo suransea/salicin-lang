@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: LSP Diagnostics Baseline
 
-- [ ] **LSP-2 — Versioned workspace snapshots.** Add a stateful analysis
-  session that overlays open buffers on the resolved package graph, tracks
-  document versions, and discards superseded results without writing files.
-
 - [ ] **LSP-3 — Minimal stdio transport.** Implement `salic lsp` with JSON-RPC
   framing, initialize/shutdown lifecycle, workspace selection, and full-text
   open/change/save/close synchronization.
@@ -89,10 +85,11 @@ A task is complete only when:
 
 ## Design Candidates
 
-- source-defined special-form contracts for `test`, `extend`, and `requires`
-  after declaration-former and constraint-guard sorts are defined; the current
-  `test` declaration is a syntax contract, while parser-owned `extend` and
-  `requires` have no equivalent declarations;
+- language consistency: define static declaration-former and constraint-guard
+  sorts, then add source-defined contracts for parser-owned `extend` and
+  `requires`; keep the existing source-declared `test` contract unit-returning
+  with only `throwing(string)`, and do not model either missing form as an
+  ordinary runtime function;
 - per-package incremental compilation and dependency interface hashes;
 - compile-time mutation, loops, allocation, and resource-bearing values;
 - runtime nominal values as compile-parameter classifiers;

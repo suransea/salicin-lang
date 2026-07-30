@@ -29,7 +29,10 @@ The implementation lives under `compiler/src`:
   only for legacy CLI/compiler entry points; the editor never parses rendered
   messages or manufactures fallback locations. It analyzes either one
   document or a complete source graph without coupling the compiler to an LSP
-  transport.
+  transport. `WorkspaceSession` layers versioned full-text open buffers over
+  caller-supplied baseline sources and produces immutable, thread-safe
+  snapshots; completed analyses pass one session/revision gate before
+  publication, so superseded results are dropped without any source-file I/O.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
   the private user-cache root and implements strict local lookup, validation,

@@ -413,6 +413,32 @@ range rather than a plausible-looking byte-zero fallback.
   provenance keep that feedback usable by editors and automated consumers
   without making generated prose part of the API.
 
+### Live Analysis Publishes Immutable Current Snapshots
+
+Reviewed on 2026-07-30 for the versioned workspace-session baseline. Open
+buffers now overlay caller-owned baseline text, every successful mutation
+creates a new immutable revision, and completed analysis crosses an exact
+session/revision gate. This separates correctness under concurrency from
+future incremental-performance work: recomputing a snapshot may be slow, but
+an old result cannot become current.
+
+- [Language Server Protocol 3.18 text-document
+  synchronization](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.18/specification.md)
+  requires open/change/close synchronization as one capability and carries
+  document versions through synchronization and diagnostic publication.
+  Salicin keeps those versions in snapshot results before adding JSON-RPC.
+- [Live Feedback through Incremental Program Analysis (JOT
+  2026)](https://doi.org/10.5381/jot.2026.25.1.a6) describes precise live IDE
+  feedback as analysis over evolving program state. Salicin first makes each
+  state immutable and publication-safe; automatic incrementalization remains
+  a later optimization rather than a prerequisite for correct versioning.
+- [Incr: Faster Re-Execution via Bolt-On Incrementalization (OSDI
+  2026)](https://www.usenix.org/conference/osdi26/presentation/xie-yizheng)
+  separates dependency-aware reuse from behavioral equivalence of the base
+  execution. Salicin likewise retains complete ordinary analysis as the
+  authoritative snapshot result while establishing the identity boundary
+  future reuse must preserve.
+
 ## Review Gate
 
 Before extending the static language:

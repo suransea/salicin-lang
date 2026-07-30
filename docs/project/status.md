@@ -34,6 +34,11 @@ current capability inventory. It does not record release history; see the
   code, optional exact ranges, and multi-document routing; resolver origins
   are carried structurally rather than recovered from rendered messages, and
   missing ranges are never replaced with synthetic byte-zero positions;
+- a stateful, transport-independent workspace session with caller-supplied
+  baseline graphs, strictly versioned full-text open-buffer overlays,
+  immutable cross-thread analysis snapshots, ordered per-document result
+  versions, close-to-baseline restoration, and session/revision-gated stale
+  result rejection without filesystem writes;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
   inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
@@ -633,8 +638,9 @@ declaration, `where`, trailing-closure, and match indentation. Comments and
 dependencies remain source-owned; the passing fixture corpus is idempotent
 under repeated formatting.
 
-The editor API remains transport-independent. Versioned in-memory document
-state, incremental parsing, and an LSP transport are not yet implemented.
+The editor API remains transport-independent. Incremental parsing and an LSP
+transport are not yet implemented; snapshot analysis currently reruns the
+complete source graph.
 
 ## Known Boundaries
 

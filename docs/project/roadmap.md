@@ -53,8 +53,11 @@ The transport-independent editor API already exposes UTF-8 byte ranges,
 UTF-16 positions, tokens, and diagnostics with structured document identity,
 phase, severity, stable code, and optional exact range. Resolver origins are
 no longer reconstructed from rendered messages and missing locations are
-never replaced with fallback coordinates. This milestone next adds a stateful
-workspace session and a minimal Language Server Protocol transport.
+never replaced with fallback coordinates. A stateful workspace session now
+overlays strictly versioned full-text buffers on caller-supplied baseline
+sources, analyzes immutable snapshots on independent threads, and rejects
+results whose session/revision was superseded without writing files. This
+milestone next adds the minimal Language Server Protocol transport.
 
 The baseline covers workspace discovery, full-document synchronization,
 cancellation or supersession of stale analyses, diagnostics, and semantic
@@ -129,9 +132,11 @@ and a stable package protocol remain outside this milestone.
 These gaps need an accepted contract and sequencing decision before entering
 the executable queue:
 
-- source-defined contracts for `test`, the `extend` declaration former, and
-  the `requires` constraint guard, contingent on explicit static sorts rather
-  than decorative declarations that do not participate in parsing;
+- language consistency through static declaration-former and constraint-guard
+  sorts plus source-defined contracts for parser-owned `extend` and
+  `requires`; retain the existing unit-returning, `throwing(string)` `test`
+  contract rather than decorative declarations that do not participate in
+  parsing;
 - per-package incremental reuse based on dependency interface digests;
 - compile-time mutation, loop normalization, allocation, and resource values;
 - runtime nominal types as compile-parameter classifiers;

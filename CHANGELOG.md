@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.244.0 - 2026-07-30
+
+- Completed LSP-2 with a transport-independent `WorkspaceSession` that
+  overlays strictly increasing, full-text open document versions on a
+  caller-supplied resolved source graph without reading or writing files.
+- Added immutable `(session, revision)` workspace snapshots that can be
+  analyzed on worker threads, preserve ordered per-document versions, restore
+  the latest baseline on close, and consume/drop completed results from
+  another session or superseded revision before publication.
+- Added rejection contracts and tests for duplicate, unknown, already-open,
+  not-open, equal-version, and older-version operations; proved rejected
+  operations do not advance revisions and in-memory changes leave real source
+  files byte-identical. Updated the snapshot contract, architecture, status,
+  roadmap, TODO, and current research ledger; LSP-3 is next.
+
 ## 0.243.0 - 2026-07-30
 
 - Completed LSP-1 with structured resolver and editor diagnostics carrying
