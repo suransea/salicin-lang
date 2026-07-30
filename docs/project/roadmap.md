@@ -63,7 +63,14 @@ hidden by the cache.
 The artifact-schema-1 contract fixes the user-cache root, sharded
 content-addressed layout, strict metadata and payload validation, atomic
 directory publication, corruption-as-miss behavior, and `--no-cache`
-semantics. INCR-3 now implements that storage boundary before pipeline reuse.
+semantics.
+
+The storage boundary is now implemented independently of command execution:
+it resolves absolute platform roots, validates a compiler ownership marker,
+returns structured hit/miss reasons, verifies canonical metadata and payload
+digests, and atomically publishes or replaces entries under concurrent
+writers. INCR-4 is the active next step and connects this API only after
+manifest resolution and complete input fingerprinting.
 
 Exit conditions:
 
@@ -164,6 +171,9 @@ and a stable package protocol remain outside this milestone.
 These gaps need an accepted contract and sequencing decision before entering
 the executable queue:
 
+- source-defined contracts for `test`, the `extend` declaration former, and
+  the `requires` constraint guard, contingent on explicit static sorts rather
+  than decorative declarations that do not participate in parsing;
 - per-package incremental reuse based on dependency interface digests;
 - compile-time mutation, loop normalization, allocation, and resource values;
 - runtime nominal types as compile-parameter classifiers;

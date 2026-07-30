@@ -22,11 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Persistent Incremental Builds
 
-- [ ] **INCR-3 — Cache storage layer.** Implement content-addressed lookup and
-  atomic write/replace with strict metadata validation. A missing, malformed,
-  truncated, or incompatible entry is a miss; it must never be executed or
-  reported as a compiler diagnostic.
-
 - [ ] **INCR-4 — Compile pipeline integration.** Reuse cached IR for
   `emit-ir`, `build`, `run`, and `test` after manifest resolution and
   fingerprinting. Publish only after semantic analysis, cleanup verification,
@@ -120,6 +115,10 @@ A task is complete only when:
 
 ## Design Candidates
 
+- source-defined special-form contracts for `test`, `extend`, and `requires`
+  after declaration-former and constraint-guard sorts are defined; the current
+  `test` declaration is a syntax contract, while parser-owned `extend` and
+  `requires` have no equivalent declarations;
 - per-package incremental compilation and dependency interface hashes;
 - compile-time mutation, loops, allocation, and resource-bearing values;
 - runtime nominal values as compile-parameter classifiers;

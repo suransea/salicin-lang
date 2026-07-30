@@ -9,6 +9,7 @@ pub mod core;
 pub mod editor;
 pub mod formatter;
 pub mod incremental;
+pub mod incremental_cache;
 pub mod lexer;
 pub mod lockfile;
 pub mod manifest;

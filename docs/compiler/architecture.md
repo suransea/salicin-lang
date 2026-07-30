@@ -26,9 +26,10 @@ The implementation lives under `compiler/src`:
   bytes and zero-based UTF-16 coordinates. It analyzes either one document or
   a complete source graph without coupling the compiler to an LSP transport.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
-  fingerprint and artifact-schema key mapping. The accepted persistent-cache
-  contract is storage-independent; this module does not yet read or write
-  cache artifacts.
+  fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
+  the private user-cache root and implements strict local lookup, validation,
+  corruption replacement, and atomic concurrent publication. Command
+  pipelines do not yet call the storage layer.
 - `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
   preserve resolved provider identities, and resolve names.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library

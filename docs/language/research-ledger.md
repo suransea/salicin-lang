@@ -291,6 +291,28 @@ Current research:
   source bytes and embedded library sources rather than timestamps or
   provenance assumptions.
 
+Reviewed again on 2026-07-30 for the implemented local storage layer. Lookup
+and publication are a separate module from fingerprint construction and
+command execution. Every hit must re-establish its state invariant from
+canonical metadata, expected invocation identity, exact length, SHA-256, and
+UTF-8; invalid state produces a miss. Completed temporary directories become
+visible by rename, including the cache-root ownership marker, so concurrent
+readers do not observe partially initialized state.
+
+- [Incremental Computation for Efficient Programmable Inference (PLDI
+  2026)](https://doi.org/10.1145/3808316) identifies ad-hoc
+  incrementalization as a source of soundness bugs and reasons modularly about
+  the base computation and incremental transformation. Salicin likewise keeps
+  identity, storage, and pipeline reuse as independently tested workstreams.
+- [Stateful Differential Operators for Incremental Computing (POPL
+  2026)](https://doi.org/10.1145/3776728) permits cached internal state only
+  under an explicit maintained invariant. Salicin's storage invariant is
+  executable validation, not trust in a filename or previous process.
+- [Differential Execution with Lexical Tracing (OOPSLA
+  2026)](https://doi.org/10.1145/3798261) warns that missing or stale cache
+  entries can invalidate results. The storage API therefore treats every
+  malformed or incompatible entry as unusable and never returns partial IR.
+
 ## Review Gate
 
 Before extending the static language:

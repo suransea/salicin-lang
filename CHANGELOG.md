@@ -6,6 +6,26 @@ subset.
 
 ## Unreleased
 
+## 0.239.0 - 2026-07-30
+
+- Implemented INCR-3 as an independent persistent LLVM-IR cache storage API:
+  absolute platform-root resolution, atomic ownership markers, private
+  compiler-owned directories, sharded content-addressed lookup, canonical
+  metadata, exact payload length/SHA-256/UTF-8 validation, and structured miss
+  reasons.
+- Added atomic directory publication, valid-winner reuse, corruption
+  quarantine/replacement, abandoned staging cleanup, symbolic-link rejection,
+  and lock-free concurrent writer behavior.
+- Added storage acceptance tests for missing entries, malformed metadata,
+  truncated payloads, incompatible identities, non-regular files, invalid
+  roots and markers, symlinks, warm reuse, repair, and eight-way concurrent
+  publication; updated TODO, roadmap, status, architecture, cache contract,
+  and the current research ledger. INCR-4 pipeline integration is next.
+- Recorded the declaration-consistency gap between the existing public `test`
+  syntax contract and parser-owned `extend`/`requires` special forms as a
+  design candidate requiring explicit declaration-former and constraint-guard
+  sorts before source-defined contracts can replace parser ownership.
+
 ## 0.238.0 - 2026-07-30
 
 - Accepted the artifact-schema-1 persistent whole-graph LLVM-IR cache

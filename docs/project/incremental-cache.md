@@ -1,6 +1,6 @@
 # Persistent LLVM-IR Cache Contract
 
-Status: accepted storage contract
+Status: implemented storage contract
 
 This contract defines Salicin's first persistent compilation cache. The cache
 is a local performance optimization: deleting it, bypassing it, or missing an
@@ -30,6 +30,14 @@ source trees, and the separate temporary native runtime-object cache are never
 cache entries. Cleanup must first validate the exact root and a
 compiler-created ownership marker; it must never recursively delete an
 unvalidated path.
+
+Opening a store creates `.salicin-cache-root` atomically with the exact
+contents `salicin-cache-root-v1\n`. An existing symbolic-link, non-regular, or
+byte-different marker is rejected. A nonempty directory without the marker is
+not claimed, so a mistaken override cannot turn pre-existing user data into a
+future cleanup target. The storage API exposes root unavailability and storage
+errors separately; later pipeline integration turns either into disabled
+caching rather than a source diagnostic.
 
 ## Identity and Layout
 
@@ -111,10 +119,11 @@ IR.
 
 `--no-cache` is reserved for `emit-ir`, `build`, `run`, and `test`; it forbids
 both lookup and publication for that invocation. `check` always analyzes
-source and does not use the LLVM-IR cache. Cache tracing, cleanup, root
-resolution, storage, and pipeline integration are implemented by later INCR
-workstreams; reserving their behavior here does not claim that their CLI is
-already available.
+source and does not use the LLVM-IR cache. Cache tracing, cleanup, and pipeline
+integration are implemented by later INCR workstreams; reserving their
+behavior here does not claim that their CLI is already available. Root
+resolution plus strict local lookup/publication are implemented by
+`incremental_cache.rs`.
 
 ## Explicit Non-Goals
 
