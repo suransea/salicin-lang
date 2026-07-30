@@ -294,6 +294,24 @@ impl WorkspaceSession {
         Ok(self.snapshot_id())
     }
 
+    /// Record the saved text as the new baseline without writing it to disk.
+    /// If the client omits text, the current open overlay becomes the baseline.
+    pub fn save_document(
+        &mut self,
+        document: &str,
+        source: Option<&str>,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
+        let index = self.require_document(document)?;
+        let overlay = self
+            .open_documents
+            .get(document)
+            .ok_or_else(|| WorkspaceSessionError::DocumentNotOpen(document.to_owned()))?;
+        let baseline = source.unwrap_or(&overlay.source).to_owned();
+        self.bump_revision()?;
+        self.documents[index].baseline = baseline;
+        Ok(self.snapshot_id())
+    }
+
     /// Replace caller-owned baseline text without touching the filesystem.
     /// An open overlay continues to take precedence until it is closed.
     pub fn update_baseline(

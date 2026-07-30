@@ -12,6 +12,7 @@ pub mod incremental;
 pub mod incremental_cache;
 pub mod lexer;
 pub mod lockfile;
+pub mod lsp;
 pub mod manifest;
 pub mod modules;
 pub mod parser;

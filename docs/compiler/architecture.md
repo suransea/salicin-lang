@@ -33,6 +33,11 @@ The implementation lives under `compiler/src`:
   caller-supplied baseline sources and produces immutable, thread-safe
   snapshots; completed analyses pass one session/revision gate before
   publication, so superseded results are dropped without any source-file I/O.
+- `lsp.rs` owns bounded `Content-Length` JSON-RPC framing, LSP lifecycle
+  enforcement, UTF-8 file-URI conversion, and full-document synchronization
+  into `WorkspaceSession`. The CLI owns package and target discovery before
+  constructing the transport; the transport neither discovers nor writes
+  workspace files.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
   the private user-cache root and implements strict local lookup, validation,

@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::fd::FromRawFd;
 
+use salicin_lang::editor::{DocumentTarget, EditorSource, WorkspaceSession};
 use salicin_lang::lockfile::{
     generate_lockfile_at, generate_workspace_lockfile, parse_lockfile, portable_relative_path,
     write_lockfile_if_changed, LOCKFILE_NAME,
@@ -42,6 +43,7 @@ Usage:
   salic check [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen] [-o <path>]
   salic fingerprint [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
+  salic lsp [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic cache clean
   salic fmt [path] [--check]
   salic run [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-- <args>...]
@@ -53,6 +55,7 @@ Commands:
     check      Parse and type-check a source or package target
   emit-ir    Print LLVM IR, or write it to a file with -o
   fingerprint Print the stable incremental input fingerprint
+  lsp        Run the Language Server Protocol over standard input/output
   fmt        Format one source file or every source in the selected package
   run        Compile and run a program; arguments after -- go to the program
   test       Compile all test declarations into one runner and run it
@@ -132,6 +135,12 @@ enum Action {
         list: bool,
         filter: Option<String>,
         cache: CacheOptions,
+    },
+    Lsp {
+        input: Option<PathBuf>,
+        package: Option<String>,
+        lock_mode: LockMode,
+        target: TargetSelection,
     },
     CacheClean,
 }
@@ -215,7 +224,17 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if args.len() == 2
         && matches!(
             first.to_str(),
-            Some("build" | "check" | "emit-ir" | "fingerprint" | "fmt" | "run" | "test" | "cache")
+            Some(
+                "build"
+                    | "check"
+                    | "emit-ir"
+                    | "fingerprint"
+                    | "lsp"
+                    | "fmt"
+                    | "run"
+                    | "test"
+                    | "cache"
+            )
         )
         && (is(&args[1], "-h") || is(&args[1], "--help"))
     {
@@ -258,6 +277,15 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         Some("fingerprint") => {
             let parsed = parse_compile_args("fingerprint", &args[1..], false, true, false)?;
             Action::Fingerprint {
+                input: parsed.input,
+                package: parsed.package,
+                lock_mode: parsed.lock_mode,
+                target: parsed.target,
+            }
+        }
+        Some("lsp") => {
+            let parsed = parse_compile_args("lsp", &args[1..], false, true, false)?;
+            Action::Lsp {
                 input: parsed.input,
                 package: parsed.package,
                 lock_mode: parsed.lock_mode,
@@ -757,7 +785,62 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
+        Action::Lsp {
+            input,
+            package,
+            lock_mode,
+            target,
+        } => run_lsp(input.as_deref(), package.as_deref(), lock_mode, target),
         Action::CacheClean => clean_incremental_cache(),
+    }
+}
+
+fn run_lsp(
+    input: Option<&Path>,
+    package: Option<&str>,
+    lock_mode: LockMode,
+    selection: TargetSelection,
+) -> i32 {
+    let target = match resolve_input(input, package, lock_mode, selection, false) {
+        Ok(target) => target,
+        Err(message) => return report_driver_error(message),
+    };
+    let packages = match read_target_packages(&target) {
+        Ok(packages) => packages,
+        Err(()) => return 1,
+    };
+    let sources = packages
+        .iter()
+        .flat_map(|package| package.sources.iter())
+        .map(|source| EditorSource {
+            path: &source.path,
+            module_path: &source.module_path,
+            source: &source.source,
+            is_root: source.is_root,
+        })
+        .collect::<Vec<_>>();
+    let document_target = if target.is_library {
+        DocumentTarget::Library
+    } else {
+        DocumentTarget::Binary
+    };
+    let session = match WorkspaceSession::new(&sources, document_target) {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("salic: could not create LSP workspace: {error}");
+            return 2;
+        }
+    };
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = io::BufReader::new(stdin.lock());
+    let mut writer = io::BufWriter::new(stdout.lock());
+    match salicin_lang::lsp::Server::new(session).run(&mut reader, &mut writer) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("salic: LSP transport failed: {error}");
+            1
+        }
     }
 }
 

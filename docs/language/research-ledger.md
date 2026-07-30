@@ -439,6 +439,34 @@ an old result cannot become current.
   authoritative snapshot result while establishing the identity boundary
   future reuse must preserve.
 
+### The Transport Preserves the Snapshot Boundary
+
+Reviewed on 2026-07-30 for the minimal stdio language-server transport.
+`salic lsp` selects one ordinary compiler target before serving messages,
+advertises full-document synchronization, and routes every accepted edit into
+the versioned in-memory session. Framing is bounded and lifecycle state is
+explicit. No transport notification writes a source file, and the later
+diagnostic publisher must still cross the existing snapshot gate.
+
+- [Language Server Protocol
+  3.18](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/)
+  defines `Content-Length` JSON-RPC framing, initialize/shutdown/exit
+  ordering, UTF-16 as the default position encoding, and open/change/save/close
+  document synchronization. Salicin advertises exactly the implemented
+  full-text mode rather than accepting range edits it cannot preserve.
+- [Mechanically Translating Iterative Dataflow Analysis to Algebraic Program
+  Analysis (OOPSLA 2026)](https://doi.org/10.1145/3798216) derives
+  compositional analyses suitable for frequent program changes. That supports
+  a later incremental layer, not coupling protocol mutation to analysis
+  internals; Salicin retains a small transport whose semantic output is a new
+  snapshot revision.
+- [Code Less to Code More: Streamlining Language Server Protocol and type
+  system development for language families (JSS
+  2026)](https://doi.org/10.1016/j.jss.2025.112554) emphasizes reuse between
+  language semantics and editor services. Salicin follows that separation
+  manually: the server reuses the compiler's editor/session API and adds no
+  second lexer, parser, or type system.
+
 ## Review Gate
 
 Before extending the static language:

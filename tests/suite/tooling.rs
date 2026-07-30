@@ -1,5 +1,6 @@
 use crate::support::*;
 use sha2::{Digest, Sha256};
+use std::io::{Cursor, Write};
 use std::process::Stdio;
 
 fn digest_hex(bytes: &[u8]) -> String {
@@ -7,6 +8,102 @@ fn digest_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[test]
+fn lsp_stdio_selects_a_workspace_package_and_synchronizes_without_writing() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "salicin.toml",
+        "[workspace]\nmembers = [\"app\", \"other\"]\n",
+    );
+    workspace.write(
+        "app/salicin.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    let source = workspace.write("app/src/main.sc", "let main(): i32 = { 0 }\n");
+    workspace.write(
+        "other/salicin.toml",
+        "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write("other/src/main.sc", "let main(): i32 = { 1 }\n");
+
+    fn message(value: serde_json::Value) -> Vec<u8> {
+        let body = serde_json::to_vec(&value).unwrap();
+        format!("Content-Length: {}\r\n\r\n", body.len())
+            .into_bytes()
+            .into_iter()
+            .chain(body)
+            .collect()
+    }
+
+    let canonical_source = fs::canonicalize(&source).unwrap();
+    let uri = salicin_lang::lsp::path_to_file_uri(&canonical_source.display().to_string());
+    let mut transcript = message(serde_json::json!({
+        "jsonrpc":"2.0", "id":1, "method":"initialize", "params":{}
+    }));
+    for value in [
+        serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"salicin","version":1,
+                "text":"let main(): i32 = { 40 }\n"}
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},
+            "contentChanges":[{"text":"let main(): i32 = { 42 }\n"}]
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{
+            "textDocument":{"uri":uri}
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didClose","params":{
+            "textDocument":{"uri":uri}
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}),
+        serde_json::json!({"jsonrpc":"2.0","method":"exit"}),
+    ] {
+        transcript.extend(message(value));
+    }
+
+    let mut child = salic()
+        .args(["lsp", "-p", "app"])
+        .arg(&workspace.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start language server");
+    child.stdin.take().unwrap().write_all(&transcript).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", output_text(&output));
+    assert!(output.stderr.is_empty(), "{}", output_text(&output));
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "let main(): i32 = { 0 }\n",
+        "LSP synchronization must not write source files"
+    );
+
+    let mut responses = Cursor::new(output.stdout);
+    let initialize: serde_json::Value = serde_json::from_slice(
+        &salicin_lang::lsp::read_message(&mut responses)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(initialize["id"], 1);
+    assert_eq!(
+        initialize["result"]["capabilities"]["textDocumentSync"]["change"],
+        1
+    );
+    let shutdown: serde_json::Value = serde_json::from_slice(
+        &salicin_lang::lsp::read_message(&mut responses)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(shutdown["id"], 2, "unexpected LSP response: {shutdown}");
+    assert!(salicin_lang::lsp::read_message(&mut responses)
+        .unwrap()
+        .is_none());
 }
 
 #[test]

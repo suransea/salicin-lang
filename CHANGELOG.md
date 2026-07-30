@@ -6,6 +6,24 @@ subset.
 
 ## Unreleased
 
+## 0.245.0 - 2026-07-30
+
+- Completed LSP-3 with `salic lsp` over standard input/output, bounded and
+  validated `Content-Length` JSON-RPC framing, initialize/shutdown/exit
+  lifecycle enforcement, UTF-16 negotiation, and explicit failure exit
+  behavior for premature EOF or `exit`.
+- Added ordinary CLI package, workspace, binary, and library target selection
+  before server startup. Full-text open/change/save/close notifications now
+  update strictly versioned in-memory overlays; save advances the baseline,
+  close restores it, stale changes produce protocol log messages, and no
+  synchronization operation writes source files.
+- Added unit and real-process transcript coverage for malformed framing,
+  Unicode file-URI round trips, lifecycle capabilities, stale versions,
+  workspace package selection, complete synchronization, clean shutdown, and
+  byte-identical on-disk source. Updated transport/snapshot contracts,
+  architecture, status, roadmap, TODO, and the current research ledger;
+  LSP-4 is next.
+
 ## 0.244.0 - 2026-07-30
 
 - Completed LSP-2 with a transport-independent `WorkspaceSession` that

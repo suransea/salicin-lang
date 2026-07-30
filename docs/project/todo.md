@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: LSP Diagnostics Baseline
 
-- [ ] **LSP-3 — Minimal stdio transport.** Implement `salic lsp` with JSON-RPC
-  framing, initialize/shutdown lifecycle, workspace selection, and full-text
-  open/change/save/close synchronization.
-
 - [ ] **LSP-4 — Diagnostics and semantic tokens.** Publish phased diagnostics
   and compiler-derived tokens with exact URI and UTF-16 ranges across a
   multi-file package.

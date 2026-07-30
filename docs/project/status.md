@@ -39,6 +39,11 @@ current capability inventory. It does not record release history; see the
   immutable cross-thread analysis snapshots, ordered per-document result
   versions, close-to-baseline restoration, and session/revision-gated stale
   result rejection without filesystem writes;
+- `salic lsp` over standard input/output with bounded `Content-Length`
+  JSON-RPC framing, initialize/shutdown/exit lifecycle enforcement,
+  command-line package and binary/library selection, UTF-16 position
+  negotiation, and strictly versioned full-text open/change/save/close
+  synchronization into in-memory workspace overlays;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
   inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
@@ -58,8 +63,8 @@ current capability inventory. It does not record release history; see the
   package providers and aliases, module paths, source bytes, corrupt entries,
   failed compilation, concurrent writers, and concurrent warm readers.
 
-The compiler does not yet provide an LSP transport, incremental document
-updates, completion, hover, or rename.
+The LSP transport does not yet publish diagnostics or semantic tokens and
+does not provide incremental range edits, completion, hover, or rename.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
 performs complete source analysis. Per-package reuse, remote caching, native
 artifact caching, and eviction policy remain outside the implemented
@@ -102,6 +107,7 @@ The command-line surface is:
 salic check SOURCE
 salic emit-ir SOURCE -o OUTPUT
 salic fingerprint SOURCE
+salic lsp [SOURCE_OR_PACKAGE] [-p PACKAGE] [--bin NAME | --lib]
 salic build SOURCE -o OUTPUT
 salic run SOURCE -- ARGUMENTS
 salic test SOURCE [--list] [--filter TEXT]

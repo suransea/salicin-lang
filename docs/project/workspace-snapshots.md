@@ -17,13 +17,14 @@ the current open version. Equal and lower versions are rejected without
 changing session state or advancing its revision.
 
 `update_baseline` replaces the in-memory baseline supplied by the caller. An
-open overlay continues to win. `close_document` removes the overlay and
-reveals the latest baseline. Unknown, duplicate, already-open, and not-open
-document operations are explicit errors. These operations never write the
-corresponding source path.
+open overlay continues to win. `save_document` records either client-supplied
+saved text or the current overlay as the new baseline, again without writing
+it. `close_document` removes the overlay and reveals that latest baseline.
+Unknown, duplicate, already-open, and not-open document operations are
+explicit errors. These operations never write the corresponding source path.
 
 This layer accepts full document text. Incremental range edits, filesystem
-watching, save policy, and URI normalization belong to the protocol transport.
+watching, and URI normalization belong to the protocol transport.
 
 ## Immutable snapshots
 
@@ -69,4 +70,3 @@ Regression coverage proves:
 - cross-session result rejection;
 - duplicate, unknown, already-open, and not-open failures; and
 - byte-for-byte unchanged source files after opening and changing overlays.
-
