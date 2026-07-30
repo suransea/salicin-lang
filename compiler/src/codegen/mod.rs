@@ -451,6 +451,7 @@ impl Analyzer {
                         | ("std::io::host_close", "sali_host_close")
                         | ("std::io::host_flush", "sali_host_flush")
                         | ("std::io::host_seek", "sali_host_seek")
+                        | ("std::testing::host_report", "sali_host_test_report")
                 );
             self.current_origin = origin;
             if name == "main" {

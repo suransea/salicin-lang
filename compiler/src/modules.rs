@@ -575,6 +575,7 @@ const CORE_ITER_EXPORTS: &[&str] = &[
     "owned_item",
     "borrowed_item",
 ];
+const CORE_TESTING_EXPORTS: &[&str] = &["failure", "outcome", "run"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -1304,6 +1305,7 @@ fn install_core_namespace(
             "iter",
             "algebra",
             "functional",
+            "testing",
         ] {
             insert_standard_module_path(module_paths, &core_root, module);
         }
@@ -1626,6 +1628,17 @@ fn install_core_namespace(
                 "iter",
                 name,
                 &format!("core::iter::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_TESTING_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "testing",
+                name,
+                &format!("core::testing::{name}"),
                 "<core>",
             );
         }

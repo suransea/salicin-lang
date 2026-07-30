@@ -1757,6 +1757,7 @@ fn mounted_standard_exports_match_the_validated_bundles() {
         .chain(CORE_NUMERIC_EXPORTS.iter().map(|name| ("numeric", *name)))
         .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
         .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
+        .chain(CORE_TESTING_EXPORTS.iter().map(|name| ("testing", *name)))
         .collect::<BTreeSet<_>>();
     assert_eq!(core_exports, expected_core);
 

@@ -185,10 +185,10 @@ Current research and specifications:
 
 ### Test Failure Is a Handled, Resource-Safe Outcome
 
-Reviewed on 2026-07-30 for the accepted
+Reviewed on 2026-07-30 for the implemented
 [structured test-support contract](../project/test-support.md). A registration
 may transfer an owned optional message through one compiler-handled
-`core.test.failure` operation. The runner interprets that operation once,
+`core.testing.failure` operation. The runner interprets that operation once,
 after ordinary cleanup, records the resulting outcome, and continues with the
 next registration. A boolean `false` is normalized to the same unmessaged
 outcome rather than retained as a second protocol.
@@ -202,6 +202,13 @@ Current research:
 - [Building Extensible Program Logics through Effect Handlers (2026)](https://arxiv.org/abs/2607.12642)
 - [Yarrow: Reconciling Effect Handlers and Region-Based Memory Management (2026)](https://arxiv.org/abs/2607.15876)
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
+- [A Relational Separation Logic for Effect Handlers (POPL 2026)](https://doi.org/10.1145/3776676)
+- [Virtualizing Continuations (PLDI 2026)](https://pldi26.sigplan.org/details/pldi-2026-papers/46/Virtualizing-Continuations)
+
+The implementation deliberately keeps test failure one-shot. Work on
+multi-shot continuations shows why copying or virtualizing handler stacks is a
+separate runtime problem; TEST-1 needs only abortive transfer and therefore
+retains Salicin's existing exactly-once cleanup model.
 
 ## Review Gate
 

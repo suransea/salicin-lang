@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::fd::FromRawFd;
 
 use salicin_lang::lockfile::{
     generate_lockfile_at, generate_workspace_lockfile, parse_lockfile, portable_relative_path,
@@ -615,19 +618,18 @@ fn execute(action: Action) -> i32 {
                 Ok(compilation) => compilation,
                 Err(()) => return 1,
             };
-            match compile_and_run(&compilation.ir, &[]) {
-                Ok(0) => 0,
-                Ok(index) => {
-                    let name = usize::try_from(index)
-                        .ok()
-                        .and_then(|index| index.checked_sub(1))
-                        .and_then(|index| compilation.names.get(index));
-                    if let Some(name) = name {
-                        eprintln!("salic: test {name:?} failed");
-                    } else {
-                        eprintln!("salic: test runner returned invalid failure index {index}");
+            match compile_and_run_tests(&compilation.ir, compilation.names.len()) {
+                Ok(run) => {
+                    for failure in run.failures {
+                        let name = &compilation.names[failure.index];
+                        match failure.message {
+                            Some(message) => {
+                                eprintln!("salic: test {name:?} failed: {message}");
+                            }
+                            None => eprintln!("salic: test {name:?} failed"),
+                        }
                     }
-                    1
+                    run.exit_code
                 }
                 Err(message) => {
                     eprintln!("salic: {message}");
@@ -1534,6 +1536,187 @@ fn compile_and_run(ir: &str, args: &[OsString]) -> Result<i32, String> {
     Ok(program_exit_code(status))
 }
 
+const TEST_REPORT_HEADER_LENGTH: usize = 24;
+const TEST_REPORT_LIMIT: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+struct TestFailure {
+    index: usize,
+    message: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TestRun {
+    exit_code: i32,
+    failures: Vec<TestFailure>,
+}
+
+#[cfg(unix)]
+fn compile_and_run_tests(ir: &str, expected: usize) -> Result<TestRun, String> {
+    let temporary = TemporaryDirectory::new()?;
+    let ir_path = temporary.path().join("module.ll");
+    let runtime_path = temporary.path().join("allocator.c");
+    let executable = temporary.path().join(executable_name("test-runner"));
+    fs::write(&ir_path, ir).map_err(|error| {
+        format!(
+            "could not write temporary LLVM IR '{}': {error}",
+            ir_path.display()
+        )
+    })?;
+    write_allocator_runtime(&runtime_path)?;
+    invoke_clang(&ir_path, &runtime_path, &executable)?;
+
+    let mut descriptors = [-1; 2];
+    // SAFETY: `pipe` initializes both descriptors on success. Each descriptor
+    // is immediately assigned one owner in this function.
+    if unsafe { libc::pipe(descriptors.as_mut_ptr()) } != 0 {
+        return Err(format!(
+            "could not create the test result pipe: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: the successful `pipe` call returned a new owned read descriptor.
+    let reader = unsafe { File::from_raw_fd(descriptors[0]) };
+    let write_descriptor = descriptors[1];
+    let child = Command::new(&executable)
+        .env("SALICIN_TEST_REPORT_FD", write_descriptor.to_string())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            // SAFETY: this branch still owns the write descriptor.
+            unsafe {
+                libc::close(write_descriptor);
+            }
+            return Err(format!("could not run '{}': {error}", executable.display()));
+        }
+    };
+    // SAFETY: after `spawn`, only the child owns an inherited copy.
+    unsafe {
+        libc::close(write_descriptor);
+    }
+
+    let mut report = Vec::new();
+    reader
+        .take(TEST_REPORT_LIMIT + 1)
+        .read_to_end(&mut report)
+        .map_err(|error| format!("could not read the test result pipe: {error}"))?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("could not wait for '{}': {error}", executable.display()))?;
+    if report.len() as u64 > TEST_REPORT_LIMIT {
+        return Err("test runner report exceeded the 64 MiB limit".to_owned());
+    }
+    parse_test_report(&report, expected, program_exit_code(status))
+}
+
+#[cfg(not(unix))]
+fn compile_and_run_tests(_ir: &str, _expected: usize) -> Result<TestRun, String> {
+    Err("the native test result pipe is supported only on Unix targets".to_owned())
+}
+
+fn parse_test_report(report: &[u8], expected: usize, exit_code: i32) -> Result<TestRun, String> {
+    let mut cursor = 0usize;
+    let mut next_index = 0usize;
+    let mut failures = Vec::new();
+    let mut terminal_failures = None;
+    while cursor < report.len() {
+        let remaining = report.len() - cursor;
+        if remaining < TEST_REPORT_HEADER_LENGTH {
+            return Err(format!(
+                "test runner returned a truncated result header at byte {cursor}"
+            ));
+        }
+        let header = &report[cursor..cursor + TEST_REPORT_HEADER_LENGTH];
+        cursor += TEST_REPORT_HEADER_LENGTH;
+        if &header[..4] != b"SLT1" {
+            return Err(format!(
+                "test runner returned invalid result magic at byte {}",
+                cursor - TEST_REPORT_HEADER_LENGTH
+            ));
+        }
+        if header[14] != 0 || header[15] != 0 {
+            return Err("test runner returned nonzero reserved result bytes".to_owned());
+        }
+        let index = usize::try_from(u64::from_le_bytes(
+            header[4..12].try_into().expect("fixed result index field"),
+        ))
+        .map_err(|_| "test runner result index does not fit this host".to_owned())?;
+        let status = header[12];
+        let has_message = header[13];
+        let length = u64::from_le_bytes(
+            header[16..24]
+                .try_into()
+                .expect("fixed result length field"),
+        );
+        if status == 2 {
+            if has_message != 0 || index != expected || next_index != expected {
+                return Err("test runner returned an invalid terminal result".to_owned());
+            }
+            terminal_failures = Some(
+                usize::try_from(length)
+                    .map_err(|_| "test failure count does not fit this host".to_owned())?,
+            );
+            if cursor != report.len() {
+                return Err("test runner returned data after its terminal result".to_owned());
+            }
+            break;
+        }
+        if status > 1 || has_message > 1 || index != next_index || index >= expected {
+            return Err(format!(
+                "test runner returned an invalid result for registration {index}"
+            ));
+        }
+        next_index += 1;
+        let message = match (status, has_message, length) {
+            (0, 0, 0) | (1, 0, 0) => None,
+            (1, 1, length) => {
+                let length = usize::try_from(length)
+                    .map_err(|_| "test result message length does not fit this host".to_owned())?;
+                let end = cursor
+                    .checked_add(length)
+                    .filter(|end| *end <= report.len())
+                    .ok_or_else(|| {
+                        format!("test runner returned a truncated message for registration {index}")
+                    })?;
+                let message = std::str::from_utf8(&report[cursor..end])
+                    .map_err(|_| {
+                        format!("test runner returned invalid UTF-8 for registration {index}")
+                    })?
+                    .to_owned();
+                cursor = end;
+                Some(message)
+            }
+            _ => {
+                return Err(format!(
+                    "test runner returned an invalid payload for registration {index}"
+                ));
+            }
+        };
+        if status == 1 {
+            failures.push(TestFailure { index, message });
+        }
+    }
+    let terminal_failures =
+        terminal_failures.ok_or_else(|| "test runner omitted its terminal result".to_owned())?;
+    if terminal_failures != failures.len() {
+        return Err(format!(
+            "test runner reported {terminal_failures} failures but emitted {}",
+            failures.len()
+        ));
+    }
+    let expected_exit = if failures.is_empty() { 0 } else { 1 };
+    if exit_code != expected_exit {
+        return Err(format!(
+            "test runner exited with {exit_code}, expected {expected_exit} from its results"
+        ));
+    }
+    Ok(TestRun {
+        exit_code: expected_exit,
+        failures,
+    })
+}
+
 fn write_allocator_runtime(path: &Path) -> Result<(), String> {
     fs::write(path, DEFAULT_ALLOCATOR_RUNTIME).map_err(|error| {
         format!(
@@ -1725,4 +1908,71 @@ fn is(argument: &OsStr, expected: &str) -> bool {
 
 fn starts_with_dash(argument: &OsStr) -> bool {
     argument.to_string_lossy().starts_with('-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(index: u64, status: u8, has_message: u8, length: u64, payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::from(*b"SLT1");
+        frame.extend_from_slice(&index.to_le_bytes());
+        frame.push(status);
+        frame.push(has_message);
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(&length.to_le_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn test_report_parser_accepts_all_results_and_empty_messages() {
+        let mut report = frame(0, 1, 1, 0, b"");
+        report.extend(frame(1, 0, 0, 0, b""));
+        report.extend(frame(2, 1, 1, 3, "盐".as_bytes()));
+        report.extend(frame(3, 2, 0, 2, b""));
+        assert_eq!(
+            parse_test_report(&report, 3, 1).unwrap(),
+            TestRun {
+                exit_code: 1,
+                failures: vec![
+                    TestFailure {
+                        index: 0,
+                        message: Some(String::new()),
+                    },
+                    TestFailure {
+                        index: 2,
+                        message: Some("盐".to_owned()),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_report_parser_rejects_malformed_or_incomplete_streams() {
+        let cases = [
+            (vec![], "omitted its terminal result"),
+            (b"SLT1".to_vec(), "truncated result header"),
+            (frame(1, 0, 0, 0, b""), "invalid result for registration"),
+            (frame(0, 1, 1, 2, &[0xff, 0xff]), "invalid UTF-8"),
+            (frame(0, 1, 1, 2, b"x"), "truncated message"),
+        ];
+        for (report, expected) in cases {
+            let error = parse_test_report(&report, 1, 1).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let mut duplicate = frame(0, 0, 0, 0, b"");
+        duplicate.extend(frame(0, 0, 0, 0, b""));
+        assert!(parse_test_report(&duplicate, 1, 0)
+            .unwrap_err()
+            .contains("invalid result for registration"));
+
+        let mut mismatch = frame(0, 1, 0, 0, b"");
+        mismatch.extend(frame(1, 2, 0, 0, b""));
+        assert!(parse_test_report(&mismatch, 1, 1)
+            .unwrap_err()
+            .contains("reported 0 failures but emitted 1"));
+    }
 }

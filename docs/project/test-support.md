@@ -1,6 +1,6 @@
 # Structured Test Support
 
-Status: accepted implementation contract
+Status: implemented contract
 
 This document fixes the first source and runner contract for built-in test
 registrations. It covers structured failure, cleanup, result transport, and
@@ -18,9 +18,9 @@ test("parses a count") {
 ```
 
 Its body has the conceptual callable type
-`with(core.test.failure)((): bool)`. Every other effect must still be handled
+`with(core.testing.failure)((): bool)`. Every other effect must still be handled
 inside the body. The compiler-supplied registration boundary handles exactly
-`core.test.failure`; it does not grant I/O, allocation, unsafety, or arbitrary
+`core.testing.failure`; it does not grant I/O, allocation, unsafety, or arbitrary
 user effects.
 
 Returning `true` passes. Returning `false` is the compatibility spelling for
@@ -29,7 +29,7 @@ but structured failure is the canonical path used by standard assertions.
 
 ## Failure and Outcome
 
-The source-backed core contract has these conceptual shapes:
+The source-backed `core.testing` contract has these shapes:
 
 ```salicin
 let failure = effect {
@@ -90,7 +90,11 @@ compiler-owned pipe inherited from `salic test`. The channel is not program
 stdin, stdout, stderr, an environment-variable payload, or an exit-code
 encoding. User output therefore cannot forge, split, or hide a test result.
 
-Each record contains:
+Each schema-1 record contains the `SLT1` magic, a little-endian `u64`
+registration index, one-byte status and message-presence fields, two zero
+reserved bytes, a little-endian `u64` length, and optional message bytes.
+The terminal status uses the index as registration count and the length field
+as failure count. Thus every record contains:
 
 - a schema version;
 - the source-order registration index;
@@ -105,14 +109,16 @@ Transport diagnostics never expose compiler-generated function names.
 
 The child exit status only summarizes whether the framed run completed and
 whether any registration failed. It is not an index and cannot be the sole
-result source. The dedicated descriptor is compiler-owned and is not exposed
-as general source I/O authority.
+result source. The descriptor number is passed in the private
+`SALICIN_TEST_REPORT_FD` launcher environment entry; result bytes are never
+placed in the environment. The dedicated descriptor is compiler-owned and is
+not exposed as general source I/O authority.
 
 ## Diagnostics and Migration
 
 - A test body that returns neither `bool` under the compatibility rule nor the
   structured failure path receives a source diagnostic at the body.
-- An effect other than `core.test.failure` that escapes the body is diagnosed
+- An effect other than `core.testing.failure` that escapes the body is diagnosed
   at the registration.
 - A failure is reported with the source registration name and its optional
   message. Compiler-generated `$test$...` names are never printed.
@@ -157,4 +163,3 @@ Reviewed on 2026-07-30:
   2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)
   motivates requiring destruction on the exceptional transfer path and
   interpreting failure only after that cleanup.
-

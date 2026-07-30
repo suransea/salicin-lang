@@ -15,7 +15,9 @@ current capability inventory. It does not record release history; see the
 - deterministic HIR and LLVM IR generation;
 - native checking, IR emission, building, and running;
 - compile-time `test("name") { ... }` registrations collected into one native
-  runner by `salic test`, with source-order execution and named failures;
+  runner by `salic test`, with source-order execution, source-backed
+  structured failure, owned optional UTF-8 messages, all-failure reporting,
+  and a dedicated framed parent channel;
 - source-declared pass-fixture tests batched into native runners by semantic
   group, while process-terminating fixtures remain isolated;
 - package and virtual workspace manifests, explicit workspace members,
@@ -85,8 +87,9 @@ Implemented lexical and declaration features include:
 - explicit erased inputs for those syntax declarations:
   the one- and two-argument `foreign` overloads select the finite
   `abi.c` value, while
-  `pub let test(comptime name: string)(move body: (): bool): () = builtin()`
-  receives compiler-owned UTF-8 metadata.
+  `pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`
+  receives the syntax-owned body after the compiler consumes UTF-8 name
+  metadata.
 
 Types, traits, functions, values, modules, parameters, and ordinary sorts use
 `snake_case`.

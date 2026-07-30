@@ -108,6 +108,7 @@ fn edition_2026_test_modules<'a>(overrides: &[(&str, &'a str)]) -> Vec<(&'static
         ("numeric", EDITION_2026_NUMERIC),
         ("string", EDITION_2026_STRING),
         ("fmt", EDITION_2026_FMT),
+        ("testing", EDITION_2026_TESTING),
     ];
     for (module, source) in overrides {
         let Some((_, target)) = modules
@@ -126,7 +127,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 419);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 422);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -437,16 +438,16 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
             "lib",
             "test",
             EDITION_2026_LIB.replace(
-                "pub let test(move body: (): bool): () = builtin()",
-                "pub let test(): () = builtin()",
+                "move body: with(core.testing.failure)((): bool),",
+                "move body: (),",
             ),
         ),
         (
             "lib",
             "test",
             EDITION_2026_LIB.replace(
-                "pub let test(move body: (): bool): () = builtin()",
-                "pub let test(move body: (): i32): () = builtin()",
+                "move body: with(core.testing.failure)((): bool),",
+                "move body: with(core.testing.failure)((): i32),",
             ),
         ),
     ] {

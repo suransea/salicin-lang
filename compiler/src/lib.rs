@@ -137,11 +137,6 @@ fn test_runner_program(
             "error: test target contains no test declarations".to_owned()
         ]);
     }
-    if tests.len() > 254 {
-        return Err(vec![
-            "error: a test target currently supports at most 254 tests".to_owned(),
-        ]);
-    }
     let names = tests
         .iter()
         .map(|(_, name)| name.clone())
@@ -168,15 +163,67 @@ fn test_runner_program(
         retained_origins.push(origin);
     }
 
-    let body = tests.into_iter().enumerate().rev().fold(
-        ast::Expr::Integer(0),
-        |next, (index, (test, _))| ast::Expr::If {
-            condition: Box::new(ast::Expr::Call(Box::new(ast::Expr::Name(test)), Vec::new())),
-            then_branch: Box::new(next),
-            else_branch: Some(Box::new(ast::Expr::Integer(
-                u128::try_from(index + 1).expect("test index fits in u128"),
+    let test_count = tests.len();
+    let mut statements = vec![ast::Stmt::Let(ast::Binding {
+        mutable: true,
+        name: "$test_failures".to_owned(),
+        annotation: Some(ast::Type::U64),
+        value: ast::Expr::Integer(0),
+        value_source: None,
+    })];
+    for (index, (test, _)) in tests.into_iter().enumerate() {
+        let outcome = ast::Expr::Call(
+            Box::new(ast::Expr::Name("core::testing::run".to_owned())),
+            vec![ast::CallArg {
+                label: None,
+                value: ast::Expr::Name(test),
+            }],
+        );
+        let reported = ast::Expr::Call(
+            Box::new(ast::Expr::Name("std::testing::report".to_owned())),
+            vec![
+                ast::CallArg {
+                    label: None,
+                    value: ast::Expr::Integer(
+                        u128::try_from(index).expect("test index fits in u128"),
+                    ),
+                },
+                ast::CallArg {
+                    label: None,
+                    value: outcome,
+                },
+            ],
+        );
+        statements.push(ast::Stmt::Expr(ast::Expr::If {
+            condition: Box::new(reported),
+            then_branch: Box::new(ast::Expr::Unit),
+            else_branch: Some(Box::new(ast::Expr::Assign(
+                Box::new(ast::Expr::Name("$test_failures".to_owned())),
+                Box::new(ast::Expr::Binary(
+                    Box::new(ast::Expr::Name("$test_failures".to_owned())),
+                    ast::BinaryOp::Add,
+                    Box::new(ast::Expr::Integer(1)),
+                )),
             ))),
-        },
+        }));
+    }
+    let body = ast::Expr::Block(
+        statements,
+        Some(Box::new(ast::Expr::Call(
+            Box::new(ast::Expr::Name("std::testing::finish".to_owned())),
+            vec![
+                ast::CallArg {
+                    label: None,
+                    value: ast::Expr::Integer(
+                        u128::try_from(test_count).expect("test count fits in u128"),
+                    ),
+                },
+                ast::CallArg {
+                    label: None,
+                    value: ast::Expr::Name("$test_failures".to_owned()),
+                },
+            ],
+        ))),
     );
     retained_items.push(ast::Item::Function(ast::Function {
         name: "main".to_owned(),

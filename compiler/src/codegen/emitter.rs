@@ -230,7 +230,15 @@ impl<'a> Emitter<'a> {
                 "internal error: cleanup plan count does not match HIR function count",
             ));
         }
-        for (function, cleanup_plan) in self.program.functions.iter().zip(self.cleanup_plans) {
+        let mut function_indices = (0..self.program.functions.len()).collect::<Vec<_>>();
+        function_indices.sort_by(|left, right| {
+            self.program.functions[*left]
+                .name
+                .cmp(&self.program.functions[*right].name)
+        });
+        for index in function_indices {
+            let function = &self.program.functions[index];
+            let cleanup_plan = &self.cleanup_plans[index];
             let mut emitter = FunctionEmitter::new(function, self.program, cleanup_plan);
             output.push_str(&emitter.emit()?);
             output.push('\n');
@@ -587,6 +595,25 @@ impl<'a> Emitter<'a> {
         }
         for ty in self.callable_types() {
             self.collect_drop_glue_type(&ty, &mut types);
+        }
+        for adapter in &self.program.continuation_adapters {
+            self.collect_drop_glue_type(
+                &Ty::Continuation {
+                    input: Box::new(adapter.input.clone()),
+                    output: Box::new(adapter.output.clone()),
+                },
+                &mut types,
+            );
+        }
+        for adapter in &self.program.effect_callable_adapters {
+            self.collect_drop_glue_type(
+                &Ty::EffectCallable {
+                    input: Box::new(adapter.input.clone()),
+                    output: Box::new(adapter.output.clone()),
+                    answer: Box::new(adapter.answer.clone()),
+                },
+                &mut types,
+            );
         }
         for layout in &self.program.enums {
             let ty = Ty::Enum(layout.name.clone());

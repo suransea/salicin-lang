@@ -5,9 +5,11 @@ let builtin() = builtin()
 // Public syntax contracts. Their leading groups are erased metadata.
 pub let abi = core.foreign.abi
 pub let foreign = core.foreign.foreign
-// Test names are consumed by the `test("...") { ... }` syntax. The boolean
-// action is the only value passed to this compiler-supplied contract.
-pub let test(move body: (): bool): () = builtin()
+// Test names are consumed by the `test("...") { ... }` syntax. Structured
+// failure is handled independently for each compiler-owned registration.
+pub let test(
+  move body: with(core.testing.failure)((): bool),
+): () = builtin()
 
 pub let never = core.never.never
 pub let movable = core.marker.movable

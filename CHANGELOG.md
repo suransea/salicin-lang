@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.233.0 - 2026-07-30
+
+- Completed TEST-1 with the source-backed `core.testing.failure` effect,
+  normalized `outcome`, and one-shot `run` handler; boolean `false` remains an
+  unmessaged migration adapter into the same model.
+- Replaced first-failure exit-code encoding with source-order interpretation
+  of every registration and a validated schema-1 pipe carrying pass/fail
+  records plus exact optional UTF-8 messages.
+- Added all-failure CLI reporting, later-registration execution, unrelated
+  effect rejection, exactly-once abort cleanup, empty/absent/Unicode message,
+  malformed frame, dependency isolation, and ordinary-build coverage.
+
 ## 0.232.0 - 2026-07-30
 
 - Accepted the structured test-support contract: a source-backed one-shot

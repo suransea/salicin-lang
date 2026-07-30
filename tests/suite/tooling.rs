@@ -175,6 +175,100 @@ fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
 }
 
 #[test]
+fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write(
+        "structured.sc",
+        "test(\"messaged\") {\n\
+           core.testing.failure.abort(core.option.some(\"盐: expected 42\"))\n\
+         }\n\
+         test(\"boolean migration\") { false }\n\
+         test(\"empty message\") {\n\
+           core.testing.failure.abort(core.option.some(\"\"))\n\
+         }\n\
+         test(\"later registration\") {\n\
+           core.testing.failure.abort(core.option.some(\"later still ran\"))\n\
+         }\n",
+    );
+    let output = salic()
+        .arg("test")
+        .arg(source)
+        .output()
+        .expect("run structured test failures");
+    assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "salic: test \"messaged\" failed: 盐: expected 42\n\
+         salic: test \"boolean migration\" failed\n\
+         salic: test \"empty message\" failed: \n\
+         salic: test \"later registration\" failed: later still ran\n",
+        "{}",
+        output_text(&output)
+    );
+
+    let unrelated = temporary.write(
+        "unrelated.sc",
+        "let unrelated = effect { let escape(): () }\n\
+         test(\"wrong effect\") {\n\
+           unrelated.escape()\n\
+           true\n\
+         }\n",
+    );
+    let rejected = salic()
+        .arg("test")
+        .arg(unrelated)
+        .output()
+        .expect("reject unrelated escaping test effect");
+    assert_eq!(
+        rejected.status.code(),
+        Some(1),
+        "{}",
+        output_text(&rejected)
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("requires custom effect `unrelated`"),
+        "{}",
+        output_text(&rejected)
+    );
+}
+
+#[test]
+fn structured_test_abort_runs_owned_cleanup_once() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write(
+        "cleanup.sc",
+        "pub let resource = struct { pub counter: ptr(mut)(i32) }\n\
+         extend(resource, droppable) {\n\
+           let drop(self: borrow(mut)(self))(): () = {\n\
+             unsafe { *self.counter = *self.counter + 1 }\n\
+           }\n\
+         }\n\
+         let abort(counter: ptr(mut)(i32)): core.testing.outcome = {\n\
+           core.testing.run {\n\
+             let owned = resource { counter: counter }\n\
+             core.testing.failure.abort(core.option.none)\n\
+           }\n\
+         }\n\
+         let main(): i32 = {\n\
+           let counter = unsafe { raw_alloc(i32)(size_of(i32), align_of(i32)) }\n\
+           unsafe { *counter = 0 }\n\
+           let result = abort(counter)\n\
+           let drops = unsafe { *counter }\n\
+           unsafe { raw_dealloc(counter, size_of(i32), align_of(i32)) }\n\
+           match result\n\
+             { passed -> 1 }\n\
+             { failed(_) -> if drops == 1 { 42 } else { 2 } }\n\
+         }\n",
+    );
+    let output = salic()
+        .arg("run")
+        .arg(source)
+        .output()
+        .expect("run structured test cleanup probe");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn source_extension_is_sc_without_a_legacy_alias() {
     let temporary = TestDirectory::new();
     let legacy = temporary.write("legacy.sali", "let main(): i32 = { 42 }\n");

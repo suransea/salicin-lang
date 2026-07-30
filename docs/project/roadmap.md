@@ -57,7 +57,8 @@ text, but lacks mutation, character iteration, search, and formatting.
 algorithm vocabulary.
 The source-backed `std` ownership layer and native target boundary are in place, but
 its host-facing modules are not yet implemented. `test("name")` registrations
-return only a boolean without standard assertions or structured failures.
+now have structured per-registration failure, but do not yet have standard
+assertion helpers.
 The accepted [runtime text contract](text-runtime.md) now fixes literal
 storage, scalar validity, borrowed-view regions, UTF-8 validation and
 boundaries, equality, conversion failure, and iteration behavior. Static
@@ -86,9 +87,10 @@ slices, and vectors. The accepted
 [effect-callable syntax](effect-callable-syntax.md) and the accepted
 [synchronous host I/O contract](host-io.md), including console, process, and
 filesystem basics, is implemented. The accepted
-[structured test-support contract](test-support.md) fixes per-registration
-failure handling, cleanup, message ownership, boolean migration, and a
-dedicated result channel. The active slice is its implementation.
+[structured test-support contract](test-support.md) implements
+per-registration failure handling, cleanup, message ownership, boolean
+migration, and a dedicated result channel. The active slice is common
+assertions.
 
 This milestone fills those gaps before adding more language features. It is
 delivered in small end-to-end slices:

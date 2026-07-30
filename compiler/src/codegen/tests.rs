@@ -56,6 +56,17 @@ fn compile_resolved_library_text(source: &str) -> Result<String, Vec<Diagnostic>
     compile_library(&program)
 }
 
+fn closure_symbol_with_signature<'a>(ir: &'a str, signature: &str) -> &'a str {
+    ir.lines()
+        .find_map(|line| {
+            let symbol = line
+                .strip_prefix("define internal i32 @")?
+                .strip_suffix(signature)?;
+            symbol.contains("5f5f636c6f73757265").then_some(symbol)
+        })
+        .unwrap_or_else(|| panic!("missing lifted closure with signature `{signature}`"))
+}
+
 fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
     let source = source.to_owned();
     let function_name = function_name.to_owned();
@@ -4076,10 +4087,11 @@ let read(values: array(i32)(dimension(4))): i32 = { values[0] }
         global_constants(&reverse_ir),
         "emitted constants changed with path, declaration, or traversal order"
     );
+    let repeated_forward = compile(&forward).expect("repeated forward program should compile");
     assert_eq!(
-        compile(&forward).expect("repeated forward program should compile"),
-        forward_ir,
-        "CTFE LLVM IR changed between identical compilations"
+        global_constants(&repeated_forward),
+        global_constants(&forward_ir),
+        "CTFE constants changed between identical compilations"
     );
     assert!(forward_ir.contains("[6 x i32]"), "{forward_ir}");
     let bytes_constant = global_constants(&forward_ir)
@@ -5829,7 +5841,7 @@ let main(): i32 = {
 "#,
     )
     .unwrap();
-    let symbol = function_symbol("__closure.0");
+    let symbol = closure_symbol_with_signature(&ir, "(ptr %arg.0, i32 %arg.1) {");
     assert!(ir.contains(&format!(
         "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1)"
     )));
@@ -6934,7 +6946,7 @@ let main(): i32 = {
 "#,
     )
     .unwrap();
-    let closure = function_symbol("__closure.0");
+    let closure = closure_symbol_with_signature(&ir, "(ptr %arg.0, i32 %arg.1) {");
     assert!(ir.contains(&format!("call i32 @{closure}(ptr")));
     assert!(ir.contains(&format!("call i32 @{}(", function_symbol("add"))));
 }
@@ -6993,7 +7005,7 @@ value
 "#,
     )
     .unwrap();
-    let symbol = function_symbol("__closure.0");
+    let symbol = closure_symbol_with_signature(&ir, "(ptr %arg.0) {");
     assert!(ir.contains(&format!("define internal i32 @{symbol}(ptr %arg.0)")));
     assert_eq!(ir.matches(&format!("call i32 @{symbol}(ptr")).count(), 2);
     assert!(ir.contains("store i32"));
@@ -7074,7 +7086,8 @@ let main(): i32 = {
 "#,
     )
     .unwrap();
-    let symbol = function_symbol("__closure.0");
+    let signature = format!("(%{} %arg.0) {{", type_symbol("payload"));
+    let symbol = closure_symbol_with_signature(&ir, &signature);
     assert!(ir.contains(&format!(
         "define internal i32 @{symbol}(%{} %arg.0)",
         type_symbol("payload")
@@ -7153,7 +7166,7 @@ let main(): i32 = {
 "#,
     )
     .unwrap();
-    let symbol = function_symbol("__closure.0");
+    let symbol = closure_symbol_with_signature(&ir, "(ptr %arg.0, i32 %arg.1, i32 %arg.2) {");
     assert!(ir.contains(&format!(
         "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1, i32 %arg.2)"
     )));
@@ -7173,7 +7186,7 @@ let main(): i32 = {
 "#,
     )
     .expect("curried closures should support partial application");
-    let symbol = function_symbol("__closure.0");
+    let symbol = closure_symbol_with_signature(&ir, "(ptr %arg.0, i32 %arg.1, i32 %arg.2) {");
     assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
 }
 

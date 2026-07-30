@@ -243,7 +243,10 @@ impl Parser {
             compile_groups: Vec::new(),
             groups: vec![Vec::new()],
             return_type: Some(Type::Bool),
-            effects: FunctionEffects::default(),
+            effects: FunctionEffects {
+                custom: vec![Type::Named("core.testing.failure".to_owned(), Vec::new())],
+                ..FunctionEffects::default()
+            },
             where_predicates: Vec::new(),
             body: Some(body),
         })

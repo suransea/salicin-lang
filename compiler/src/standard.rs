@@ -18,6 +18,7 @@ const EDITION_2026_ASYNC: &str = include_str!("../../library/std/src/async.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/std/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/std/src/functional.sc");
 const EDITION_2026_IO: &str = include_str!("../../library/std/src/io.sc");
+const EDITION_2026_TESTING: &str = include_str!("../../library/std/src/testing.sc");
 
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
@@ -25,6 +26,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("algebra", EDITION_2026_ALGEBRA),
     ("functional", EDITION_2026_FUNCTIONAL),
     ("io", EDITION_2026_IO),
+    ("testing", EDITION_2026_TESTING),
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<StdBundle, StdBundleError>> = OnceLock::new();

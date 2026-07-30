@@ -48,6 +48,7 @@ const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc
 const EDITION_2026_LITERAL: &str = include_str!("../../library/core/src/literal.sc");
 const EDITION_2026_STRING: &str = include_str!("../../library/core/src/string.sc");
 const EDITION_2026_FMT: &str = include_str!("../../library/core/src/fmt.sc");
+const EDITION_2026_TESTING: &str = include_str!("../../library/core/src/testing.sc");
 const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("lib", EDITION_2026_LIB),
     ("prelude", EDITION_2026_PRELUDE),
@@ -78,6 +79,7 @@ const EDITION_2026_MODULES: &[(&str, &str)] = &[
     ("literal", EDITION_2026_LITERAL),
     ("string", EDITION_2026_STRING),
     ("fmt", EDITION_2026_FMT),
+    ("testing", EDITION_2026_TESTING),
 ];
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
@@ -90,6 +92,7 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "literal",
     "string",
     "fmt",
+    "testing",
 ];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
@@ -1252,7 +1255,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: (): bool): () = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: with(core.testing.failure)((): bool)): () = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -2580,7 +2583,15 @@ fn validate_syntax_contract(
         LangItemKind::Foreign => foreign_contract_arity(function).is_some(),
         LangItemKind::Test => {
             function.compile_groups.is_empty()
-                && single_moved_callable(function, "body", Type::Bool, FunctionEffects::default())
+                && single_moved_callable(
+                    function,
+                    "body",
+                    Type::Bool,
+                    FunctionEffects {
+                        custom: vec![Type::Named("core.testing.failure".to_owned(), Vec::new())],
+                        ..FunctionEffects::default()
+                    },
+                )
                 && function.return_type == Some(Type::Unit)
         }
         _ => false,
@@ -2594,7 +2605,9 @@ fn validate_syntax_contract(
             LangItemKind::Foreign => {
                 "pub let foreign(comptime abi: abi): never = builtin()` or `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()"
             }
-            LangItemKind::Test => "pub let test(move body: (): bool): () = builtin()",
+            LangItemKind::Test => {
+                "pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()"
+            }
             _ => unreachable!(),
         };
         diagnostics.push(format!(

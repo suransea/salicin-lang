@@ -46,7 +46,7 @@ fn prefix_with_requires_a_callable_operand_and_accepts_an_empty_row() {
 }
 
 #[test]
-fn parses_contextual_test_declarations_as_private_bool_functions() {
+fn parses_contextual_test_declarations_as_private_structured_failure_functions() {
     let program = parse("test(\"arithmetic works\") {\n  20 + 22 == 42\n}\n").unwrap();
     let [Item::Function(test)] = program.items.as_slice() else {
         panic!("expected one test function");
@@ -54,6 +54,13 @@ fn parses_contextual_test_declarations_as_private_bool_functions() {
     assert_eq!(test.name, "$test$61726974686d6574696320776f726b73");
     assert_eq!(test.groups, vec![Vec::new()]);
     assert_eq!(test.return_type, Some(Type::Bool));
+    assert_eq!(
+        test.effects,
+        FunctionEffects {
+            custom: vec![Type::Named("core.testing.failure".to_owned(), Vec::new())],
+            ..FunctionEffects::default()
+        }
+    );
     assert_eq!(program.item_visibilities, [Visibility::Private]);
 
     let visible = parse("pub test(\"arithmetic\") { true }\n")

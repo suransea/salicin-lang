@@ -134,18 +134,25 @@ test("arithmetic") {
 `test` is contextual in this position. The form registers the body with the
 test target during compilation; it is not an ordinary runtime call and does
 not introduce a user binding. The form is authorized by the private edition
-contract `pub let test(comptime name: string)(move body: (): bool): () = builtin()`; the string remains
-compile-time runner metadata rather than a runtime argument. The name must be a non-empty
+contract
+`pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`;
+the string remains compile-time runner metadata rather than a runtime
+argument. The name must be a non-empty
 string literal and is used in diagnostics. Registrations are private to their
 source package and cannot have visibility or attributes.
 
-The body is evaluated as a parameterless function returning `bool`. `true`
-passes and `false` fails. Its effects must be discharged within the body under
-the ordinary effect rules. Test bodies are excluded from ordinary program and
-library builds. `salic test` collects registrations from the selected package,
-links one native runner, executes tests in source order, and reports the first
-failing name. A target with no registrations is an error. The current runner
-supports at most 254 registrations per target.
+The body is evaluated as a parameterless function returning `bool` with the
+exact `core.testing.failure` effect. `true` passes and `false` becomes an
+unmessaged structured failure. Calling `core.testing.failure.abort` transfers
+an owned `option(string)` message to the registration handler. All other
+effects must be discharged inside the body under the ordinary effect rules.
+Test bodies are excluded from ordinary program and library builds.
+`salic test` collects registrations from the selected package, links one
+native runner, executes every registration in source order, performs cleanup
+before interpreting each outcome, and reports every failing name and optional
+message. A target with no registrations is an error. Results use the dedicated
+schema-1 channel specified by the
+[structured test-support contract](../project/test-support.md).
 
 ### 3.3 Sorts
 
@@ -218,13 +225,14 @@ The same root module publicly declares the other syntax-owned contracts:
 ```sc fragment
 pub let foreign(comptime abi: abi): never = builtin()
 pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()
-pub let test(comptime name: string)(move body: (): bool): () = builtin()
+pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()
 ```
 
 `foreign(c, ...)` passes the finite `abi.c` value (using the contextual short spelling `c`) as
-statically validated metadata to its containing function declaration; `test("name") { ... }`
-passes a compile-time `string` and supplies a pure boolean runner body. Neither metadata payload
-is a runtime value.
+statically validated metadata to its containing function declaration;
+`test("name") { ... }` consumes its compile-time `string` name in syntax and
+supplies a body whose only escaping effect is structured test failure. Neither
+metadata payload is a runtime value.
 
 ## 4. Types and Compile-Time Parameters
 

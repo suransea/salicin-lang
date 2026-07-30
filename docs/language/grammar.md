@@ -65,8 +65,9 @@ test_registration =
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
 identifier outside this top-level form. The edition-owned
-`pub let test(comptime name: string)(move body: (): bool): () = builtin()` declaration validates both
-metadata and body contracts; the string is compile-time runner metadata.
+`pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`
+declaration validates the body contract; syntax consumes the string as
+compile-time runner metadata.
 
 ### 2.1 Let Declarations
 
@@ -356,7 +357,7 @@ bodyless declarations rather than builtin definitions.
 The root `core` module also contains the public overloads
 `pub let foreign(comptime abi: abi): never = builtin()` and
 `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, plus
-`pub let test(comptime name: string)(move body: (): bool): () = builtin()`. They authorize the
+`pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`. They authorize the
 `foreign(c, ...)` initializer and top-level test registration respectively;
 `c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.
 
