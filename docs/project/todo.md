@@ -22,12 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Persistent Incremental Builds
 
-- [ ] **INCR-4 — Compile pipeline integration.** Reuse cached IR for
-  `emit-ir`, `build`, `run`, and `test` after manifest resolution and
-  fingerprinting. Publish only after semantic analysis, cleanup verification,
-  constant evaluation, and deterministic LLVM emission succeed. Keep native
-  linking and `check` behavior outside the first cache.
-
 - [ ] **INCR-5 — Cache control and observability.** Add a documented way to
   bypass the cache and an inspectable hit/miss reason that does not pollute
   program stdout. Define safe cleanup of compiler-owned entries without

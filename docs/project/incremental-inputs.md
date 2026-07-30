@@ -61,5 +61,5 @@ native artifact cache must additionally key Clang/LLVM version, target triple,
 link options, allocator runtime, and external native libraries.
 
 The accepted [persistent LLVM-IR cache contract](incremental-cache.md) maps
-this fingerprint to artifact-schema-1 entries. Persistent storage and compile
+this fingerprint to artifact-schema-2 entries. Persistent storage and compile
 pipeline integration remain separate implementation workstreams.

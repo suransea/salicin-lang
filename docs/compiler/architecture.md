@@ -29,7 +29,8 @@ The implementation lives under `compiler/src`:
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
   the private user-cache root and implements strict local lookup, validation,
   corruption replacement, and atomic concurrent publication. Command
-  pipelines do not yet call the storage layer.
+  pipelines reuse validated entries for `emit-ir`, `build`, `run`, and
+  `test`; `check` remains uncached.
 - `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
   preserve resolved provider identities, and resolve names.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library

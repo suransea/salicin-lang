@@ -313,6 +313,27 @@ readers do not observe partially initialized state.
   entries can invalidate results. The storage API therefore treats every
   malformed or incompatible entry as unusable and never returns partial IR.
 
+Reviewed again on 2026-07-30 for compile-pipeline integration. A cached test
+runner is not completely described by LLVM text: the driver also needs the
+ordered selected names to implement listing and map native failure indices.
+Artifact schema 2 therefore binds that side data to canonical metadata and a
+length-framed digest. Cache lookup remains behind complete input resolution;
+`check` deliberately stays on the base analysis path.
+
+- [IRHash: Efficient Multi-Language Compiler Caching (USENIX ATC
+  2025)](https://www.usenix.org/conference/atc25/presentation/landsberg)
+  supports LLVM IR as a practical cross-command reuse boundary while keeping
+  native linking outside the reusable compiler result.
+- [The Promise and Reality of Continuous Integration Caching (EASE
+  2026)](https://conf.researchr.org/details/ease-2026/ease-2026-research-papers/64/The-Promise-and-Reality-of-Continuous-Integration-Caching-An-Empirical-Study-of-Trav)
+  reports stale artifacts as an operational risk; Salicin validates identity,
+  canonical metadata, side-data digest, payload length, and payload digest on
+  every hit instead of trusting mere entry presence.
+- [Incremental Computation for Efficient Programmable Inference (PLDI
+  2026)](https://doi.org/10.1145/3808316) motivates keeping the incremental
+  transformation modular. The uncached compiler remains the miss path and
+  publication happens only after that path returns a complete artifact.
+
 ## Review Gate
 
 Before extending the static language:

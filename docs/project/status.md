@@ -33,19 +33,20 @@ current capability inventory. It does not record release history; see the
   UTF-16 positions, phased precision metadata, and multi-document routing;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
-  inputs, plus an accepted artifact-schema-1 whole-graph LLVM-IR cache
+  inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
   contract with a path-independent sharded key mapping;
 - a persistent-cache storage API with absolute platform-root resolution,
   atomic ownership-marker creation, private compiler-owned directories,
   canonical metadata and digest validation, structured miss reasons,
   corruption replacement, symbolic-link rejection, and lock-free concurrent
-  publication.
+  publication; `emit-ir`, `build`, and `run` reuse the same binary/library
+  entries, while test entries also preserve ordered selected names.
 
 The compiler does not yet provide an LSP transport, incremental document
 updates, completion, hover, or rename.
-It does not yet invoke persistent storage from compilation commands; schema-2
-fingerprints and the implemented storage layer are connected to `emit-ir`,
-`build`, `run`, and `test` by the next pipeline workstream.
+Persistent storage is invoked only by LLVM-emitting commands. `check` still
+performs complete source analysis, and cache bypass, tracing, and cleanup
+controls remain pending.
 
 The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`

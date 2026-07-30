@@ -12,8 +12,8 @@ use crate::modules::SourcePackage;
 /// Version of the byte stream hashed by [`fingerprint_package_graph`].
 pub const INPUT_SCHEMA_VERSION: u32 = 2;
 
-/// Version of the first persistent LLVM-IR cache entry format.
-pub const CACHE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
+/// Version of the persistent LLVM-IR cache entry format.
+pub const CACHE_ARTIFACT_SCHEMA_VERSION: u32 = 2;
 pub const CACHE_DIRECTORY_ENV: &str = "SALICIN_CACHE_DIR";
 pub const CACHE_PAYLOAD_FILE: &str = "module.ll";
 pub const CACHE_METADATA_FILE: &str = "metadata.toml";
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(
             cache_entry_relative_path(fingerprint),
             PathBuf::from("llvm-ir")
-                .join("v1")
+                .join("v2")
                 .join("sha256")
                 .join(&hex[..2])
                 .join(&hex[2..])

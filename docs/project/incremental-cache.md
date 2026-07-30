@@ -46,10 +46,10 @@ Input schema 2 is the SHA-256 contract in
 includes whether `--filter` was supplied and its exact UTF-8 bytes, because
 the current test compiler emits only selected registrations.
 
-Artifact schema 1 maps a 64-character lowercase input fingerprint `H` to:
+Artifact schema 2 maps a 64-character lowercase input fingerprint `H` to:
 
 ```text
-<root>/llvm-ir/v1/sha256/<H[0..2]>/<H[2..64]>/
+<root>/llvm-ir/v2/sha256/<H[0..2]>/<H[2..64]>/
   metadata.toml
   module.ll
 ```
@@ -70,7 +70,7 @@ native object or executable.
 `metadata.toml` is canonical UTF-8 with LF line endings and these fields:
 
 ```toml
-schema = 1
+schema = 2
 kind = "llvm-ir"
 fingerprint = "<64 lowercase hexadecimal characters>"
 compiler = "<exact Salicin package version>"
@@ -78,6 +78,8 @@ host_os = "<std::env::consts::OS>"
 host_arch = "<std::env::consts::ARCH>"
 edition = "2026"
 target = "binary" # or "library" / "test"
+test_names = [] # ordered selected names for test entries
+test_names_sha256 = "<SHA-256 of the length-framed name sequence>"
 payload_bytes = 1234
 payload_sha256 = "<64 lowercase hexadecimal characters>"
 ```
@@ -88,6 +90,12 @@ metadata matching the directory key and current invocation, the exact payload
 length, the payload SHA-256, and valid UTF-8. Validation happens before cached
 IR reaches Clang. A digest detects damage; it does not authenticate writes by
 another same-user process.
+
+Binary and library entries require an empty `test_names` list. Test entries
+store the selected names in source order, including an empty selection, so
+`test --list` and native failure-index reporting remain correct on a hit. The
+name digest hashes the list length followed by each UTF-8 byte length and byte
+sequence; empty or duplicate names are rejected.
 
 ## Publication and Concurrency
 
@@ -117,17 +125,19 @@ Failed parsing, analysis, code generation, or native linking cannot publish a
 new entry. A native-link failure does not invalidate already validated LLVM
 IR.
 
-`--no-cache` is reserved for `emit-ir`, `build`, `run`, and `test`; it forbids
+`emit-ir`, `build`, `run`, and `test` now perform lookup after complete input
+resolution and publish only successfully emitted IR. `check` never consults
+this cache. `--no-cache` is reserved for those four cached commands; it forbids
 both lookup and publication for that invocation. `check` always analyzes
 source and does not use the LLVM-IR cache. Cache tracing, cleanup, and pipeline
-integration are implemented by later INCR workstreams; reserving their
+controls are implemented by later INCR workstreams; reserving their
 behavior here does not claim that their CLI is already available. Root
 resolution plus strict local lookup/publication are implemented by
 `incremental_cache.rs`.
 
 ## Explicit Non-Goals
 
-Artifact schema 1 does not provide:
+Artifact schema 2 does not provide:
 
 - per-package, function, query, or dependency-interface reuse;
 - native object, executable, linker, CTFE-result, or diagnostic caching;

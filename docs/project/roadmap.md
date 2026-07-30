@@ -60,17 +60,18 @@ unchanged hit may skip semantic analysis and LLVM generation. Native linking
 remains a separate step so output selection and host linker failures are not
 hidden by the cache.
 
-The artifact-schema-1 contract fixes the user-cache root, sharded
+The artifact-schema-2 contract fixes the user-cache root, sharded
 content-addressed layout, strict metadata and payload validation, atomic
 directory publication, corruption-as-miss behavior, and `--no-cache`
 semantics.
 
-The storage boundary is now implemented independently of command execution:
+The storage boundary is implemented independently of command execution:
 it resolves absolute platform roots, validates a compiler ownership marker,
 returns structured hit/miss reasons, verifies canonical metadata and payload
 digests, and atomically publishes or replaces entries under concurrent
-writers. INCR-4 is the active next step and connects this API only after
-manifest resolution and complete input fingerprinting.
+writers. Pipeline integration reuses validated binary/library IR across
+`emit-ir`, `build`, and `run`, and stores ordered selected names beside test
+IR. `check` remains uncached. INCR-5 is the active next step.
 
 Exit conditions:
 

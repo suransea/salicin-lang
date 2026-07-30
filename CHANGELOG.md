@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.240.0 - 2026-07-30
+
+- Completed INCR-4 by connecting validated whole-graph LLVM-IR cache entries
+  to `emit-ir`, `build`, `run`, and `test` after complete source resolution
+  and fingerprinting; native linking remains outside the cache and `check`
+  remains an unconditional source analysis.
+- Upgraded artifact schema 2 to preserve ordered selected test names and their
+  length-framed digest, keeping `test --list` and failure-index reporting
+  correct on warm hits. Added CLI proofs that output paths share binary IR and
+  that test listings are recovered from validated cache metadata.
+
 ## 0.239.0 - 2026-07-30
 
 - Implemented INCR-3 as an independent persistent LLVM-IR cache storage API:
@@ -28,7 +39,7 @@ subset.
 
 ## 0.238.0 - 2026-07-30
 
-- Accepted the artifact-schema-1 persistent whole-graph LLVM-IR cache
+- Accepted the artifact-schema-2 persistent whole-graph LLVM-IR cache
   contract, including platform root selection, ownership, sharded
   content-addressed layout, strict canonical metadata and payload validation,
   atomic publication, concurrent writers, corruption-as-miss behavior,

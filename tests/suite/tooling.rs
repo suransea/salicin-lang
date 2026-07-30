@@ -1,4 +1,177 @@
 use crate::support::*;
+use sha2::{Digest, Sha256};
+
+fn digest_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn emit_ir_build_and_run_reuse_the_same_validated_binary_cache_entry() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("main.sc", "let main(): i32 = { 42 }\n");
+    let cache = temporary.create_dir("cache");
+    let first_ir = temporary.join("first.ll");
+    let second_ir = temporary.join("second.ll");
+    let first = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .arg("-o")
+        .arg(&first_ir)
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .expect("populate cache");
+    assert!(first.status.success(), "{}", output_text(&first));
+
+    let fingerprint = salic().arg("fingerprint").arg(&source).output().unwrap();
+    assert!(
+        fingerprint.status.success(),
+        "{}",
+        output_text(&fingerprint)
+    );
+    let fingerprint = String::from_utf8(fingerprint.stdout).unwrap();
+    let entry = cache_entry(&cache, fingerprint.trim());
+    let payload_path = entry.join("module.ll");
+    let metadata_path = entry.join("metadata.toml");
+    let old_payload = fs::read_to_string(&payload_path).unwrap();
+    let new_payload = format!("; warm-cache-sentinel\n{old_payload}");
+    fs::write(&payload_path, &new_payload).unwrap();
+    let metadata = fs::read_to_string(&metadata_path).unwrap();
+    let metadata = replace_metadata_field(
+        metadata,
+        "payload_bytes",
+        &old_payload.len().to_string(),
+        &new_payload.len().to_string(),
+    );
+    let metadata = replace_metadata_field(
+        metadata,
+        "payload_sha256",
+        &format!("\"{}\"", digest_hex(old_payload.as_bytes())),
+        &format!("\"{}\"", digest_hex(new_payload.as_bytes())),
+    );
+    fs::write(&metadata_path, metadata).unwrap();
+
+    let second = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .arg("-o")
+        .arg(&second_ir)
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .expect("reuse cache");
+    assert!(second.status.success(), "{}", output_text(&second));
+    assert!(fs::read_to_string(&second_ir)
+        .unwrap()
+        .starts_with("; warm-cache-sentinel\n"));
+    let executable = temporary.join("cached-program");
+    let build = salic()
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", output_text(&build));
+    let run = salic()
+        .arg("run")
+        .arg(&source)
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(42), "{}", output_text(&run));
+}
+
+#[test]
+fn test_list_reuses_cached_ordered_test_names() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("tests.sc", "test(\"alpha\") { }\n");
+    let cache = temporary.create_dir("cache");
+    let first = salic()
+        .arg("test")
+        .arg(&source)
+        .arg("--list")
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(first.status.success(), "{}", output_text(&first));
+    assert_eq!(String::from_utf8_lossy(&first.stdout), "alpha\n");
+
+    let packages = vec![SourcePackage {
+        id: PackageId(0),
+        name: "source".into(),
+        version: "0.0.0".into(),
+        identity: "source@0.0.0".into(),
+        is_primary: true,
+        dependencies: BTreeMap::new(),
+        sources: vec![SourceUnit {
+            path: source.display().to_string(),
+            module_path: Vec::new(),
+            source: fs::read_to_string(&source).unwrap(),
+            is_root: true,
+        }],
+    }];
+    let fingerprint = salicin_lang::incremental::fingerprint_package_graph(
+        &packages,
+        salicin_lang::manifest::Edition::Edition2026,
+        salicin_lang::incremental::IncrementalTarget::Test { filter: None },
+    )
+    .unwrap()
+    .to_hex();
+    let metadata_path = cache_entry(&cache, &fingerprint).join("metadata.toml");
+    let metadata = fs::read_to_string(&metadata_path).unwrap();
+    let metadata =
+        replace_metadata_field(metadata, "test_names", "[\"alpha\"]", "[\"cached-alpha\"]");
+    let metadata = replace_metadata_field(
+        metadata,
+        "test_names_sha256",
+        &format!("\"{}\"", test_names_digest(&["alpha"])),
+        &format!("\"{}\"", test_names_digest(&["cached-alpha"])),
+    );
+    fs::write(&metadata_path, metadata).unwrap();
+    let second = salic()
+        .arg("test")
+        .arg(&source)
+        .arg("--list")
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(second.status.success(), "{}", output_text(&second));
+    assert_eq!(String::from_utf8_lossy(&second.stdout), "cached-alpha\n");
+}
+
+fn test_names_digest(names: &[&str]) -> String {
+    let mut encoder = Sha256::new();
+    encoder.update((names.len() as u64).to_le_bytes());
+    for name in names {
+        encoder.update((name.len() as u64).to_le_bytes());
+        encoder.update(name.as_bytes());
+    }
+    encoder
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn cache_entry(cache: &Path, fingerprint: &str) -> PathBuf {
+    cache
+        .join("llvm-ir/v2/sha256")
+        .join(&fingerprint[..2])
+        .join(&fingerprint[2..])
+}
+
+fn replace_metadata_field(metadata: String, field: &str, old: &str, new: &str) -> String {
+    let before = format!("{field} = {old}");
+    let after = format!("{field} = {new}");
+    assert!(
+        metadata.contains(&before),
+        "missing metadata field `{before}`"
+    );
+    metadata.replacen(&before, &after, 1)
+}
 
 #[test]
 fn help_and_version_identify_salic() {

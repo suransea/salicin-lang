@@ -26,6 +26,10 @@ use salicin_lang::{
     compile_source_packages, compile_test_source_filtered, compile_test_source_packages_filtered,
     formatter::format_source,
     incremental::{fingerprint_package_graph, IncrementalTarget},
+    incremental_cache::{
+        resolve_cache_root, CacheArtifact, CacheEntryIdentity, CacheLookup, CacheRootResolution,
+        CacheStore, CacheTarget,
+    },
 };
 
 const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c");
@@ -1362,68 +1366,57 @@ fn read_source(source: &Path) -> Result<String, ()> {
     }
 }
 
-fn compile_file(source: &Path, library: bool) -> Result<String, ()> {
-    let text = read_source(source)?;
-    let result = if library {
-        compile_library_source(&text)
-    } else {
-        compile_source(&text)
-    };
-
-    report_compilation(source, result)
-}
-
 fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
-    if target.project.is_none() {
-        return compile_file(&target.source, target.is_library);
-    }
-
-    let packages = read_source_packages(target)?;
-    let result = if target.is_library {
-        compile_library_source_packages(&packages)
+    let packages = read_target_packages(target)?;
+    let cache_target = if target.is_library {
+        CacheTarget::Library
     } else {
-        compile_source_packages(&packages)
+        CacheTarget::Binary
     };
-    report_project_compilation(&target.source, result)
+    let identity = cache_identity(target, &packages, cache_target, None)?;
+    if let Some(store) = open_incremental_cache() {
+        if let CacheLookup::Hit(artifact) = store.lookup(identity) {
+            return Ok(artifact.llvm_ir);
+        }
+        let llvm_ir = compile_loaded_target(target, &packages)?;
+        let artifact = CacheArtifact {
+            llvm_ir,
+            test_names: Vec::new(),
+        };
+        let _ = store.publish(identity, &artifact);
+        return Ok(artifact.llvm_ir);
+    }
+    compile_loaded_target(target, &packages)
 }
 
 fn compile_test_target(
     target: &ResolvedTarget,
     filter: Option<&str>,
 ) -> Result<salicin_lang::TestCompilation, ()> {
-    if target.project.is_none() {
-        let text = read_source(&target.source)?;
-        return report_compilation(&target.source, compile_test_source_filtered(&text, filter));
+    let packages = read_target_packages(target)?;
+    let identity = cache_identity(target, &packages, CacheTarget::Test, filter)?;
+    if let Some(store) = open_incremental_cache() {
+        if let CacheLookup::Hit(artifact) = store.lookup(identity) {
+            return Ok(salicin_lang::TestCompilation {
+                ir: artifact.llvm_ir,
+                names: artifact.test_names,
+            });
+        }
+        let compilation = compile_loaded_test_target(target, &packages, filter)?;
+        let artifact = CacheArtifact {
+            llvm_ir: compilation.ir.clone(),
+            test_names: compilation.names.clone(),
+        };
+        let _ = store.publish(identity, &artifact);
+        return Ok(compilation);
     }
-
-    let packages = read_source_packages(target)?;
-    report_project_compilation(
-        &target.source,
-        compile_test_source_packages_filtered(&packages, filter),
-    )
+    compile_loaded_test_target(target, &packages, filter)
 }
 
 fn fingerprint_target(
     target: &ResolvedTarget,
 ) -> Result<salicin_lang::incremental::IncrementalFingerprint, ()> {
-    let packages = if target.project.is_some() {
-        read_source_packages(target)?
-    } else {
-        vec![SourcePackage {
-            id: PackageId(0),
-            name: "source".into(),
-            version: "0.0.0".into(),
-            identity: "source@0.0.0".into(),
-            is_primary: true,
-            dependencies: BTreeMap::new(),
-            sources: vec![SourceUnit {
-                path: target.source.display().to_string(),
-                module_path: Vec::new(),
-                source: read_source(&target.source)?,
-                is_root: true,
-            }],
-        }]
-    };
+    let packages = read_target_packages(target)?;
     let mode = if target.is_library {
         IncrementalTarget::Library
     } else {
@@ -1432,6 +1425,93 @@ fn fingerprint_target(
     fingerprint_package_graph(&packages, target.edition, mode).map_err(|error| {
         eprintln!("salic: could not fingerprint incremental inputs: {error}");
     })
+}
+
+fn read_target_packages(target: &ResolvedTarget) -> Result<Vec<SourcePackage>, ()> {
+    if target.project.is_some() {
+        return read_source_packages(target);
+    }
+    Ok(vec![SourcePackage {
+        id: PackageId(0),
+        name: "source".into(),
+        version: "0.0.0".into(),
+        identity: "source@0.0.0".into(),
+        is_primary: true,
+        dependencies: BTreeMap::new(),
+        sources: vec![SourceUnit {
+            path: target.source.display().to_string(),
+            module_path: Vec::new(),
+            source: read_source(&target.source)?,
+            is_root: true,
+        }],
+    }])
+}
+
+fn compile_loaded_target(
+    target: &ResolvedTarget,
+    packages: &[SourcePackage],
+) -> Result<String, ()> {
+    if target.project.is_none() {
+        let source = &packages[0].sources[0].source;
+        let result = if target.is_library {
+            compile_library_source(source)
+        } else {
+            compile_source(source)
+        };
+        return report_compilation(&target.source, result);
+    }
+    let result = if target.is_library {
+        compile_library_source_packages(packages)
+    } else {
+        compile_source_packages(packages)
+    };
+    report_project_compilation(&target.source, result)
+}
+
+fn compile_loaded_test_target(
+    target: &ResolvedTarget,
+    packages: &[SourcePackage],
+    filter: Option<&str>,
+) -> Result<salicin_lang::TestCompilation, ()> {
+    if target.project.is_none() {
+        return report_compilation(
+            &target.source,
+            compile_test_source_filtered(&packages[0].sources[0].source, filter),
+        );
+    }
+    report_project_compilation(
+        &target.source,
+        compile_test_source_packages_filtered(packages, filter),
+    )
+}
+
+fn cache_identity(
+    target: &ResolvedTarget,
+    packages: &[SourcePackage],
+    cache_target: CacheTarget,
+    filter: Option<&str>,
+) -> Result<CacheEntryIdentity, ()> {
+    let incremental_target = match cache_target {
+        CacheTarget::Binary => IncrementalTarget::Binary,
+        CacheTarget::Library => IncrementalTarget::Library,
+        CacheTarget::Test => IncrementalTarget::Test { filter },
+    };
+    let fingerprint = fingerprint_package_graph(packages, target.edition, incremental_target)
+        .map_err(|error| {
+            eprintln!("salic: could not fingerprint incremental inputs: {error}");
+        })?;
+    Ok(CacheEntryIdentity {
+        fingerprint,
+        edition: target.edition,
+        target: cache_target,
+    })
+}
+
+fn open_incremental_cache() -> Option<CacheStore> {
+    let CacheRootResolution::Available(root) = resolve_cache_root() else {
+        return None;
+    };
+    CacheStore::open(root).ok()
 }
 
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {

@@ -112,8 +112,14 @@ pub enum CacheMissReason {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CacheArtifact {
+    pub llvm_ir: String,
+    pub test_names: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CacheLookup {
-    Hit(String),
+    Hit(CacheArtifact),
     Miss(CacheMissReason),
 }
 
@@ -206,7 +212,7 @@ impl CacheStore {
     pub fn publish(
         &self,
         identity: CacheEntryIdentity,
-        llvm_ir: &str,
+        artifact: &CacheArtifact,
     ) -> Result<CachePublishOutcome, CacheStoreError> {
         let relative = cache_entry_relative_path(identity.fingerprint);
         let final_path = self.root.join(&relative);
@@ -217,18 +223,25 @@ impl CacheStore {
 
         let temporary = create_unique_directory(parent, "tmp")?;
         let temporary_guard = RemoveDirectoryGuard::new(temporary.clone());
-        let payload_hash = sha256_hex(llvm_ir.as_bytes());
-        let metadata = CacheMetadata::for_entry(identity, llvm_ir.len() as u64, payload_hash);
+        let payload_hash = sha256_hex(artifact.llvm_ir.as_bytes());
+        let metadata = CacheMetadata::for_entry(
+            identity,
+            artifact.llvm_ir.len() as u64,
+            payload_hash,
+            artifact.test_names.clone(),
+        );
 
-        write_private_file(&temporary.join(CACHE_PAYLOAD_FILE), llvm_ir.as_bytes())?;
+        write_private_file(
+            &temporary.join(CACHE_PAYLOAD_FILE),
+            artifact.llvm_ir.as_bytes(),
+        )?;
         write_private_file(
             &temporary.join(CACHE_METADATA_FILE),
             canonical_metadata(&metadata)?.as_bytes(),
         )?;
         sync_directory_best_effort(&temporary);
 
-        if !matches!(read_entry_at(&temporary, identity), CacheLookup::Hit(ref value) if value == llvm_ir)
-        {
+        if read_entry_at(&temporary, identity) != CacheLookup::Hit(artifact.clone()) {
             return Err(CacheStoreError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "new cache entry did not validate",
@@ -291,12 +304,20 @@ struct CacheMetadata {
     host_arch: String,
     edition: String,
     target: String,
+    test_names: Vec<String>,
+    test_names_sha256: String,
     payload_bytes: u64,
     payload_sha256: String,
 }
 
 impl CacheMetadata {
-    fn for_entry(identity: CacheEntryIdentity, payload_bytes: u64, payload_sha256: String) -> Self {
+    fn for_entry(
+        identity: CacheEntryIdentity,
+        payload_bytes: u64,
+        payload_sha256: String,
+        test_names: Vec<String>,
+    ) -> Self {
+        let test_names_sha256 = test_names_digest(&test_names);
         Self {
             schema: CACHE_ARTIFACT_SCHEMA_VERSION,
             kind: CACHE_KIND.into(),
@@ -306,6 +327,8 @@ impl CacheMetadata {
             host_arch: env::consts::ARCH.into(),
             edition: identity.edition.as_str().into(),
             target: identity.target.as_str().into(),
+            test_names,
+            test_names_sha256,
             payload_bytes,
             payload_sha256,
         }
@@ -320,6 +343,8 @@ impl CacheMetadata {
             && self.host_arch == env::consts::ARCH
             && self.edition == identity.edition.as_str()
             && self.target == identity.target.as_str()
+            && test_names_are_valid(identity.target, &self.test_names)
+            && self.test_names_sha256 == test_names_digest(&self.test_names)
             && is_lower_hex_digest(&self.payload_sha256)
     }
 }
@@ -376,7 +401,10 @@ fn read_entry_at(path: &Path, identity: CacheEntryIdentity) -> CacheLookup {
         return CacheLookup::Miss(CacheMissReason::InvalidPayload);
     }
     match String::from_utf8(payload_bytes) {
-        Ok(payload) => CacheLookup::Hit(payload),
+        Ok(llvm_ir) => CacheLookup::Hit(CacheArtifact {
+            llvm_ir,
+            test_names: metadata.test_names,
+        }),
         Err(_) => CacheLookup::Miss(CacheMissReason::InvalidPayload),
     }
 }
@@ -400,13 +428,36 @@ fn is_lower_hex_digest(value: &str) -> bool {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    digest_hex(Sha256::digest(bytes))
+}
+
+fn digest_hex(digest: impl AsRef<[u8]>) -> String {
     let mut output = String::with_capacity(64);
-    for byte in digest {
+    for byte in digest.as_ref() {
         use fmt::Write;
         write!(output, "{byte:02x}").expect("writing to a string cannot fail");
     }
     output
+}
+
+fn test_names_digest(names: &[String]) -> String {
+    let mut encoder = Sha256::new();
+    encoder.update((names.len() as u64).to_le_bytes());
+    for name in names {
+        encoder.update((name.len() as u64).to_le_bytes());
+        encoder.update(name.as_bytes());
+    }
+    digest_hex(encoder.finalize())
+}
+
+fn test_names_are_valid(target: CacheTarget, names: &[String]) -> bool {
+    if target != CacheTarget::Test {
+        return names.is_empty();
+    }
+    let mut unique = std::collections::HashSet::new();
+    names
+        .iter()
+        .all(|name| !name.is_empty() && unique.insert(name.as_str()))
 }
 
 fn ensure_root_marker(root: &Path) -> Result<(), CacheStoreError> {
@@ -692,6 +743,13 @@ mod tests {
         fs::remove_dir_all(root).expect("remove temporary cache");
     }
 
+    fn artifact(llvm_ir: &str, test_names: &[&str]) -> CacheArtifact {
+        CacheArtifact {
+            llvm_ir: llvm_ir.into(),
+            test_names: test_names.iter().map(|name| (*name).into()).collect(),
+        }
+    }
+
     #[test]
     fn root_resolution_prefers_absolute_override_and_rejects_relative_override() {
         let mut variables = HashMap::new();
@@ -743,22 +801,24 @@ mod tests {
                 CacheLookup::Miss(CacheMissReason::Missing)
             );
             assert_eq!(
-                store.publish(identity, "; module\n").unwrap(),
+                store
+                    .publish(identity, &artifact("; module\n", &[]))
+                    .unwrap(),
                 CachePublishOutcome::Published
             );
             assert_eq!(
                 store.lookup(identity),
-                CacheLookup::Hit("; module\n".into())
+                CacheLookup::Hit(artifact("; module\n", &[]))
             );
             assert_eq!(
                 store
-                    .publish(identity, "; different but same key\n")
+                    .publish(identity, &artifact("; different but same key\n", &[]))
                     .unwrap(),
                 CachePublishOutcome::AlreadyPresent
             );
             assert_eq!(
                 store.lookup(identity),
-                CacheLookup::Hit("; module\n".into())
+                CacheLookup::Hit(artifact("; module\n", &[]))
             );
             assert!(root.join(CACHE_ROOT_MARKER).is_file());
         });
@@ -768,7 +828,9 @@ mod tests {
     fn malformed_metadata_and_payload_damage_are_misses_and_replaceable() {
         with_store(|store, _| {
             let identity = identity(CacheTarget::Library);
-            store.publish(identity, "; valid\n").unwrap();
+            store
+                .publish(identity, &artifact("; valid\n", &[]))
+                .unwrap();
             let entry = store
                 .root()
                 .join(cache_entry_relative_path(identity.fingerprint));
@@ -782,7 +844,9 @@ mod tests {
                 CacheLookup::Miss(CacheMissReason::InvalidMetadata)
             );
             assert_eq!(
-                store.publish(identity, "; repaired metadata\n").unwrap(),
+                store
+                    .publish(identity, &artifact("; repaired metadata\n", &[]))
+                    .unwrap(),
                 CachePublishOutcome::Published
             );
             fs::write(entry.join(CACHE_PAYLOAD_FILE), "; truncated").expect("truncate payload");
@@ -791,12 +855,14 @@ mod tests {
                 CacheLookup::Miss(CacheMissReason::InvalidPayload)
             );
             assert_eq!(
-                store.publish(identity, "; repaired payload\n").unwrap(),
+                store
+                    .publish(identity, &artifact("; repaired payload\n", &[]))
+                    .unwrap(),
                 CachePublishOutcome::Published
             );
             assert_eq!(
                 store.lookup(identity),
-                CacheLookup::Hit("; repaired payload\n".into())
+                CacheLookup::Hit(artifact("; repaired payload\n", &[]))
             );
         });
     }
@@ -805,7 +871,7 @@ mod tests {
     fn incompatible_identity_and_non_regular_files_never_hit() {
         with_store(|store, _| {
             let binary = identity(CacheTarget::Binary);
-            store.publish(binary, "; binary\n").unwrap();
+            store.publish(binary, &artifact("; binary\n", &[])).unwrap();
             let library = CacheEntryIdentity {
                 target: CacheTarget::Library,
                 ..binary
@@ -834,7 +900,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let real_root = temporary_root();
-        let linked_root = real_root.with_extension("link");
+        let linked_root = unique_path(real_root.parent().unwrap(), "root-link");
         symlink(&real_root, &linked_root).expect("link cache root");
         assert!(matches!(
             CacheStore::open(linked_root.clone()),
@@ -844,7 +910,9 @@ mod tests {
 
         let store = CacheStore::open(real_root.clone()).expect("open real cache root");
         let identity = identity(CacheTarget::Binary);
-        store.publish(identity, "; valid\n").unwrap();
+        store
+            .publish(identity, &artifact("; valid\n", &[]))
+            .unwrap();
         let entry = store
             .root()
             .join(cache_entry_relative_path(identity.fingerprint));
@@ -870,7 +938,10 @@ mod tests {
             workers.push(thread::spawn(move || {
                 let store = CacheStore::open(root).expect("open concurrent store");
                 barrier.wait();
-                let payload = format!("; writer {index}\n");
+                let payload = CacheArtifact {
+                    llvm_ir: format!("; writer {index}\n"),
+                    test_names: vec![format!("writer-{index}")],
+                };
                 store.publish(identity, &payload).expect("publish")
             }));
         }
@@ -889,7 +960,8 @@ mod tests {
         let CacheLookup::Hit(payload) = store.lookup(identity) else {
             panic!("one complete concurrent payload must be readable");
         };
-        assert!(payload.starts_with("; writer "));
+        assert!(payload.llvm_ir.starts_with("; writer "));
+        assert_eq!(payload.test_names.len(), 1);
         fs::remove_dir_all(root).expect("remove temporary cache");
     }
 }
