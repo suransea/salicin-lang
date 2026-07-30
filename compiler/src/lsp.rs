@@ -1,11 +1,14 @@
 use std::fmt;
 use std::io::{self, BufRead, Write};
+use std::sync::{mpsc, Arc};
+use std::thread;
 
 use serde_json::{json, Value};
 
 use crate::editor::{
     DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, WorkspaceAnalysis,
-    WorkspaceSession, WorkspaceSessionError, WorkspaceSnapshotId,
+    WorkspaceSession, WorkspaceSessionError, WorkspaceSnapshot, WorkspaceSnapshotAnalysis,
+    WorkspaceSnapshotId,
 };
 use crate::lexer::TokenKind;
 
@@ -61,6 +64,21 @@ pub struct Server {
     session: WorkspaceSession,
     lifecycle: Lifecycle,
     latest_analysis: Option<(WorkspaceSnapshotId, WorkspaceAnalysis)>,
+    requested_analysis: Option<WorkspaceSnapshotId>,
+    pending_semantic_tokens: Vec<PendingSemanticTokens>,
+    analysis_hook: Arc<dyn Fn(WorkspaceSnapshotId) + Send + Sync>,
+}
+
+#[derive(Debug)]
+struct PendingSemanticTokens {
+    id: Value,
+    params: Value,
+    snapshot: WorkspaceSnapshotId,
+}
+
+enum ServerEvent {
+    Input(Result<Option<Vec<u8>>, TransportError>),
+    Analysis(WorkspaceSnapshotAnalysis),
 }
 
 impl Server {
@@ -69,6 +87,9 @@ impl Server {
             session,
             lifecycle: Lifecycle::WaitingForInitialize,
             latest_analysis: None,
+            requested_analysis: None,
+            pending_semantic_tokens: Vec::new(),
+            analysis_hook: Arc::new(|_| {}),
         }
     }
 
@@ -76,30 +97,80 @@ impl Server {
         &self.session
     }
 
-    pub fn run<R: BufRead, W: Write>(
+    #[cfg(test)]
+    fn with_analysis_hook(
+        mut self,
+        hook: impl Fn(WorkspaceSnapshotId) + Send + Sync + 'static,
+    ) -> Self {
+        self.analysis_hook = Arc::new(hook);
+        self
+    }
+
+    pub fn run<R: BufRead + Send + 'static, W: Write>(
         &mut self,
-        reader: &mut R,
+        mut reader: R,
         writer: &mut W,
     ) -> Result<i32, TransportError> {
-        while let Some(bytes) = read_message(reader)? {
-            let value = match serde_json::from_slice::<Value>(&bytes) {
-                Ok(value) => value,
-                Err(_) => {
-                    write_message(writer, &json_rpc_error(Value::Null, -32700, "Parse error"))?;
-                    continue;
+        let (event_sender, event_receiver) = mpsc::channel();
+        let input_sender = event_sender.clone();
+        thread::spawn(move || loop {
+            let message = read_message(&mut reader);
+            let finished = !matches!(message, Ok(Some(_)));
+            if input_sender.send(ServerEvent::Input(message)).is_err() || finished {
+                break;
+            }
+        });
+
+        let (analysis_sender, analysis_receiver) = mpsc::channel::<WorkspaceSnapshot>();
+        let analysis_events = event_sender;
+        let analysis_hook = Arc::clone(&self.analysis_hook);
+        thread::spawn(move || {
+            while let Ok(mut snapshot) = analysis_receiver.recv() {
+                while let Ok(newer) = analysis_receiver.try_recv() {
+                    snapshot = newer;
                 }
-            };
-            if let Some(exit_code) = self.handle_message(value, writer)? {
-                return Ok(exit_code);
+                analysis_hook(snapshot.id);
+                if analysis_events
+                    .send(ServerEvent::Analysis(snapshot.analyze()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        loop {
+            match event_receiver.recv() {
+                Ok(ServerEvent::Input(Ok(Some(bytes)))) => {
+                    let value = match serde_json::from_slice::<Value>(&bytes) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            write_message(
+                                writer,
+                                &json_rpc_error(Value::Null, -32700, "Parse error"),
+                            )?;
+                            continue;
+                        }
+                    };
+                    if let Some(exit_code) = self.handle_message(value, writer, &analysis_sender)? {
+                        return Ok(exit_code);
+                    }
+                }
+                Ok(ServerEvent::Input(Ok(None))) => return Ok(1),
+                Ok(ServerEvent::Input(Err(error))) => return Err(error),
+                Ok(ServerEvent::Analysis(completed)) => {
+                    self.accept_and_publish(completed, writer)?;
+                }
+                Err(_) => return Ok(1),
             }
         }
-        Ok(1)
     }
 
     fn handle_message<W: Write>(
         &mut self,
         message: Value,
         writer: &mut W,
+        analysis_sender: &mpsc::Sender<WorkspaceSnapshot>,
     ) -> Result<Option<i32>, TransportError> {
         let Some(object) = message.as_object() else {
             write_message(
@@ -129,7 +200,7 @@ impl Server {
         }
 
         let Some(id) = id else {
-            self.handle_notification(method, params, writer)?;
+            self.handle_notification(method, params, writer, analysis_sender)?;
             return Ok(None);
         };
 
@@ -180,25 +251,35 @@ impl Server {
             }
             "shutdown" if self.lifecycle == Lifecycle::Running => {
                 self.lifecycle = Lifecycle::Shutdown;
+                self.cancel_all_pending(writer, -32800, "Request cancelled")?;
                 write_message(writer, &json!({"jsonrpc": "2.0", "id": id, "result": null}))?;
             }
             "shutdown" => {
                 write_message(writer, &json_rpc_error(id, -32600, "server is not running"))?;
             }
             "textDocument/semanticTokens/full" if self.lifecycle == Lifecycle::Running => {
-                if self
+                if let Err(message) = self.validate_semantic_document(params) {
+                    write_message(writer, &json_rpc_error(id, -32602, &message))?;
+                } else if self
                     .latest_analysis
                     .as_ref()
-                    .is_none_or(|(snapshot, _)| *snapshot != self.session.snapshot_id())
+                    .is_some_and(|(snapshot, _)| *snapshot == self.session.snapshot_id())
                 {
-                    self.analyze_and_publish(writer)?;
-                }
-                match self.semantic_tokens(params) {
-                    Ok(result) => write_message(
+                    let result = self
+                        .semantic_tokens(params)
+                        .expect("validated current semantic-token document");
+                    write_message(
                         writer,
                         &json!({"jsonrpc": "2.0", "id": id, "result": result}),
-                    )?,
-                    Err(message) => write_message(writer, &json_rpc_error(id, -32602, &message))?,
+                    )?;
+                } else {
+                    let snapshot = self.session.snapshot_id();
+                    self.pending_semantic_tokens.push(PendingSemanticTokens {
+                        id,
+                        params: params.clone(),
+                        snapshot,
+                    });
+                    self.schedule_analysis(analysis_sender);
                 }
             }
             _ if self.lifecycle != Lifecycle::Running => {
@@ -219,16 +300,20 @@ impl Server {
         method: &str,
         params: &Value,
         writer: &mut W,
+        analysis_sender: &mpsc::Sender<WorkspaceSnapshot>,
     ) -> Result<(), TransportError> {
         if self.lifecycle != Lifecycle::Running {
             return Ok(());
         }
         let result = match method {
             "initialized" => {
-                self.analyze_and_publish(writer)?;
+                self.schedule_analysis(analysis_sender);
                 return Ok(());
             }
-            "$/cancelRequest" => return Ok(()),
+            "$/cancelRequest" => {
+                self.cancel_request(params, writer)?;
+                return Ok(());
+            }
             "textDocument/didOpen" => self.did_open(params),
             "textDocument/didChange" => self.did_change(params),
             "textDocument/didSave" => self.did_save(params),
@@ -236,7 +321,10 @@ impl Server {
             _ => return Ok(()),
         };
         match result {
-            Ok(()) => self.analyze_and_publish(writer)?,
+            Ok(()) => {
+                self.invalidate_superseded_requests(writer)?;
+                self.schedule_analysis(analysis_sender);
+            }
             Err(message) => {
                 write_message(
                     writer,
@@ -251,10 +339,25 @@ impl Server {
         Ok(())
     }
 
-    fn analyze_and_publish<W: Write>(&mut self, writer: &mut W) -> Result<(), TransportError> {
-        let completed = self.session.snapshot().analyze();
+    fn schedule_analysis(&mut self, sender: &mpsc::Sender<WorkspaceSnapshot>) {
+        let snapshot = self.session.snapshot();
+        if self.requested_analysis == Some(snapshot.id) {
+            return;
+        }
+        self.requested_analysis = Some(snapshot.id);
+        let _ = sender.send(snapshot);
+    }
+
+    fn accept_and_publish<W: Write>(
+        &mut self,
+        completed: WorkspaceSnapshotAnalysis,
+        writer: &mut W,
+    ) -> Result<(), TransportError> {
         let snapshot = completed.id;
         let versions = completed.document_versions.clone();
+        if self.requested_analysis == Some(snapshot) {
+            self.requested_analysis = None;
+        }
         let Some(analysis) = self.session.accept_analysis(completed) else {
             return Ok(());
         };
@@ -314,6 +417,94 @@ impl Server {
             )?;
         }
         self.latest_analysis = Some((snapshot, analysis));
+
+        let mut pending = Vec::new();
+        std::mem::swap(&mut pending, &mut self.pending_semantic_tokens);
+        for request in pending {
+            if request.snapshot != snapshot {
+                write_message(
+                    writer,
+                    &json_rpc_error(request.id, -32801, "Content modified"),
+                )?;
+                continue;
+            }
+            match self.semantic_tokens(&request.params) {
+                Ok(result) => write_message(
+                    writer,
+                    &json!({"jsonrpc": "2.0", "id": request.id, "result": result}),
+                )?,
+                Err(message) => {
+                    write_message(writer, &json_rpc_error(request.id, -32602, &message))?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_semantic_document(&self, params: &Value) -> Result<(), String> {
+        let document = required_object(params, "textDocument")?;
+        let uri = required_string(document, "uri")?;
+        let path = file_uri_to_path(uri)?;
+        self.session
+            .snapshot()
+            .documents
+            .iter()
+            .any(|document| document.path == path)
+            .then_some(())
+            .ok_or_else(|| format!("unknown workspace document `{path}`"))
+    }
+
+    fn invalidate_superseded_requests<W: Write>(
+        &mut self,
+        writer: &mut W,
+    ) -> Result<(), TransportError> {
+        let current = self.session.snapshot_id();
+        let mut retained = Vec::new();
+        for request in self.pending_semantic_tokens.drain(..) {
+            if request.snapshot == current {
+                retained.push(request);
+            } else {
+                write_message(
+                    writer,
+                    &json_rpc_error(request.id, -32801, "Content modified"),
+                )?;
+            }
+        }
+        self.pending_semantic_tokens = retained;
+        Ok(())
+    }
+
+    fn cancel_request<W: Write>(
+        &mut self,
+        params: &Value,
+        writer: &mut W,
+    ) -> Result<(), TransportError> {
+        let Some(id) = params.get("id") else {
+            return Ok(());
+        };
+        if let Some(index) = self
+            .pending_semantic_tokens
+            .iter()
+            .position(|request| request.id == *id)
+        {
+            let request = self.pending_semantic_tokens.remove(index);
+            write_message(
+                writer,
+                &json_rpc_error(request.id, -32800, "Request cancelled"),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn cancel_all_pending<W: Write>(
+        &mut self,
+        writer: &mut W,
+        code: i64,
+        message: &str,
+    ) -> Result<(), TransportError> {
+        for request in self.pending_semantic_tokens.drain(..) {
+            write_message(writer, &json_rpc_error(request.id, code, message))?;
+        }
         Ok(())
     }
 
@@ -691,7 +882,10 @@ pub fn file_uri_to_path(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::io::{BufWriter, Cursor};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use super::*;
     use crate::editor::{DocumentTarget, EditorSource};
@@ -727,6 +921,60 @@ mod tests {
         messages
     }
 
+    struct Client {
+        writer: BufWriter<UnixStream>,
+        reader: io::BufReader<UnixStream>,
+    }
+
+    impl Client {
+        fn send(&mut self, value: Value) {
+            write_message(&mut self.writer, &value).unwrap();
+        }
+
+        fn receive(&mut self) -> Value {
+            let bytes = read_message(&mut self.reader)
+                .expect("read server message")
+                .expect("server remains connected");
+            serde_json::from_slice(&bytes).unwrap()
+        }
+
+        fn receive_until(&mut self, predicate: impl Fn(&Value) -> bool) -> Vec<Value> {
+            let mut received = Vec::new();
+            loop {
+                let message = self.receive();
+                let matched = predicate(&message);
+                received.push(message);
+                if matched {
+                    return received;
+                }
+            }
+        }
+    }
+
+    type ServerHandle = thread::JoinHandle<(Server, Result<i32, TransportError>)>;
+
+    fn interactive(server: Server) -> (Client, ServerHandle) {
+        let (client, server_stream) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        let client_reader = client.try_clone().unwrap();
+        let server_writer = server_stream.try_clone().unwrap();
+        let handle = thread::spawn(move || {
+            let mut server = server;
+            let mut writer = BufWriter::new(server_writer);
+            let result = server.run(io::BufReader::new(server_stream), &mut writer);
+            (server, result)
+        });
+        (
+            Client {
+                writer: BufWriter::new(client),
+                reader: io::BufReader::new(client_reader),
+            },
+            handle,
+        )
+    }
+
     #[test]
     fn lifecycle_advertises_full_sync_and_exits_cleanly() {
         let mut input = framed(&json!({
@@ -738,7 +986,7 @@ mod tests {
         input.extend(framed(&json!({"jsonrpc": "2.0", "method": "exit"})));
         let mut output = Vec::new();
         let code = Server::new(session("/tmp/main.sc"))
-            .run(&mut Cursor::new(input), &mut output)
+            .run(Cursor::new(input), &mut output)
             .unwrap();
         assert_eq!(code, 0);
         let mut reader = Cursor::new(output);
@@ -761,7 +1009,7 @@ mod tests {
         })));
         assert_eq!(
             Server::new(session("/tmp/main.sc"))
-                .run(&mut Cursor::new(shutdown_without_exit), &mut Vec::new())
+                .run(Cursor::new(shutdown_without_exit), &mut Vec::new())
                 .unwrap(),
             1
         );
@@ -799,7 +1047,7 @@ mod tests {
         }
         let mut output = Vec::new();
         let mut server = Server::new(session(path));
-        let code = server.run(&mut Cursor::new(input), &mut output).unwrap();
+        let code = server.run(Cursor::new(input), &mut output).unwrap();
         assert_eq!(code, 0);
         let snapshot = server.session().snapshot();
         assert_eq!(snapshot.documents[0].source, "let main(): i32 = { 3 }\n");
@@ -837,11 +1085,17 @@ mod tests {
         ];
         let workspace = WorkspaceSession::new(&sources, DocumentTarget::Library).unwrap();
         let uri = path_to_file_uri(module_path);
-        let mut input = framed(&json!({
+        let (mut client, handle) = interactive(Server::new(workspace));
+        client.send(json!({
             "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
         }));
-        for message in [
-            json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        client.receive_until(|message| message["id"] == 1);
+        client.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == path_to_file_uri(root_path)
+        });
+        client.send(
             json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
                 "textDocument":{
                     "uri":uri,
@@ -850,21 +1104,27 @@ mod tests {
                     "text":"pub let 盐(: i32 = { \"😀\" }\n"
                 }
             }}),
+        );
+        let mut messages = client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && message["params"]["version"] == 7
+        });
+        client.send(
             json!({"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full",
-                "params":{"textDocument":{"uri":uri}}}),
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        messages.extend(client.receive_until(|message| message["id"] == 2));
+        client.send(
             json!({"jsonrpc":"2.0","id":4,"method":"textDocument/semanticTokens/full",
-                "params":{"textDocument":{"uri":"file:///tmp/unknown.sc"}}}),
-            json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}),
-            json!({"jsonrpc":"2.0","method":"exit"}),
-        ] {
-            input.extend(framed(&message));
-        }
-        let mut output = Vec::new();
-        let code = Server::new(workspace)
-            .run(&mut Cursor::new(input), &mut output)
-            .unwrap();
-        assert_eq!(code, 0);
-        let messages = messages(output);
+            "params":{"textDocument":{"uri":"file:///tmp/unknown.sc"}}}),
+        );
+        messages.extend(client.receive_until(|message| message["id"] == 4));
+        client.send(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}));
+        client.receive_until(|message| message["id"] == 3);
+        client.send(json!({"jsonrpc":"2.0","method":"exit"}));
+        let (_, result) = handle.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
 
         let published = messages
             .iter()
@@ -922,13 +1182,77 @@ mod tests {
             .find(|message| message["id"] == 4)
             .expect("unknown semantic token response");
         assert_eq!(unknown["error"]["code"], -32602);
-        assert!(messages.iter().any(|message| {
-            message["method"] == "textDocument/publishDiagnostics"
-                && message["params"]["uri"] == path_to_file_uri(root_path)
-                && message["params"]["diagnostics"]
-                    .as_array()
-                    .is_some_and(Vec::is_empty)
+    }
+
+    #[test]
+    fn cancellation_and_supersession_finish_pending_requests_exactly_once() {
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let hook_started = Arc::clone(&started);
+        let hook_release = Arc::clone(&release);
+        let server = Server::new(session("/tmp/main.sc")).with_analysis_hook(move |snapshot| {
+            if snapshot.revision == 0 {
+                hook_started.store(true, Ordering::Release);
+                while !hook_release.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+            }
+        });
+        let (mut client, handle) = interactive(server);
+        client.send(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
         }));
+        client.receive_until(|message| message["id"] == 1);
+        client.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        while !started.load(Ordering::Acquire) {
+            thread::yield_now();
+        }
+
+        let uri = path_to_file_uri("/tmp/main.sc");
+        client.send(
+            json!({"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        client.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":2}}));
+        let cancelled = client.receive_until(|message| message["id"] == 2);
+        assert_eq!(cancelled.last().unwrap()["error"]["code"], -32800);
+
+        client.send(
+            json!({"jsonrpc":"2.0","id":3,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        client.send(
+            json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{"uri":uri,"languageId":"salicin","version":1,
+                    "text":"let main(): i32 = { missing }\n"}
+            }}),
+        );
+        let modified = client.receive_until(|message| message["id"] == 3);
+        assert_eq!(modified.last().unwrap()["error"]["code"], -32801);
+
+        client.send(
+            json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+                "textDocument":{"uri":uri,"version":2},
+                "contentChanges":[{"text":"let main(): i32 = { 2 }\n"}]
+            }}),
+        );
+        release.store(true, Ordering::Release);
+        let published = client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && message["params"]["version"] == 2
+        });
+        assert!(!published.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && message["params"]["version"] == 1
+        }));
+
+        client.send(json!({"jsonrpc":"2.0","id":4,"method":"shutdown"}));
+        client.receive_until(|message| message["id"] == 4);
+        client.send(json!({"jsonrpc":"2.0","method":"exit"}));
+        let (_, result) = handle.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
     }
 
     #[test]

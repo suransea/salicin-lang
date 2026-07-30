@@ -6,6 +6,25 @@ subset.
 
 ## Unreleased
 
+## 0.247.0 - 2026-07-30
+
+- Completed LSP-5 by separating protocol input, analysis, and publication.
+  The server now reads cancellation and document updates while analysis runs,
+  coalesces queued snapshots, discards late stale completions, and completes
+  pending semantic-token requests exactly once with `RequestCancelled` or
+  `ContentModified`.
+- Added editor-independent JSONL transcript replay against real stdio
+  processes, including restart, Unicode, multiple documents, semantic tokens,
+  stale versions, recoverable invalid JSON, malformed/duplicate/oversized/
+  truncated frames, and clean shutdown. A deterministic worker barrier proves
+  cancellation and stale-result suppression without timing assumptions.
+- Completed the LSP diagnostics baseline and promoted syntax declaration
+  contracts to the active milestone, with static constraint/declaration
+  fragment sorts and contract-driven
+  `test`/`extend`/`requires` elaboration; updated contracts, architecture,
+  status, roadmap, TODO, and the current research ledger. Semantic navigation
+  remains the accepted following milestone.
+
 ## 0.246.0 - 2026-07-30
 
 - Completed LSP-4 by analyzing every accepted workspace revision and

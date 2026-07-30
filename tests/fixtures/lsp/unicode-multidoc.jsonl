@@ -1,0 +1,15 @@
+{"send":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"expect":{"id":1}}
+{"send":{"jsonrpc":"2.0","method":"initialized","params":{}}}
+{"expect":{"method":"textDocument/publishDiagnostics","params":{"uri":"$ROOT_URI"}}}
+{"send":{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"$MODULE_URI","languageId":"salicin","version":7,"text":"pub let 盐(: i32 = { \"😀\" }\n"}}}}
+{"expect":{"method":"textDocument/publishDiagnostics","params":{"uri":"$MODULE_URI","version":7,"diagnostics":[{"data":{"phase":"parser"}}]}}}
+{"send":{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"$MODULE_URI"}}}}
+{"expect":{"id":2}}
+{"send":{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"$MODULE_URI","version":8},"contentChanges":[{"text":"pub let 盐(): i32 = { 42 }\n"}]}}}
+{"expect":{"method":"textDocument/publishDiagnostics","params":{"uri":"$MODULE_URI","version":8,"diagnostics":[]}}}
+{"send":{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"$MODULE_URI","version":8},"contentChanges":[{"text":"pub let 盐(): i32 = { 0 }\n"}]}}}
+{"expect":{"method":"window/logMessage","params":{"type":1}}}
+{"send":{"jsonrpc":"2.0","id":3,"method":"shutdown"}}
+{"expect":{"id":3,"result":null}}
+{"send":{"jsonrpc":"2.0","method":"exit"}}

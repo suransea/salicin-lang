@@ -54,11 +54,12 @@ explicit even though delta-token requests are not yet advertised.
 
 ## Correctness and non-goals
 
-Analysis is currently synchronous, so protocol input waits while a snapshot is
-checked. Correctness does not depend on that scheduling choice: publication
-still crosses the same acceptance gate used by future worker-thread analysis.
-LSP-5 owns cancellation, malformed/recorded transcript breadth, restart, and
-stale concurrent completion acceptance.
+Analysis runs on a dedicated worker while the protocol reader continues
+accepting messages. Queued snapshots coalesce to the newest revision and every
+completion crosses the same session/revision gate before publication. The
+[protocol acceptance contract](lsp-acceptance.md) specifies cancellation,
+content modification, restart, malformed input, and stale concurrent
+completion behavior.
 
 Semantic AST classification, token deltas, partial analysis recovery,
 incremental parsing, completion, hover, references, rename, and editor-specific
@@ -66,7 +67,7 @@ extensions are outside this milestone.
 
 ## Verification
 
-Regression transcripts prove all four phases survive serialization, exact
+Regression and recorded acceptance transcripts prove all four phases survive serialization, exact
 multi-file URIs and open versions are retained, Unicode identifiers and
 non-BMP strings use UTF-16 lengths, repaired errors are cleared, unknown
 documents cannot return tokens, and real stdio execution produces only framed

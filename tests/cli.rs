@@ -16,6 +16,8 @@ mod effects;
 mod io;
 #[path = "suite/language.rs"]
 mod language;
+#[path = "suite/lsp.rs"]
+mod lsp;
 #[path = "suite/ownership.rs"]
 mod ownership;
 #[path = "suite/packages.rs"]

@@ -81,18 +81,22 @@ tokens are omitted. Lines, starts, and lengths use LSP UTF-16 delta encoding,
 including Unicode identifiers and non-BMP strings. `resultId` is the exact
 session/revision pair.
 
-Analysis currently runs synchronously after accepted synchronization.
+Protocol input and analysis run independently. Pending requests are completed
+with `RequestCancelled` on explicit cancellation and `ContentModified` when a
+newer document revision supersedes them; late snapshot completions are
+discarded before publication.
 Incremental range edits, dynamic workspace-folder changes, filesystem
 watching, completion, hover, navigation, rename, editor extensions, and
 network transports remain outside this contract.
 
 ## Verification
 
-Unit transcripts cover framing rejection, lifecycle results, advertised
+Unit and recorded real-process transcripts cover framing rejection, lifecycle results, advertised
 capabilities, Unicode/reserved URI bytes, all four diagnostic phases,
 multi-file URI routing, document versions, diagnostic clearing, UTF-16
 semantic tokens, full-text changes, and stale-version logging. A spawned
 `salic lsp` process selects one member of a real workspace, publishes a parser
 error, answers tokens, clears the repaired error, performs save/close, shuts
 down cleanly, emits only framed JSON on stdout, and leaves the selected source
-byte-identical on disk.
+byte-identical on disk. The complete matrix is defined by the
+[LSP protocol acceptance contract](lsp-acceptance.md).

@@ -52,6 +52,10 @@ current capability inventory. It does not record release history; see the
 - full semantic-token requests backed by ordered compiler tokens, a stable
   keyword/variable/type-parameter/string/number/operator legend, UTF-16 delta
   encoding for Unicode and non-BMP text, and snapshot-revision result IDs;
+- an editor-independent LSP acceptance boundary with concurrent protocol
+  reading, a coalescing analysis worker, stale-completion suppression,
+  `RequestCancelled`/`ContentModified` request completion, recorded JSONL
+  transcripts, restart replay, and malformed framing coverage;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
   inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
@@ -72,8 +76,8 @@ current capability inventory. It does not record release history; see the
   failed compilation, concurrent writers, and concurrent warm readers.
 
 The LSP transport does not provide incremental range edits, completion,
-hover, or rename. Its baseline protocol acceptance and cancellation matrix is
-not yet complete.
+hover, or rename. Its diagnostics, tokens, synchronization, cancellation, and
+protocol acceptance baseline is complete.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
 performs complete source analysis. Per-package reuse, remote caching, native
 artifact caching, and eviction policy remain outside the implemented

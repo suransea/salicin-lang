@@ -37,9 +37,11 @@ The implementation lives under `compiler/src`:
   enforcement, UTF-8 file-URI conversion, and full-document synchronization
   into `WorkspaceSession`. The CLI owns package and target discovery before
   constructing the transport; the transport neither discovers nor writes
-  workspace files. Successful synchronization analyzes one immutable
-  snapshot, crosses the session/revision acceptance gate, publishes exact
-  ranged diagnostics per document, and retains compiler tokens for full
+  workspace files. A reader thread, coalescing analysis worker, and
+  publication loop communicate through bounded responsibilities: input stays
+  responsive during checking, every immutable snapshot crosses the
+  session/revision acceptance gate, cancelled or superseded requests complete
+  exactly once, and only current results publish diagnostics or answer full
   UTF-16 semantic-token requests.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves

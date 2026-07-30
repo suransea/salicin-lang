@@ -20,12 +20,23 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: LSP Diagnostics Baseline
+## P0: Syntax Declaration Contracts
 
-- [ ] **LSP-5 — Protocol acceptance suite.** Test recorded client transcripts,
-  malformed requests, Unicode, multiple documents, stale versions,
-  cancellation, server restart, and clean shutdown without depending on a
-  particular editor.
+- [ ] **SYN-1 — Static fragment sorts.** Define erased `constraint` and
+  `declaration` classifiers, equality/normalization boundaries, permitted
+  producers, and diagnostics that prevent runtime values or effects from
+  entering either sort.
+
+- [ ] **SYN-2 — Contract-driven elaboration.** Make `test`, `extend`, and
+  `requires` source-visible compiler contracts that participate in surface
+  elaboration. The `test` contract must include its static string name and
+  accept only a unit-returning `throwing(string)` closure; extension blocks
+  and guarded initializers must retain exact surface provenance.
+
+- [ ] **SYN-3 — Syntax-contract acceptance.** Migrate grammar, formatter token
+  preservation, core bundle validation, fixtures, diagnostics, and docs.
+  Reject missing or malformed edition contracts and prove no decorative
+  runtime-callable fallback remains.
 
 ## P1: Semantic Navigation
 
@@ -77,11 +88,6 @@ A task is complete only when:
 
 ## Design Candidates
 
-- language consistency: define static declaration-former and constraint-guard
-  sorts, then add source-defined contracts for parser-owned `extend` and
-  `requires`; keep the existing source-declared `test` contract unit-returning
-  with only `throwing(string)`, and do not model either missing form as an
-  ordinary runtime function;
 - per-package incremental compilation and dependency interface hashes;
 - compile-time mutation, loops, allocation, and resource-bearing values;
 - runtime nominal values as compile-parameter classifiers;

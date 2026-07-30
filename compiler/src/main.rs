@@ -831,11 +831,10 @@ fn run_lsp(
             return 2;
         }
     };
-    let stdin = io::stdin();
     let stdout = io::stdout();
-    let mut reader = io::BufReader::new(stdin.lock());
     let mut writer = io::BufWriter::new(stdout.lock());
-    match salicin_lang::lsp::Server::new(session).run(&mut reader, &mut writer) {
+    match salicin_lang::lsp::Server::new(session).run(io::BufReader::new(io::stdin()), &mut writer)
+    {
         Ok(code) => code,
         Err(error) => {
             eprintln!("salic: LSP transport failed: {error}");

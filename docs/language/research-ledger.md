@@ -490,10 +490,56 @@ occurrence index.
   even while the same snapshot reports a syntax error.
 - [LspFuzz: Hunting Bugs in Language Servers (ASE
   2025)](https://doi.org/10.1109/ASE63991.2025.00183) studies protocol-driven
-  robustness failures across language servers. LSP-4 therefore locks down
-  exact serialization and document routing, while the next LSP-5 acceptance
-  matrix explicitly expands malformed, restart, cancellation, and stale-state
-  transcripts instead of assuming editor clients are well behaved.
+  robustness failures across language servers. Its central observation is
+  that failures arise from combinations of source mutation and editor
+  operations. Salicin therefore records stateful operation transcripts rather
+  than testing isolated request shapes.
+
+### Protocol Input Must Outlive One Analysis Revision
+
+Reviewed on 2026-07-30 for the completed LSP protocol acceptance boundary.
+The protocol reader, analysis worker, and publication gate are independent.
+Queued revisions coalesce, but an already-running analysis may finish; its
+session/revision identity, not timing, decides whether it can publish. Pending
+requests are explicitly cancelled or invalidated instead of silently lost.
+
+- [Language Server Protocol
+  3.18](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/)
+  defines `$/cancelRequest`, `RequestCancelled` (`-32800`), and
+  `ContentModified` (`-32801`). Salicin uses those distinct outcomes for
+  client cancellation and revision supersession.
+- [Live Feedback through Incremental Program Analysis (JOT
+  2026)](https://doi.org/10.5381/jot.2026.25.1.a6) separates precise static
+  analysis specifications from an incremental runtime. Salicin is not yet
+  incrementally evaluating compiler phases, but adopts the same operational
+  separation: protocol progress and revision selection do not depend on
+  rebuilding analysis logic inside the transport.
+- [LspFuzz: Hunting Bugs in Language Servers (ASE
+  2025)](https://doi.org/10.1109/ASE63991.2025.00183) found 51 bugs through
+  syntax-aware source mutation followed by context-aware editor operations.
+  The acceptance corpus consequently combines Unicode source changes,
+  multi-document state, stale versions, cancellation, malformed framing,
+  shutdown, and restart instead of treating them as independent unit cases.
+
+### Syntax Contracts Need Static Fragment Kinds
+
+Reviewed on 2026-07-30 after auditing the parser-owned `test`, `extend`, and
+`requires` forms. `test` has a source-visible body contract, but its name is
+still parser metadata; `extend` and `requires` have no source-visible contract.
+An ordinary runtime function signature cannot accurately describe a
+declaration block or constraint goal. The accepted follow-up therefore first
+introduces static constraint/declaration fragment sorts, then makes surface
+elaboration validate all three contracts.
+
+- [Localizing Type Errors for Syntactic Sugar by Lifting (OOPSLA
+  2026)](https://2026.splashcon.org/details/oopsla-2026/53/Localizing-Type-Errors-for-Syntactic-Sugar-by-Lifting)
+  lifts core typing rules while preserving surface locations and fixable
+  diagnostics. This argues against decorative builtin declarations that do
+  not participate in elaboration.
+- [When Do Staging Annotations Preserve Semantics? (2026)](https://arxiv.org/abs/2606.30854)
+  tracks staged let insertion as an effect to preserve evaluation semantics.
+  Salicin's narrower contract must likewise keep declaration fragments erased
+  and prevent runtime effects or values from crossing into syntax metadata.
 
 ## Review Gate
 

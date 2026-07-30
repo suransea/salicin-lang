@@ -19,8 +19,9 @@ can support daily development. The near-term order is deliberately:
    support;
 3. make unchanged builds reusable;
 4. make source analysis continuously available to editors;
-5. build source navigation on structured semantic identities;
-6. make locked third-party source dependencies reproducible.
+5. make parser-owned declaration forms obey source-visible static contracts;
+6. build source navigation on structured semantic identities;
+7. make locked third-party source dependencies reproducible.
 
 New language surface is not a near-term goal unless one of those outcomes
 requires it. Every milestone must continue to preserve:
@@ -47,45 +48,34 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: LSP Diagnostics Baseline
+## Now: Syntax Declaration Contracts
 
-The transport-independent editor API already exposes UTF-8 byte ranges,
-UTF-16 positions, tokens, and diagnostics with structured document identity,
-phase, severity, stable code, and optional exact range. Resolver origins are
-no longer reconstructed from rendered messages and missing locations are
-never replaced with fallback coordinates. A stateful workspace session now
-overlays strictly versioned full-text buffers on caller-supplied baseline
-sources, analyzes immutable snapshots on independent threads, and rejects
-results whose session/revision was superseded without writing files.
-`salic lsp` adds bounded JSON-RPC stdio framing, the LSP lifecycle, command
-line workspace/target selection, and full-text open/change/save/close
-synchronization. Accepted snapshots now publish versioned, phase-preserving
-diagnostics to exact file URIs and answer full semantic-token requests from
-the compiler token model with UTF-16 delta encoding. This milestone next
-hardens the complete protocol boundary with recorded acceptance transcripts.
+`test("name") { ... }`, `extend(...) { ... }`, and
+`requires(goals) expression` are parser-owned surface forms. Only `test`
+currently has a source-visible edition contract, and that contract describes
+the unit-returning `throwing(string)` body without representing the static
+name. The other two forms cannot be described honestly with an ordinary
+runtime callable because their operands include constraints and declarations.
 
-The baseline covers workspace discovery, full-document synchronization,
-cancellation or supersession of stale analyses, diagnostics, and semantic
-tokens. In-memory editor buffers take precedence over disk without mutating
-source files. Resolver and semantic diagnostics must carry structured source
-origins; the server must not recover locations by parsing rendered messages.
+This milestone introduces erased classifiers for constraint and declaration
+fragments, then makes all three forms elaborate through compiler-validated
+source contracts. Surface source locations remain authoritative for
+diagnostics; no generated contract invocation may leak into user errors.
 
 Exit conditions:
 
-- a versioned workspace snapshot can overlay opened documents and reanalyze a
-  complete source graph;
-- stale results cannot replace diagnostics for a newer document version;
-- `salic lsp` supports initialize, shutdown, open, change, save, and close over
-  stdio JSON-RPC;
-- lexer, parser, resolver, and semantic failures publish to the correct URI
-  with UTF-16 ranges;
-- semantic tokens use the compiler token model and remain stable for Unicode
-  source;
-- protocol transcript tests cover malformed messages, multiple files,
-  out-of-order edits, cancellation, and clean shutdown.
+- constraint and declaration fragments have explicit static sorts,
+  normalization/equality rules, and phase separation;
+- the `test` contract includes its static string name and accepts only a
+  unit-returning closure with exactly `throwing(string)`;
+- `extend` and `requires` have source-visible contracts that actively govern
+  elaboration rather than decorative builtin signatures;
+- missing or malformed edition contracts fail core-bundle validation;
+- grammar, formatter preservation, diagnostics, core sources, fixtures, and
+  documentation agree on one contract shape.
 
-Incremental parsing, completion, hover, references, rename, and editor-specific
-extensions are not part of this baseline.
+General macros, reflection, arbitrary syntax extension, and runtime
+first-class declaration values remain deferred.
 
 ## Later: Semantic Navigation
 
@@ -137,11 +127,6 @@ and a stable package protocol remain outside this milestone.
 These gaps need an accepted contract and sequencing decision before entering
 the executable queue:
 
-- language consistency through static declaration-former and constraint-guard
-  sorts plus source-defined contracts for parser-owned `extend` and
-  `requires`; retain the existing unit-returning, `throwing(string)` `test`
-  contract rather than decorative declarations that do not participate in
-  parsing;
 - per-package incremental reuse based on dependency interface digests;
 - compile-time mutation, loop normalization, allocation, and resource values;
 - runtime nominal types as compile-parameter classifiers;
