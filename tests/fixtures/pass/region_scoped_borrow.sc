@@ -17,5 +17,5 @@ let main(): i32 = {
 }
 
 test("region_scoped_borrow.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

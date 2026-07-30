@@ -5,5 +5,5 @@ let main(): i32 = {
 }
 
 test("dynamic_array_oob.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

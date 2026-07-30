@@ -8,5 +8,5 @@ let through_closure(comptime t: type)(move value: t): t = {
 let main(): i32 = { through_closure(i32)(42) }
 
 test("generic_call_inside_closure.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

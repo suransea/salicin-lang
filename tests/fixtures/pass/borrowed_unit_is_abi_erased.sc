@@ -7,5 +7,5 @@ let main(): i32 = {
 }
 
 test("borrowed_unit_is_abi_erased.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

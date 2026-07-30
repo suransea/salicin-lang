@@ -22,5 +22,5 @@ let main(): i32 = {
 }
 
 test("gat_usize_family.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

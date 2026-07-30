@@ -38,5 +38,5 @@ let main(): i32 = {
 }
 
 test("arithmetic_traits_nominal_dispatch.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

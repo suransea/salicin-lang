@@ -4,5 +4,5 @@ let main(): i32 = {
 }
 
 test("empty_array_typed.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -43,5 +43,5 @@ let main(): i32 = {
 }
 
 test("async_await_loop_value.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

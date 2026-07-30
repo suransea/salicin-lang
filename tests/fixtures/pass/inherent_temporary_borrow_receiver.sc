@@ -7,5 +7,5 @@ extend(number) {
 let main(): i32 = { number { raw: 42 }.value() }
 
 test("inherent_temporary_borrow_receiver.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -10,5 +10,5 @@ let main(): i32 = {
 }
 
 test("array_non_copy_element.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -22,5 +22,5 @@ let main(): i32 = {
 }
 
 test("where_associated_method.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

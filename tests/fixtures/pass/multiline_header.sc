@@ -6,5 +6,5 @@ let add(x: i32)
 let main(): i32 = { add(20)(22) }
 
 test("multiline_header.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

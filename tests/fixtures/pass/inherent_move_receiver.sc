@@ -10,5 +10,5 @@ let main(): i32 = {
 }
 
 test("inherent_move_receiver.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

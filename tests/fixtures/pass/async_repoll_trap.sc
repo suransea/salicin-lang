@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("async_repoll_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

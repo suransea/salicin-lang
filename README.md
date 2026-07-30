@@ -46,7 +46,7 @@ Tests use compile-time registrations and are linked into one runner:
 
 ```sc fragment
 test("arithmetic") {
-  20 + 22 == 42
+  std.test.assert(20 + 22 == 42)
 }
 ```
 

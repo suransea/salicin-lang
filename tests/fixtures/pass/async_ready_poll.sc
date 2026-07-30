@@ -47,5 +47,5 @@ let main(): i32 = {
 }
 
 test("async_ready_poll.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("array_index_move_reinitialize.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

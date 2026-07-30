@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("chain_option_method_arguments_are_lazy.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

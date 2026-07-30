@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("chain_method_result_is_nested.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

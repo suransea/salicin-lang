@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("chain_success_type_changes.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("copy_nominal_repeated_and_parameters.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -31,5 +31,5 @@ let main(): i32 = {
 }
 
 test("while_let.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

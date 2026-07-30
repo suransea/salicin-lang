@@ -55,5 +55,5 @@ let main(): i32 = {
 }
 
 test("vec_slice_operations.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

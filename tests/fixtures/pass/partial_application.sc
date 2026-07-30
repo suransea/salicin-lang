@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("partial_application.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

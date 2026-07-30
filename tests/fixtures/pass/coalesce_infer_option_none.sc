@@ -3,5 +3,5 @@ let option = core.option
 let main(): i32 = { option.none ?? 42 }
 
 test("coalesce_infer_option_none.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

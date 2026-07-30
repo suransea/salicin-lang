@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("reinit_root_move_field_by_field.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -27,5 +27,5 @@ let main(): i32 = {
 }
 
 test("compound_assign_trait.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

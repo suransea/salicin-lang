@@ -9,5 +9,5 @@ extend(number) {
 let main(): i32 = { option(number).some(number { value: 42 })?.read() ?? 0 }
 
 test("chain_borrowed_method.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

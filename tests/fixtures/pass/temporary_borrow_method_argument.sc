@@ -7,5 +7,5 @@ extend(number) {
 let main(): i32 = { number { value: 20 }.add(number { value: 22 }) }
 
 test("temporary_borrow_method_argument.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

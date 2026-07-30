@@ -36,5 +36,5 @@ let main(): i32 = {
 }
 
 test("generic_inherent_resource.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

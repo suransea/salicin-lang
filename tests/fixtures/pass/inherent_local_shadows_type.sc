@@ -10,5 +10,5 @@ let main(): i32 = {
 }
 
 test("inherent_local_shadows_type.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

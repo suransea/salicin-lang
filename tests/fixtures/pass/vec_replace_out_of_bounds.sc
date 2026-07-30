@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("vec_replace_out_of_bounds.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

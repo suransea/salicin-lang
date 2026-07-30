@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("async_await_external_borrow.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

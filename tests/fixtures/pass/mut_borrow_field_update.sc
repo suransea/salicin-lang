@@ -11,5 +11,5 @@ let main(): i32 = {
 }
 
 test("mut_borrow_field_update.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

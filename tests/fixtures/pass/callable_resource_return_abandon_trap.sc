@@ -20,5 +20,5 @@ let main(): i32 = {
 }
 
 test("callable_resource_return_abandon_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

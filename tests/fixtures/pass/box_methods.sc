@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("box_methods.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -26,5 +26,5 @@ let main(): i32 = {
 }
 
 test("copy_nominal_capture.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

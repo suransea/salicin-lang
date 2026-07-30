@@ -187,11 +187,12 @@ Current research and specifications:
 
 Reviewed on 2026-07-30 for the implemented
 [structured test-support contract](../project/test-support.md). A registration
-may transfer an owned optional message through one compiler-handled
-`core.testing.failure` operation. The runner interprets that operation once,
-after ordinary cleanup, records the resulting outcome, and continues with the
-next registration. A boolean `false` is normalized to the same unmessaged
-outcome rather than retained as a second protocol.
+returns unit normally or transfers an owned message through the ordinary
+`core.error.throwing(core.string.string)` effect. The runner interprets that
+effect once, after ordinary cleanup, records the resulting outcome, and
+continues with the next registration. This reuses the language's typed
+exception abstraction instead of maintaining a test-only effect or boolean
+failure protocol.
 
 The result channel is a separate framed pipe instead of stderr or an exit-code
 index, so test output cannot be mistaken for runner metadata and more than one
@@ -199,6 +200,7 @@ failure can be represented.
 
 Current research:
 
+- [ETAS: An Effect-Typed Language for Agent Systems (2026)](https://arxiv.org/abs/2607.17780)
 - [Building Extensible Program Logics through Effect Handlers (2026)](https://arxiv.org/abs/2607.12642)
 - [Yarrow: Reconciling Effect Handlers and Region-Based Memory Management (2026)](https://arxiv.org/abs/2607.15876)
 - [Linear Effects, Exceptions, and Resource Safety (ESOP 2026)](https://link.springer.com/chapter/10.1007/978-3-032-22720-1_8)

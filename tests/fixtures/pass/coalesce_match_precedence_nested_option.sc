@@ -9,5 +9,5 @@ let main(): i32 = {
 }
 
 test("coalesce_match_precedence_nested_option.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -12,5 +12,5 @@ let main(): i32 = {
 }
 
 test("infer_argument_once.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

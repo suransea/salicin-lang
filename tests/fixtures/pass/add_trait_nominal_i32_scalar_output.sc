@@ -10,5 +10,5 @@ extend(number, add(i32)) {
 let main(): i32 = { number { value: 40 } + 2 }
 
 test("add_trait_nominal_i32_scalar_output.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

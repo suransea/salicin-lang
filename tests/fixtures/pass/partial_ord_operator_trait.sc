@@ -25,5 +25,5 @@ let main(): i32 = {
 }
 
 test("partial_ord_operator_trait.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

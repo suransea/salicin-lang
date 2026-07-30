@@ -13,5 +13,5 @@ let main(): i32 = {
 }
 
 test("add_trait_nominal_i32_nominal_output.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

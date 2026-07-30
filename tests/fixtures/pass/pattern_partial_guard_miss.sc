@@ -19,5 +19,5 @@ let main(): i32 = {
 }
 
 test("pattern_partial_guard_miss.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

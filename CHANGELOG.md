@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.236.0 - 2026-07-30
+
+- Replaced boolean-returning test registrations and the dedicated
+  `core.testing.failure` effect with one canonical callable contract:
+  `with(core.error.throwing(core.string.string))((): ())`.
+- Migrated all source test fixtures to unit-returning assertion bodies;
+  failures now always throw an owned UTF-8 message, while normal `()` return
+  passes.
+- Simplified `core.testing.outcome`, `std.test`, diagnostics, runner coverage,
+  grammar, specification, status, TODO, and test-support documentation around
+  the ordinary typed throwing abstraction.
+
 ## 0.235.0 - 2026-07-30
 
 - Completed TEST-3 with source-order `salic test --list`, case-sensitive UTF-8

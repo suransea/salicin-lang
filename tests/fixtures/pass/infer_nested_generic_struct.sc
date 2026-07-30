@@ -7,5 +7,5 @@ let main(): i32 = {
 }
 
 test("infer_nested_generic_struct.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -26,5 +26,5 @@ let main(): i32 = {
 }
 
 test("match_scalar_single_evaluation.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -97,5 +97,5 @@ let main(): i32 = {
 }
 
 test("async_residual_tail_await.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

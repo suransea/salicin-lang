@@ -16,5 +16,5 @@ extend(present, unwrap) {
 let main(): i32 = { present.value(42)!! }
 
 test("unwrap_custom.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

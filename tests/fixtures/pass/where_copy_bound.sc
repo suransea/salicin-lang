@@ -12,5 +12,5 @@ let duplicate(comptime t: type)(copy value: t): t
 let main(): i32 = { duplicate(value { value: 42 }).value }
 
 test("where_copy_bound.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -24,5 +24,5 @@ let main(): i32 = {
 }
 
 test("raw_pointer_projected_place.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

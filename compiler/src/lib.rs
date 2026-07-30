@@ -432,8 +432,8 @@ mod tests {
     #[test]
     fn test_compilation_preserves_registration_names_and_rejects_invalid_targets() {
         let compilation = compile_test_source(
-            "test(\"arithmetic\") { 20 + 22 == 42 }\n\
-             test(\"utf-8: 盐\") { true }\n",
+            "test(\"arithmetic\") { std.test.assert(20 + 22 == 42) }\n\
+             test(\"utf-8: 盐\") { () }\n",
         )
         .expect("test registrations should compile into one runner");
         assert_eq!(compilation.names, ["arithmetic", "utf-8: 盐"]);
@@ -442,9 +442,9 @@ mod tests {
             .contains("define i32 @main(i32 %argc, ptr %argv)"));
 
         let filtered = compile_test_source_filtered(
-            "test(\"alpha\") { true }\n\
-             test(\"beta\") { false }\n\
-             test(\"alphabet\") { true }\n",
+            "test(\"alpha\") { () }\n\
+             test(\"beta\") { std.test.fail(\"not selected\") }\n\
+             test(\"alphabet\") { () }\n",
             Some("alpha"),
         )
         .expect("filtered registrations should compile into one runner");
@@ -452,7 +452,7 @@ mod tests {
         assert!(!filtered.ir.contains("62657461"));
 
         let empty_selection =
-            compile_test_source_filtered("test(\"available\") { true }\n", Some("missing"))
+            compile_test_source_filtered("test(\"available\") { () }\n", Some("missing"))
                 .expect("a filter with no matches should compile an empty runner");
         assert!(empty_selection.names.is_empty());
         assert!(empty_selection
@@ -466,11 +466,11 @@ mod tests {
             .any(|diagnostic| diagnostic.contains("contains no test declarations")));
 
         let wrong_result =
-            compile_test_source("test(\"wrong result\") { 42 }\n").expect_err("bool is required");
+            compile_test_source("test(\"wrong result\") { true }\n").expect_err("unit is required");
         assert!(
             wrong_result
                 .iter()
-                .any(|diagnostic| diagnostic.contains("where `bool` is expected")),
+                .any(|diagnostic| diagnostic.contains("expected `()`, found `bool`")),
             "{wrong_result:?}"
         );
 

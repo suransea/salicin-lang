@@ -3,9 +3,8 @@
 Status: implemented contract
 
 This document fixes the first source and runner contract for built-in test
-registrations. It covers structured failure, cleanup, result transport, and
-the boolean migration path and common assertion vocabulary. Selection and
-final reporting ergonomics remain separate TODO items.
+registrations. It covers throwing failure, cleanup, result transport, and the
+common assertion vocabulary.
 
 ## Registration Contract
 
@@ -13,47 +12,42 @@ A registration remains a top-level, source-ordered declaration:
 
 ```salicin
 test("parses a count") {
-  true
+  std.test.assert(parse_count() == 3)
 }
 ```
 
 Its body has the conceptual callable type
-`with(core.testing.failure)((): bool)`. Every other effect must still be handled
-inside the body. The compiler-supplied registration boundary handles exactly
-`core.testing.failure`; it does not grant I/O, allocation, unsafety, or arbitrary
-user effects.
-
-Returning `true` passes. Returning `false` is the compatibility spelling for
-an unmessaged failure. It remains supported during the experimental edition,
-but structured failure is the canonical path used by standard assertions.
+`with(core.error.throwing(core.string.string))((): ())`. Normal return of `()`
+passes. A failure throws an owned UTF-8 `string`, normally through a
+`std.test` assertion or `std.test.fail`. Every other effect must be handled
+inside the body; the registration boundary does not grant I/O, allocation,
+unsafety, or arbitrary user effects. Boolean-returning registrations are
+rejected rather than maintained as a compatibility model.
 
 ## Failure and Outcome
 
 The source-backed `core.testing` contract has these shapes:
 
 ```salicin
-let failure = effect {
-  let abort(move message: option(string)): never
-}
-
 let outcome = enum {
   passed,
-  failed(option(string)),
+  failed(string),
 }
 
-let run(move action: with(failure)((): bool)): outcome
+let run(
+  move action: with(core.error.throwing(string))((): ()),
+): outcome
 ```
 
 `run` is an ordinary one-shot handler:
 
-- `abort(message)` becomes `failed(message)`;
-- normal `true` becomes `passed`;
-- normal `false` becomes `failed(none)`.
+- `throw(message)` becomes `failed(message)`; and
+- normal return becomes `passed`.
 
 The message is an owned, validated UTF-8 `string`. This permits construction
 through the existing source-backed formatting writer and makes its lifetime
-independent of assertion operands and the registration stack. An absent
-message is distinct from an empty message.
+independent of assertion operands and the registration stack. Every failure
+has a message; an empty message remains an exact, valid message.
 
 `std.test` exposes `fail`, `assert`, `assert_eq`, `assert_ne`, `expect_some`,
 `expect_none`, `expect_ok`, and `expect_err` over this contract. Equality
@@ -80,7 +74,7 @@ Failure messages are deterministic:
 The generated runner invokes registrations one at a time in source order.
 For each registration it:
 
-1. enters a fresh `failure` handler;
+1. enters a fresh `throwing(string)` handler;
 2. calls the body exactly once;
 3. lets return or effect transfer run the body's cleanup exactly once;
 4. converts the result to one `outcome`;
@@ -107,14 +101,14 @@ encoding. User output therefore cannot forge, split, or hide a test result.
 
 Each schema-1 record contains the `SLT1` magic, a little-endian `u64`
 registration index, one-byte status and message-presence fields, two zero
-reserved bytes, a little-endian `u64` length, and optional message bytes.
+reserved bytes, a little-endian `u64` length, and message bytes for failures.
 The terminal status uses the index as registration count and the length field
 as failure count. Thus every record contains:
 
 - a schema version;
 - the source-order registration index;
 - pass or fail status; and
-- either no message or exact UTF-8 message bytes.
+- no message for a pass, or exact UTF-8 message bytes for a failure.
 
 The parent validates the complete frame, index range, uniqueness, order, UTF-8
 payload, and terminal record before reporting results. Truncation, duplicate
@@ -159,26 +153,24 @@ for invalid CLI, package, or target selection.
 
 ## Diagnostics and Migration
 
-- A test body that returns neither `bool` under the compatibility rule nor the
-  structured failure path receives a source diagnostic at the body.
-- An effect other than `core.testing.failure` that escapes the body is diagnosed
+- A test body whose normal result is not `()` receives a source diagnostic.
+- An effect other than `core.error.throwing(core.string.string)` that escapes the body is diagnosed
   at the registration.
-- A failure is reported with the source registration name and its optional
-  message. Compiler-generated `$test$...` names are never printed.
+- A failure is reported with the source registration name and exact message.
+  Compiler-generated `$test$...` names are never printed.
 - Ordinary `build`, `check`, and `run` continue to exclude registrations.
 
-The edition has one canonical model: structured failure handled per
-registration. Boolean return is a migration adapter into that model, not a
-second runner protocol.
+The edition has one canonical model: a unit-returning, string-throwing callable
+handled independently per registration.
 
 ## Required Evidence
 
 The complete test-support contract requires:
 
-- source-backed normal, unmessaged, and messaged outcome tests;
+- source-backed normal and throwing outcome tests;
 - multiple failures and a later passing registration in one native runner;
 - exact Unicode and empty-message distinction;
-- owned-resource probes covering pass, `false`, structured abort, message
+- owned-resource probes covering pass, throw, message
   transfer, and subsequent registration;
 - malformed/truncated report-channel tests;
 - static rejection of an escaping unrelated effect;

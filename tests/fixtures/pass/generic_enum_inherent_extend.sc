@@ -16,5 +16,5 @@ let main(): i32 = {
 }
 
 test("generic_enum_inherent_extend.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

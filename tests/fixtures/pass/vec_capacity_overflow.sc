@@ -7,5 +7,5 @@ let main(): i32 = {
 }
 
 test("vec_capacity_overflow.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

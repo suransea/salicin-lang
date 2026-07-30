@@ -29,5 +29,5 @@ let main(): i32 = {
 }
 
 test("array_resource_overwrite_drop.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

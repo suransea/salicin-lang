@@ -13,5 +13,5 @@ let choose(take: bool): i32 = {
 let main(): i32 = { choose(false) }
 
 test("move_then_return_preserves_other_branch.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

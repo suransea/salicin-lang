@@ -13,5 +13,5 @@ let main(): i32 = {
 }
 
 test("branch_move_does_not_pollute_sibling.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

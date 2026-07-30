@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("drop_partial_application_abandon_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

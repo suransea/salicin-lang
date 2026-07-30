@@ -67,5 +67,5 @@ let main(): i32 = {
 }
 
 test("vec_reorder_resource.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

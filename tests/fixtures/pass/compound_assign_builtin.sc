@@ -38,5 +38,5 @@ let main(): i32 = {
 }
 
 test("compound_assign_builtin.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

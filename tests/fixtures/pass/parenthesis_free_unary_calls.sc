@@ -28,5 +28,5 @@ let main(): i32 = {
 }
 
 test("parenthesis_free_unary_calls.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

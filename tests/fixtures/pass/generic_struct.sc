@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("generic_struct.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

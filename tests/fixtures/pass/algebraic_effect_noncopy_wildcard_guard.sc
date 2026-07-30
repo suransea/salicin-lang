@@ -37,5 +37,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_noncopy_wildcard_guard.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

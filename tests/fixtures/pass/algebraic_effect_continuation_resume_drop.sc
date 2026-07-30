@@ -36,5 +36,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_continuation_resume_drop.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

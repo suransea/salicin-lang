@@ -19,5 +19,5 @@ let main(): i32 = {
 }
 
 test("constrained_generic_extend.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

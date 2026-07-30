@@ -9,5 +9,5 @@ let main(): i32 = {
 }
 
 test("raw_allocator_invalid_alignment.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

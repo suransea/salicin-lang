@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("infer_function_from_expected.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

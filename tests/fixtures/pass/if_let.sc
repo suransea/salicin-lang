@@ -11,5 +11,5 @@ let main(): i32 = {
 }
 
 test("if_let.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

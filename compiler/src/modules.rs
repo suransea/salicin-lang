@@ -575,7 +575,7 @@ const CORE_ITER_EXPORTS: &[&str] = &[
     "owned_item",
     "borrowed_item",
 ];
-const CORE_TESTING_EXPORTS: &[&str] = &["failure", "outcome", "run"];
+const CORE_TESTING_EXPORTS: &[&str] = &["outcome", "run"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],

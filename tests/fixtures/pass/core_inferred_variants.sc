@@ -23,5 +23,5 @@ let main(): i32 = {
 }
 
 test("core_inferred_variants.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

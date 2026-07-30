@@ -27,7 +27,8 @@ status and changelog instead of remaining as a checked archive.
 - [ ] **STD-3 — Practical standard-library acceptance.** Add a multi-module
   command-line example and native suites that read arguments or input, parse
   text, process arrays/slices/vectors, format output, use files where
-  available, and exercise standard assertions. Verify Unicode boundaries,
+  available, and exercise unit-returning, string-throwing standard assertions.
+  Verify Unicode boundaries,
   errors, early exits, allocation balance, deterministic output, and
   documentation examples.
 

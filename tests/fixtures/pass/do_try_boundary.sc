@@ -28,5 +28,5 @@ let main(): i32 = {
 }
 
 test("do_try_boundary.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

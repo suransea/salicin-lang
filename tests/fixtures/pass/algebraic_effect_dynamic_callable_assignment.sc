@@ -16,5 +16,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_dynamic_callable_assignment.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

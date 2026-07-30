@@ -33,5 +33,5 @@ let main(): i32 = {
 }
 
 test("async_residual_mut_borrow_capture.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

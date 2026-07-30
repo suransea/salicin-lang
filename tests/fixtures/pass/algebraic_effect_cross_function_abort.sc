@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_cross_function_abort.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

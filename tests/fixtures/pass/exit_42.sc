@@ -1,5 +1,5 @@
 let main(): i32 = { 42 }
 
 test("exit_42.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

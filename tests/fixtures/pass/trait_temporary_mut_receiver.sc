@@ -14,5 +14,5 @@ extend(counter, reset) {
 let main(): i32 = { counter { value: 0 }.reset() }
 
 test("trait_temporary_mut_receiver.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

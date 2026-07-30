@@ -28,12 +28,6 @@ let report_pass(index: u64): bool = {
   true
 }
 
-let report_without_message(index: u64): bool = {
-  let empty: u8 = 0
-  send(index, 1, 0, ptr(borrow(empty)), 0)
-  false
-}
-
 let report_with_message(
   index: u64,
   move message: core.string.string,
@@ -45,21 +39,12 @@ let report_with_message(
   false
 }
 
-let report_failure(
-  index: u64,
-  move message: core.option(core.string.string),
-): bool = {
-  match message
-    { none -> report_without_message(index) }
-    { some(message) -> report_with_message(index, message) }
-}
-
 // Called only by the compiler-generated runner after one registration has
 // returned through its source-backed failure handler and cleanup path.
 let report(index: u64, move value: core.testing.outcome): bool = {
   match value
     { passed -> report_pass(index) }
-    { failed(message) -> report_failure(index, message) }
+    { failed(message) -> report_with_message(index, message) }
 }
 
 // Emits the terminal frame and returns the native process summary status.
@@ -70,13 +55,13 @@ let finish(registrations: u64, failures: u64): i32 = {
 }
 
 /// Fails the current test with an exact owned UTF-8 message.
-pub let fail: with(core.testing.failure)
+pub let fail: with(core.error.throwing(core.string.string))
   (move message: core.string.string): never = {
-  core.testing.failure.abort(core.option.some(message))
+  core.error.throw(message)
 }
 
 /// Requires a condition to be true.
-pub let assert: with(core.testing.failure)(condition: bool): () = {
+pub let assert: with(core.error.throwing(core.string.string))(condition: bool): () = {
   if !condition {
     fail("assertion failed")
   }
@@ -190,7 +175,7 @@ let unexpected_value_message(
 }
 
 /// Requires two values to compare equal. Each operand is evaluated once.
-pub let assert_eq(comptime t: type): with(core.testing.failure)
+pub let assert_eq(comptime t: type): with(core.error.throwing(core.string.string))
   (left: t)
   (right: t): () =
   requires(t is core.cmp.eq(t) && t is assertion_debug) {
@@ -203,7 +188,7 @@ pub let assert_eq(comptime t: type): with(core.testing.failure)
 }
 
 /// Requires two values to compare unequal. Each operand is evaluated once.
-pub let assert_ne(comptime t: type): with(core.testing.failure)
+pub let assert_ne(comptime t: type): with(core.error.throwing(core.string.string))
   (left: t)
   (right: t): () =
   requires(t is core.cmp.eq(t) && t is assertion_debug) {
@@ -215,7 +200,7 @@ pub let assert_ne(comptime t: type): with(core.testing.failure)
 }
 
 /// Extracts `some`, failing when the option is empty.
-pub let expect_some(comptime t: type): with(core.testing.failure)
+pub let expect_some(comptime t: type): with(core.error.throwing(core.string.string))
   (move value: core.option(t)): t = {
   match value
     { some(value) -> value }
@@ -223,7 +208,7 @@ pub let expect_some(comptime t: type): with(core.testing.failure)
 }
 
 /// Requires `none`, formatting an unexpected payload exactly once.
-pub let expect_none(comptime t: type): with(core.testing.failure)
+pub let expect_none(comptime t: type): with(core.error.throwing(core.string.string))
   (move value: core.option(t)): () =
   requires(t is assertion_debug) {
   match value
@@ -239,7 +224,7 @@ pub let expect_none(comptime t: type): with(core.testing.failure)
 
 /// Extracts `ok`, formatting an unexpected error exactly once.
 pub let expect_ok(comptime e: type, comptime t: type):
-with(core.testing.failure)
+with(core.error.throwing(core.string.string))
   (move value: core.result(e)(t)): t =
   requires(e is assertion_debug) {
   match value
@@ -255,7 +240,7 @@ with(core.testing.failure)
 
 /// Extracts `err`, formatting an unexpected success value exactly once.
 pub let expect_err(comptime e: type, comptime t: type):
-with(core.testing.failure)
+with(core.error.throwing(core.string.string))
   (move value: core.result(e)(t)): e =
   requires(t is assertion_debug) {
   match value

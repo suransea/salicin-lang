@@ -54,5 +54,5 @@ let main(): i32 = {
 }
 
 test("primitive_scalar_widths.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

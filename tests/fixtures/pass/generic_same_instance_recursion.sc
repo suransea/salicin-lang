@@ -9,5 +9,5 @@ let bounce(comptime t: type)(move value: t)(again: bool): t = {
 let main(): i32 = { bounce(i32)(42)(true) }
 
 test("generic_same_instance_recursion.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

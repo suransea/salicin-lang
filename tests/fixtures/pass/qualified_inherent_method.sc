@@ -20,5 +20,5 @@ let main(): i32 = {
 }
 
 test("qualified_inherent_method.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

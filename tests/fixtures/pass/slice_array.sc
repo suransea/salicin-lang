@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("slice_array.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

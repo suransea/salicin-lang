@@ -127,7 +127,7 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 422);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 421);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
@@ -438,7 +438,7 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
             "lib",
             "test",
             EDITION_2026_LIB.replace(
-                "move body: with(core.testing.failure)((): bool),",
+                "move body: with(core.error.throwing(core.string.string))((): ()),",
                 "move body: (),",
             ),
         ),
@@ -446,8 +446,8 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
             "lib",
             "test",
             EDITION_2026_LIB.replace(
-                "move body: with(core.testing.failure)((): bool),",
-                "move body: with(core.testing.failure)((): i32),",
+                "move body: with(core.error.throwing(core.string.string))((): ()),",
+                "move body: with(core.error.throwing(core.string.string))((): i32),",
             ),
         ),
     ] {

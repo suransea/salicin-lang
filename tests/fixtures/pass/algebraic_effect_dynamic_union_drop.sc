@@ -40,5 +40,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_dynamic_union_drop.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

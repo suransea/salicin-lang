@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("raw_allocator_inferred.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("inferred_copy_i32.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

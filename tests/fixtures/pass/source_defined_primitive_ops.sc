@@ -19,5 +19,5 @@ let main(): i32 = {
 }
 
 test("source_defined_primitive_ops.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

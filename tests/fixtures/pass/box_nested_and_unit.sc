@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("box_nested_and_unit.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

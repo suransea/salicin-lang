@@ -37,5 +37,5 @@ let main(): i32 = {
 }
 
 test("trait_generic_blanket_impl.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

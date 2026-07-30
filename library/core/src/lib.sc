@@ -5,10 +5,10 @@ let builtin() = builtin()
 // Public syntax contracts. Their leading groups are erased metadata.
 pub let abi = core.foreign.abi
 pub let foreign = core.foreign.foreign
-// Test names are consumed by the `test("...") { ... }` syntax. Structured
-// failure is handled independently for each compiler-owned registration.
+// Test names are consumed by the `test("...") { ... }` syntax. Each
+// compiler-owned registration returns unit and may throw an owned message.
 pub let test(
-  move body: with(core.testing.failure)((): bool),
+  move body: with(core.error.throwing(core.string.string))((): ()),
 ): () = builtin()
 
 pub let never = core.never.never

@@ -4,5 +4,5 @@ let choose(right: i32): i32 = { right + 2 }
 let main(): i32 = { choose(right: 40) }
 
 test("function_overload_named.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

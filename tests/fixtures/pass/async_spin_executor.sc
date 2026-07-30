@@ -32,5 +32,5 @@ let main(): i32 = {
 }
 
 test("async_spin_executor.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

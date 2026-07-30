@@ -9,5 +9,5 @@ let main(): i32 = {
 }
 
 test("infer_constraint_order.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

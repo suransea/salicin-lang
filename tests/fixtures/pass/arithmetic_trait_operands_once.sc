@@ -20,5 +20,5 @@ let main(): i32 = {
 }
 
 test("arithmetic_trait_operands_once.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

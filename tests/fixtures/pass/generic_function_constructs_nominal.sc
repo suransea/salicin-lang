@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("generic_function_constructs_nominal.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

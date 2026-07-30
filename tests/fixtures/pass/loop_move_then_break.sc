@@ -10,5 +10,5 @@ let main(): i32 = {
 }
 
 test("loop_move_then_break.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

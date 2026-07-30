@@ -149,7 +149,7 @@ fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
     );
     workspace.write(
         "dep/src/lib.sc",
-        "test(\"dependency test must not run\") { false }\n",
+        "test(\"dependency test must not run\") { std.test.fail(\"must not run\") }\n",
     );
     let app = workspace.create_dir("app");
     workspace.write(
@@ -162,10 +162,7 @@ fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
          [dependencies]\n\
          dep = { path = \"../dep\" }\n",
     );
-    workspace.write(
-        "app/src/main.sc",
-        "test(\"primary package test\") { true }\n",
-    );
+    workspace.write("app/src/main.sc", "test(\"primary package test\") { () }\n");
     let package = salic()
         .arg("test")
         .arg(app)
@@ -187,19 +184,18 @@ fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
 }
 
 #[test]
-fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
+fn throwing_test_failures_report_all_messages_and_reject_unhandled_effects() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "structured.sc",
         "test(\"messaged\") {\n\
-           core.testing.failure.abort(core.option.some(\"盐: expected 42\"))\n\
+           core.error.throw(\"盐: expected 42\")\n\
          }\n\
-         test(\"boolean migration\") { false }\n\
          test(\"empty message\") {\n\
-           core.testing.failure.abort(core.option.some(\"\"))\n\
+           core.error.throw(\"\")\n\
          }\n\
          test(\"later registration\") {\n\
-           core.testing.failure.abort(core.option.some(\"later still ran\"))\n\
+           core.error.throw(\"later still ran\")\n\
          }\n",
     );
     let output = salic()
@@ -211,10 +207,9 @@ fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "salic: test \"messaged\" failed: 盐: expected 42\n\
-         salic: test \"boolean migration\" failed\n\
          salic: test \"empty message\" failed: \n\
          salic: test \"later registration\" failed: later still ran\n\
-         salic: test result: 0 passed; 4 failed; 4 selected\n",
+         salic: test result: 0 passed; 3 failed; 3 selected\n",
         "{}",
         output_text(&output)
     );
@@ -224,7 +219,7 @@ fn structured_test_failures_report_all_messages_and_reject_unhandled_effects() {
         "let unrelated = effect { let escape(): () }\n\
          test(\"wrong effect\") {\n\
            unrelated.escape()\n\
-           true\n\
+           ()\n\
          }\n",
     );
     let rejected = salic()
@@ -254,7 +249,7 @@ fn standard_test_assertions_evaluate_once_and_report_stable_messages() {
            counter = counter + 1\n\
            42\n\
          }\n\
-         let common_assertions_pass: with(core.testing.failure)(): bool = {\n\
+         let common_assertions_pass: with(core.error.throwing(core.string.string))(): () = {\n\
            let mut counter = 0\n\
            std.test.assert(true)\n\
            std.test.assert_eq(evaluate(counter))(evaluate(counter))\n\
@@ -269,7 +264,7 @@ fn standard_test_assertions_evaluate_once_and_report_stable_messages() {
            std.test.expect_none(i64)(none_value)\n\
            let ok = std.test.expect_ok(i64, i32)(ok_value)\n\
            let error = std.test.expect_err(i64, i64)(error_value)\n\
-           some + ok == 42 && error == 7 && counter == 2\n\
+           std.test.assert(some + ok == 42 && error == 7 && counter == 2)\n\
          }\n\
          test(\"common assertions pass\") { common_assertions_pass() }\n",
     );
@@ -282,37 +277,33 @@ fn standard_test_assertions_evaluate_once_and_report_stable_messages() {
 
     let failing = temporary.write(
         "assertions-fail.sc",
-        "let fail_assert: with(core.testing.failure)(): bool = {\n\
+        "let fail_assert: with(core.error.throwing(core.string.string))(): () = {\n\
            std.test.assert(false)\n\
-           true\n\
          }\n\
-         let fail_assert_eq: with(core.testing.failure)(): bool = {\n\
+         let fail_assert_eq: with(core.error.throwing(core.string.string))(): () = {\n\
            let left: i64 = 1\n\
            let right: i64 = 2\n\
            std.test.assert_eq(i64)(left)(right)\n\
-           true\n\
          }\n\
-         let fail_assert_ne: with(core.testing.failure)(): bool = {\n\
+         let fail_assert_ne: with(core.error.throwing(core.string.string))(): () = {\n\
            let value: i64 = 7\n\
            std.test.assert_ne(i64)(value)(value)\n\
-           true\n\
          }\n\
-         let fail_expect_some: with(core.testing.failure)(): bool = {\n\
+         let fail_expect_some: with(core.error.throwing(core.string.string))(): () = {\n\
            let value: core.option(i64) = core.option.none\n\
-           std.test.expect_some(i64)(value) == 0\n\
+           let _ = std.test.expect_some(i64)(value)\n\
          }\n\
-         let fail_expect_none: with(core.testing.failure)(): bool = {\n\
+         let fail_expect_none: with(core.error.throwing(core.string.string))(): () = {\n\
            let value: core.option(i64) = core.option.some(9)\n\
            std.test.expect_none(i64)(value)\n\
-           true\n\
          }\n\
-         let fail_expect_ok: with(core.testing.failure)(): bool = {\n\
+         let fail_expect_ok: with(core.error.throwing(core.string.string))(): () = {\n\
            let value: core.result(i64)(i64) = core.result.err(0)\n\
-           std.test.expect_ok(i64, i64)(value) == 0\n\
+           let _ = std.test.expect_ok(i64, i64)(value)\n\
          }\n\
-         let fail_expect_err: with(core.testing.failure)(): bool = {\n\
+         let fail_expect_err: with(core.error.throwing(core.string.string))(): () = {\n\
            let value: core.result(i64)(i64) = core.result.ok(11)\n\
-           std.test.expect_err(i64, i64)(value) == 0\n\
+           let _ = std.test.expect_err(i64, i64)(value)\n\
          }\n\
          test(\"assert\") { fail_assert() }\n\
          test(\"assert_eq\") { fail_assert_eq() }\n\
@@ -353,9 +344,9 @@ fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "selection.sc",
-        "test(\"zeta\") { false }\n\
-         test(\"alpha\") { true }\n\
-         test(\"alphabet\") { false }\n",
+        "test(\"zeta\") { std.test.fail(\"zeta failed\") }\n\
+         test(\"alpha\") { () }\n\
+         test(\"alphabet\") { std.test.fail(\"alphabet failed\") }\n",
     );
 
     let listed = salic()
@@ -404,7 +395,7 @@ fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
     );
     assert_eq!(
         String::from_utf8_lossy(&multiple.stderr),
-        "salic: test \"alphabet\" failed\n\
+        "salic: test \"alphabet\" failed: alphabet failed\n\
          salic: test result: 1 passed; 1 failed; 2 selected\n"
     );
 
@@ -423,7 +414,7 @@ fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
     assert_eq!(one.status.code(), Some(1), "{}", output_text(&one));
     assert_eq!(
         String::from_utf8_lossy(&one.stderr),
-        "salic: test \"zeta\" failed\n\
+        "salic: test \"zeta\" failed: zeta failed\n\
          salic: test result: 0 passed; 1 failed; 1 selected\n"
     );
 
@@ -440,8 +431,8 @@ fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
 
     let same_source = temporary.write(
         "duplicate.sc",
-        "test(\"same name\") { true }\n\
-         test(\"same name\") { true }\n",
+        "test(\"same name\") { () }\n\
+         test(\"same name\") { () }\n",
     );
     let same_source_rejected = salic()
         .args(["test", "--list"])
@@ -471,8 +462,8 @@ fn test_listing_filtering_counts_and_duplicate_names_are_deterministic() {
         "salicin.toml",
         "[package]\nname = \"duplicate-tests\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    duplicate.write("src/main.sc", "test(\"same name\") { true }\n");
-    duplicate.write("src/other.sc", "test(\"same name\") { true }\n");
+    duplicate.write("src/main.sc", "test(\"same name\") { () }\n");
+    duplicate.write("src/other.sc", "test(\"same name\") { () }\n");
     let rejected = salic()
         .args(["test", "--list"])
         .arg(&duplicate.0)
@@ -507,7 +498,7 @@ fn structured_test_abort_runs_owned_cleanup_once() {
          let abort(counter: ptr(mut)(i32)): core.testing.outcome = {\n\
            core.testing.run {\n\
              let owned = resource { counter: counter }\n\
-             core.testing.failure.abort(core.option.none)\n\
+             core.error.throw(\"cleanup probe\")\n\
            }\n\
          }\n\
          let main(): i32 = {\n\

@@ -18,7 +18,7 @@ not use `builtin()` merely as an optimization annotation.
 The same private root module declares
 `pub let foreign(comptime abi: abi): never = builtin()`,
 `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, and
-`pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`.
+`pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`.
 These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
 `abi` sort selected by `foreign(c)`; `test("name")` consumes its ordinary string
@@ -51,9 +51,10 @@ pub let result(comptime e: type)
 }
 ```
 
-`core.testing` owns the source-backed `failure` effect, normalized `outcome`,
-and one-shot `run` handler used at test-registration boundaries. Boolean
-`false` is normalized to `failed(none)` by that same handler.
+`core.testing` owns the normalized `outcome` and one-shot `run` handler used
+at test-registration boundaries. It handles the ordinary
+`core.error.throwing(core.string.string)` effect from a unit-returning action;
+normal return passes and every thrown owned message becomes `failed(message)`.
 
 Naming `option` or `result` requires an ordinary root alias such as
 `let option = core.option` or `let result = core.result`.

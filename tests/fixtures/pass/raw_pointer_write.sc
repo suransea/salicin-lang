@@ -10,5 +10,5 @@ let main(): i32 = {
 }
 
 test("raw_pointer_write.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -10,5 +10,5 @@ let twice(comptime t: type)(copy value: t): t
 let main(): i32 = { twice(21) }
 
 test("where_operator_output.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

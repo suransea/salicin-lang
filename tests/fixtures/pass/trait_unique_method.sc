@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("trait_unique_method.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

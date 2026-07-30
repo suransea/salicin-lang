@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("do_function_boundary.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

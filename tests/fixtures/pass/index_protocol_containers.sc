@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("index_protocol_containers.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

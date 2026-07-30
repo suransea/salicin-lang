@@ -7,5 +7,5 @@ let main(): i32 = {
 }
 
 test("array_nested_constant_index_place.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

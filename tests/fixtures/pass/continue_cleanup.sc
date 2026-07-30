@@ -36,5 +36,5 @@ let main(): i32 = {
 }
 
 test("continue_cleanup.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

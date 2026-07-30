@@ -21,5 +21,5 @@ let main(): i32 = {
 }
 
 test("self_expression_generic.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

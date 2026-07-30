@@ -16,7 +16,8 @@ current capability inventory. It does not record release history; see the
 - native checking, IR emission, building, and running;
 - compile-time `test("name") { ... }` registrations collected into one native
   runner by `salic test`, with source-order execution, source-backed
-  structured failure, owned optional UTF-8 messages, all-failure reporting,
+  unit-returning `throwing(string)` bodies, owned UTF-8 failure messages,
+  all-failure reporting,
   a dedicated framed parent channel, and `std.test` failure, boolean,
   equality, inequality, and `option`/`result` expectation helpers with static
   comparison/diagnostic-formatting bounds and single operand evaluation;
@@ -92,7 +93,7 @@ Implemented lexical and declaration features include:
 - explicit erased inputs for those syntax declarations:
   the one- and two-argument `foreign` overloads select the finite
   `abi.c` value, while
-  `pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()`
+  `pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
   receives the syntax-owned body after the compiler consumes UTF-8 name
   metadata.
 

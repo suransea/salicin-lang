@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("chain_lhs_once.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

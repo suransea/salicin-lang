@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("runtime_division_by_zero.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

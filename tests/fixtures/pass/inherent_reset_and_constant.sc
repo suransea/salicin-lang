@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("inherent_reset_and_constant.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -42,5 +42,5 @@ let main(): i32 = {
 }
 
 test("vec_into_iterator_break_cleanup.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

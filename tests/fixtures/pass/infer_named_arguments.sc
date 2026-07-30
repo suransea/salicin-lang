@@ -7,5 +7,5 @@ let main(): i32 = {
 }
 
 test("infer_named_arguments.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

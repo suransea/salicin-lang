@@ -21,5 +21,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_reusable_fn_mut_action.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

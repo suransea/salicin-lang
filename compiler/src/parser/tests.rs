@@ -46,30 +46,34 @@ fn prefix_with_requires_a_callable_operand_and_accepts_an_empty_row() {
 }
 
 #[test]
-fn parses_contextual_test_declarations_as_private_structured_failure_functions() {
-    let program = parse("test(\"arithmetic works\") {\n  20 + 22 == 42\n}\n").unwrap();
+fn parses_contextual_test_declarations_as_private_unit_throwing_functions() {
+    let program =
+        parse("test(\"arithmetic works\") {\n  core.error.throw(\"broken\")\n}\n").unwrap();
     let [Item::Function(test)] = program.items.as_slice() else {
         panic!("expected one test function");
     };
     assert_eq!(test.name, "$test$61726974686d6574696320776f726b73");
     assert_eq!(test.groups, vec![Vec::new()]);
-    assert_eq!(test.return_type, Some(Type::Bool));
+    assert_eq!(test.return_type, Some(Type::Unit));
     assert_eq!(
         test.effects,
         FunctionEffects {
-            custom: vec![Type::Named("core.testing.failure".to_owned(), Vec::new())],
+            custom: vec![Type::Named(
+                "core.error.throwing".to_owned(),
+                vec![Type::Named("core.string.string".to_owned(), Vec::new())],
+            )],
             ..FunctionEffects::default()
         }
     );
     assert_eq!(program.item_visibilities, [Visibility::Private]);
 
-    let visible = parse("pub test(\"arithmetic\") { true }\n")
+    let visible = parse("pub test(\"arithmetic\") { () }\n")
         .expect_err("test declarations must remain runner-private");
     assert!(visible.message.contains("cannot have visibility"));
     let identifier = parse("test arithmetic { true }\n")
         .expect_err("test registration names must be string literals");
     assert!(identifier.message.contains("`(` after `test`"));
-    let empty = parse("test(\"\") { true }\n").expect_err("test names must be useful");
+    let empty = parse("test(\"\") { () }\n").expect_err("test names must be useful");
     assert!(empty.message.contains("cannot be empty"));
 }
 

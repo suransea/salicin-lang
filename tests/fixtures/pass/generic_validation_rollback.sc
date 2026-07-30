@@ -10,5 +10,5 @@ let preserve(comptime t: type)(move value: t): t = {
 let main(): i32 = { preserve(i32)(42) }
 
 test("generic_validation_rollback.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

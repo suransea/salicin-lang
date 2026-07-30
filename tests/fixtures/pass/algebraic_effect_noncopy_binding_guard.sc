@@ -43,5 +43,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_noncopy_binding_guard.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

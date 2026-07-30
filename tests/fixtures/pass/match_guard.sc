@@ -12,5 +12,5 @@ let classify(value: number): i32 = { match value
 let main(): i32 = { classify(number.value( value: 42 )) }
 
 test("match_guard.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

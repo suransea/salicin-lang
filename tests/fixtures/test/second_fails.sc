@@ -1,11 +1,11 @@
 test("first") {
-  true
+  ()
 }
 
 test("second") {
-  false
+  std.test.fail("expected failure")
 }
 
 test("third") {
-  true
+  ()
 }

@@ -12,5 +12,5 @@ let main(): i32 = {
 }
 
 test("forget_temporary_resource.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

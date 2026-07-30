@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("arithmetic_trait_expected_output.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

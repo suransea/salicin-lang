@@ -12,5 +12,5 @@ let main(): i32 = {
 }
 
 test("inherent_receiver_loan_released.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -17,5 +17,5 @@ let child() = {
 }
 
 test("async_await_infinite_loop.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -21,5 +21,5 @@ let escape(): i32 = {
 let main(): i32 = { escape() }
 
 test("closure_partial_early_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

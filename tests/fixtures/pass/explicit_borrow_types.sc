@@ -19,5 +19,5 @@ let main(): i32 = {
 }
 
 test("explicit_borrow_types.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -16,5 +16,5 @@ let main(): i32 = {
 }
 
 test("copy_generic_blanket.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

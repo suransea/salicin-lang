@@ -43,5 +43,5 @@ let main(): i32 = {
 }
 
 test("tuple_resource_drop.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

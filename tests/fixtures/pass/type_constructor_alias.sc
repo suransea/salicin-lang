@@ -11,5 +11,5 @@ let main(): scalar = {
 }
 
 test("type_constructor_alias.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

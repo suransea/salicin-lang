@@ -13,5 +13,5 @@ let main(): i32 = {
 }
 
 test("throw_result_err_propagate.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

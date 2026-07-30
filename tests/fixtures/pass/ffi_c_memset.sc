@@ -16,5 +16,5 @@ let main(): i32 = {
 }
 
 test("ffi_c_memset.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

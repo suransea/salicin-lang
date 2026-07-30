@@ -20,5 +20,5 @@ let main(): i32 = {
 }
 
 test("add_trait_copy_operands_reusable.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

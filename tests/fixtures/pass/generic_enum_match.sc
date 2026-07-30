@@ -11,5 +11,5 @@ let unwrap(move value: maybe(i32)): i32 = { match value
 let main(): i32 = { unwrap(maybe(i32).some(42)) }
 
 test("generic_enum_match.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("trait_disjoint_blanket_impls.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

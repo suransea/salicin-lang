@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("inherent_overload_named.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

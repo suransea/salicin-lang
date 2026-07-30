@@ -5,5 +5,5 @@ let main(): i32 = {
 }
 
 test("closure_shared_repeat.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

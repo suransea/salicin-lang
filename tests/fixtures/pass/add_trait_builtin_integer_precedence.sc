@@ -10,5 +10,5 @@ extend(number, add(number)) {
 let main(): i32 = { 40 + 2 }
 
 test("add_trait_builtin_integer_precedence.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

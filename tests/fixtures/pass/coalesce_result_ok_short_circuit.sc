@@ -12,5 +12,5 @@ let main(): i32 = {
 }
 
 test("coalesce_result_ok_short_circuit.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -21,5 +21,5 @@ let main(): i32 = {
 }
 
 test("box_drop_once.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

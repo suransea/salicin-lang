@@ -21,5 +21,5 @@ let main(): i32 = {
 }
 
 test("generic_nominal_access.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

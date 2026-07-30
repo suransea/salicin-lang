@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("pattern_partial_fnonce.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

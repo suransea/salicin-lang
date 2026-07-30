@@ -11,5 +11,5 @@ extend(number, read) {
 let main(): i32 = { number { value: 42 }.read() }
 
 test("trait_temporary_receiver.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

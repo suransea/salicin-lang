@@ -94,5 +94,5 @@ let main(): i32 = {
 }
 
 test("numeric_utilities.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

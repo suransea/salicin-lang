@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("infer_runtime_partial.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

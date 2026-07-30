@@ -13,5 +13,5 @@ let main(): i32 = {
 }
 
 test("do_forwards_unsafe_color.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -17,5 +17,5 @@ let main(): i32 = {
 }
 
 test("drop_glue.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

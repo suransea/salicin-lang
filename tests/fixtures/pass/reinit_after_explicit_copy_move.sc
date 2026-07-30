@@ -12,5 +12,5 @@ let main(): i32 = {
 }
 
 test("reinit_after_explicit_copy_move.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

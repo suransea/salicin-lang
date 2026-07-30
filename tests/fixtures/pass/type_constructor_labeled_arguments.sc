@@ -25,5 +25,5 @@ let main(): i32 = {
 }
 
 test("type_constructor_labeled_arguments.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -15,5 +15,5 @@ let main(): i32 = {
 }
 
 test("trait_associated_output.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

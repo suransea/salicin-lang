@@ -56,5 +56,5 @@ let main(): i32 = {
 }
 
 test("algebraic_effect_owned_state.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

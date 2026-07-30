@@ -19,5 +19,5 @@ let main(): i32 = { match choice.pair(resource { value: 1 }, resource { value: 0
 }
 
 test("drop_match_payload_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

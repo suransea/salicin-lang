@@ -42,5 +42,5 @@ let main(): i32 = {
 }
 
 test("slice_iterator_resource.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

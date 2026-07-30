@@ -11,5 +11,5 @@ extend(cell(t)) {
 let main(): i32 = { cell.round_trip(42) }
 
 test("generic_inherent_internal_dispatch.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

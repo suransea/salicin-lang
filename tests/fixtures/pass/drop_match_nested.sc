@@ -26,5 +26,5 @@ let main(): i32 = { inspect(
 }
 
 test("drop_match_nested.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

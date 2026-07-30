@@ -14,5 +14,5 @@ let main(): i32 = { if i32_size == 4 &&
 }
 
 test("layout_intrinsics.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

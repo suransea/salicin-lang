@@ -8,5 +8,5 @@ let main(): i32 = {
 }
 
 test("temporary_borrow_partial_call.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

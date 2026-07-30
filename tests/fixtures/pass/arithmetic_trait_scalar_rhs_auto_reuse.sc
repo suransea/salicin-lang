@@ -14,5 +14,5 @@ let main(): i32 = {
 }
 
 test("arithmetic_trait_scalar_rhs_auto_reuse.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

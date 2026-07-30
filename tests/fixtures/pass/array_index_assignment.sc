@@ -5,5 +5,5 @@ let main(): i32 = {
 }
 
 test("array_index_assignment.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

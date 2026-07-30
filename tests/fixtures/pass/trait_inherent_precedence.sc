@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("trait_inherent_precedence.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

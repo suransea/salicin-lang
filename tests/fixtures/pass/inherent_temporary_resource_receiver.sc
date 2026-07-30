@@ -14,5 +14,5 @@ extend(resource, droppable) {
 let main(): i32 = { resource { value: 42 }.read() }
 
 test("inherent_temporary_resource_receiver.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

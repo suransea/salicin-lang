@@ -22,5 +22,5 @@ let main(): i32 = {
 }
 
 test("raw_pointer_offset.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

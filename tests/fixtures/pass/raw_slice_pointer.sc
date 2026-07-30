@@ -21,5 +21,5 @@ let main(): i32 = {
 }
 
 test("raw_slice_pointer.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

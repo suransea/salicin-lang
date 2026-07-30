@@ -40,5 +40,5 @@ let main(): i32 = {
 }
 
 test("bitwise_operator_traits.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

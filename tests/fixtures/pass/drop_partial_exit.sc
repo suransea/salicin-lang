@@ -15,5 +15,5 @@ let escape(): i32 = {
 let main(): i32 = { escape() }
 
 test("drop_partial_exit.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -77,5 +77,5 @@ let main(): i32 = {
 }
 
 test("standard_effect_operations.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

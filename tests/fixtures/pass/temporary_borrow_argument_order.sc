@@ -19,5 +19,5 @@ let main(): i32 = {
 }
 
 test("temporary_borrow_argument_order.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

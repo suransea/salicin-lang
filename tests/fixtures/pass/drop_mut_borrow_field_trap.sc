@@ -18,5 +18,5 @@ let main(): i32 = {
 }
 
 test("drop_mut_borrow_field_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

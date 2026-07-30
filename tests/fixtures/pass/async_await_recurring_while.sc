@@ -121,5 +121,5 @@ let main(): i32 = {
 }
 
 test("async_await_recurring_while.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -75,5 +75,5 @@ let main(): i32 = {
 }
 
 test("collection_algorithms.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -30,5 +30,5 @@ let main(): i32 = {
 }
 
 test("match_literal_resource_guard.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

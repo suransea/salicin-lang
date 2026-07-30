@@ -9,5 +9,5 @@ let main(): i32 = {
 }
 
 test("function_value_effect_subtyping.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

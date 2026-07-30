@@ -9,5 +9,5 @@ let consume(comptime t: type)(move cell: cell(t)): t = { cell.take() }
 let main(): i32 = { consume(cell: cell { value: 42 }) }
 
 test("generic_inherent_from_generic_function.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

@@ -6,5 +6,5 @@ let main(): i32 = {
 }
 
 test("explicit_move_i32_once.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

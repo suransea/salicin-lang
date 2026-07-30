@@ -23,5 +23,5 @@ let main(): i32 = { match choice.some(
 }
 
 test("drop_match_nested_trap.sc") {
-  main() == 42
+  std.test.assert(main() == 42)
 }

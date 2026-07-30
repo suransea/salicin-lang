@@ -1255,7 +1255,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: with(core.testing.failure)((): bool)): () = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -2586,9 +2586,12 @@ fn validate_syntax_contract(
                 && single_moved_callable(
                     function,
                     "body",
-                    Type::Bool,
+                    Type::Unit,
                     FunctionEffects {
-                        custom: vec![Type::Named("core.testing.failure".to_owned(), Vec::new())],
+                        custom: vec![Type::Named(
+                            "core.error.throwing".to_owned(),
+                            vec![Type::Named("core.string.string".to_owned(), Vec::new())],
+                        )],
                         ..FunctionEffects::default()
                     },
                 )
@@ -2606,7 +2609,7 @@ fn validate_syntax_contract(
                 "pub let foreign(comptime abi: abi): never = builtin()` or `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()"
             }
             LangItemKind::Test => {
-                "pub let test(move body: with(core.testing.failure)((): bool)): () = builtin()"
+                "pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()"
             }
             _ => unreachable!(),
         };
