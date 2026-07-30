@@ -1,19 +1,28 @@
-//! Versioned, path-independent inputs for future incremental compilation.
+//! Versioned, path-independent inputs and artifact identity for incremental compilation.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
 use crate::manifest::Edition;
 use crate::modules::SourcePackage;
 
-const SCHEMA_VERSION: u32 = 1;
+/// Version of the byte stream hashed by [`fingerprint_package_graph`].
+pub const INPUT_SCHEMA_VERSION: u32 = 2;
+
+/// Version of the first persistent LLVM-IR cache entry format.
+pub const CACHE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
+pub const CACHE_DIRECTORY_ENV: &str = "SALICIN_CACHE_DIR";
+pub const CACHE_PAYLOAD_FILE: &str = "module.ll";
+pub const CACHE_METADATA_FILE: &str = "metadata.toml";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum IncrementalTarget {
+pub enum IncrementalTarget<'a> {
     Binary,
     Library,
-    Test,
+    Test { filter: Option<&'a str> },
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -49,13 +58,26 @@ impl fmt::Display for IncrementalFingerprint {
     }
 }
 
+/// Map a fingerprint to its compiler-owned, content-addressed entry directory.
+///
+/// The returned path is relative to the selected Salicin cache root. Output
+/// paths and checkout paths cannot influence it.
+pub fn cache_entry_relative_path(fingerprint: IncrementalFingerprint) -> PathBuf {
+    let hex = fingerprint.to_hex();
+    PathBuf::from("llvm-ir")
+        .join(format!("v{CACHE_ARTIFACT_SCHEMA_VERSION}"))
+        .join("sha256")
+        .join(&hex[..2])
+        .join(&hex[2..])
+}
+
 /// Fingerprint every semantic and native-code input to one package-graph
 /// compilation. Input collection is independent of graph-local package IDs,
 /// source diagnostic paths, and caller iteration order.
 pub fn fingerprint_package_graph(
     packages: &[SourcePackage],
     edition: Edition,
-    target: IncrementalTarget,
+    target: IncrementalTarget<'_>,
 ) -> Result<IncrementalFingerprint, String> {
     validate_graph(packages)?;
     let identities = packages
@@ -67,15 +89,21 @@ pub fn fingerprint_package_graph(
 
     let mut encoder = FingerprintEncoder::new();
     encoder.field(b"salicin.incremental-input");
-    encoder.u32(SCHEMA_VERSION);
+    encoder.u32(INPUT_SCHEMA_VERSION);
     encoder.field(env!("CARGO_PKG_VERSION").as_bytes());
     encoder.field(std::env::consts::OS.as_bytes());
     encoder.field(std::env::consts::ARCH.as_bytes());
-    encoder.field(match target {
-        IncrementalTarget::Binary => b"binary",
-        IncrementalTarget::Library => b"library",
-        IncrementalTarget::Test => b"test",
-    });
+    match target {
+        IncrementalTarget::Binary => encoder.field(b"binary"),
+        IncrementalTarget::Library => encoder.field(b"library"),
+        IncrementalTarget::Test { filter } => {
+            encoder.field(b"test");
+            encoder.boolean(filter.is_some());
+            if let Some(filter) = filter {
+                encoder.field(filter.as_bytes());
+            }
+        }
+    }
     encoder.field(edition.as_str().as_bytes());
     encode_source_bundle(
         &mut encoder,
@@ -319,6 +347,60 @@ mod tests {
                 fingerprint_package_graph(&packages, Edition::Edition2026, target).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn test_filter_is_part_of_test_compilation_identity() {
+        let all = fingerprint_package_graph(
+            &graph(),
+            Edition::Edition2026,
+            IncrementalTarget::Test { filter: None },
+        )
+        .unwrap();
+        let selected = fingerprint_package_graph(
+            &graph(),
+            Edition::Edition2026,
+            IncrementalTarget::Test {
+                filter: Some("arithmetic"),
+            },
+        )
+        .unwrap();
+        let same_selection = fingerprint_package_graph(
+            &graph(),
+            Edition::Edition2026,
+            IncrementalTarget::Test {
+                filter: Some("arithmetic"),
+            },
+        )
+        .unwrap();
+        let empty_filter = fingerprint_package_graph(
+            &graph(),
+            Edition::Edition2026,
+            IncrementalTarget::Test { filter: Some("") },
+        )
+        .unwrap();
+
+        assert_ne!(all, selected);
+        assert_eq!(selected, same_selection);
+        assert_ne!(all, empty_filter);
+    }
+
+    #[test]
+    fn cache_entry_mapping_is_sharded_and_output_path_independent() {
+        let fingerprint =
+            fingerprint_package_graph(&graph(), Edition::Edition2026, IncrementalTarget::Binary)
+                .unwrap();
+        let hex = fingerprint.to_hex();
+        assert_eq!(
+            cache_entry_relative_path(fingerprint),
+            PathBuf::from("llvm-ir")
+                .join("v1")
+                .join("sha256")
+                .join(&hex[..2])
+                .join(&hex[2..])
+        );
+        assert_eq!(hex.len(), 64);
+        assert!(!cache_entry_relative_path(fingerprint).is_absolute());
     }
 
     #[test]

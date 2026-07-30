@@ -22,11 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Persistent Incremental Builds
 
-- [ ] **INCR-2 — Persistent cache contract.** Specify the cache root, schema
-  version, fingerprint mapping, LLVM IR payload, metadata, atomic publication,
-  concurrent access, corruption handling, bypass behavior, and explicit
-  non-goals. Keep output paths and graph-local IDs out of cache identity.
-
 - [ ] **INCR-3 — Cache storage layer.** Implement content-addressed lookup and
   atomic write/replace with strict metadata validation. A missing, malformed,
   truncated, or incompatible entry is a miss; it must never be executed or

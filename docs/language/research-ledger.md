@@ -252,6 +252,45 @@ population. It does not infer priorities from test code or CI history.
 - [DANTE: Data-Driven Test Case Selection and Prioritization for Long-Running Test Suites (ICST 2026)](https://conf.researchr.org/details/icst-2026/icst-2026-research/44/DANTE-Data-Driven-Test-Case-Selection-and-Prioritization-for-Long-Running-Test-Suite)
 - [How Far Are We from Detecting Flaky Tests? On the Limits of Code-Based Detection (2026)](https://arxiv.org/abs/2607.09345)
 
+### Persistent Reuse Starts With Stable, Complete Identity
+
+Reviewed on 2026-07-30 for the accepted
+[persistent LLVM-IR cache contract](../project/incremental-cache.md). Salicin's
+first persistent cache remains whole-graph and source-keyed: the compiler can
+perform lookup before semantic lowering, while the cached payload is the exact
+LLVM text that native commands already consume. The artifact schema is
+separate from the input schema, publication makes a completed directory
+visible atomically, and every read revalidates metadata, length, digest, and
+UTF-8 before handing IR to Clang.
+
+The review exposed one correctness dependency that was not represented by
+schema 1: `salic test --filter` changes the emitted runner. Schema 2 therefore
+hashes both filter presence and exact bytes. Output paths remain excluded
+because they select a destination rather than source-to-IR semantics.
+
+Current research:
+
+- [Differential Execution with Lexical Tracing (OOPSLA 2026)](https://doi.org/10.1145/3798261)
+  formalizes that reusable cache identities must be unique and stable under
+  irrelevant surrounding changes. Salicin applies the conservative
+  whole-graph version now and defers finer identities until dependency
+  tracking exists.
+- [Incr: Faster Re-Execution via Bolt-On Incrementalization (OSDI
+  2026)](https://www.usenix.org/conference/osdi26/presentation/xie-yizheng)
+  combines dependency tracking with stored intermediate results and checks
+  behavioral equivalence. That supports separating this safe first cache from
+  later per-package dependency reuse.
+- [IRHash: Efficient Multi-Language Compiler Caching (USENIX ATC
+  2025)](https://www.usenix.org/system/files/atc25-landsberg.pdf) reports the
+  maintainability and reuse benefits of an LLVM-IR boundary, while warning
+  that finer function caching is unsound without interprocedural dependency
+  tracking.
+- [On the Variability of Source Code in Maven Package Rebuilds
+  (2026)](https://arxiv.org/abs/2602.19383) finds generated-source variation a
+  major reproducibility problem. Salicin therefore hashes exact resolved
+  source bytes and embedded library sources rather than timestamps or
+  provenance assumptions.
+
 ## Review Gate
 
 Before extending the static language:

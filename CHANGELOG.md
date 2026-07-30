@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.238.0 - 2026-07-30
+
+- Accepted the artifact-schema-1 persistent whole-graph LLVM-IR cache
+  contract, including platform root selection, ownership, sharded
+  content-addressed layout, strict canonical metadata and payload validation,
+  atomic publication, concurrent writers, corruption-as-miss behavior,
+  bypass semantics, and explicit non-goals.
+- Upgraded incremental input identity to schema 2 so test filter presence and
+  exact UTF-8 bytes invalidate test-runner IR; added executable tests for
+  selection sensitivity and output-path-independent cache mapping.
+- Updated the active TODO, roadmap, status, compiler architecture, and
+  research ledger using current incremental-computation, compiler-cache, and
+  reproducible-build research. INCR-3 storage implementation is next.
+
 ## 0.237.0 - 2026-07-30
 
 - Completed STD-3 and the standard-library usability milestone with a

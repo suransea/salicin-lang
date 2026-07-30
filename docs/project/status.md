@@ -32,12 +32,16 @@ current capability inventory. It does not record release history; see the
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, phased precision metadata, and multi-document routing;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
-  standard-library, provider-graph, module, and source-byte inputs.
+  test selection, standard-library, provider-graph, module, and source-byte
+  inputs, plus an accepted artifact-schema-1 whole-graph LLVM-IR cache
+  contract with a path-independent sharded key mapping.
 
 The compiler does not yet provide an LSP transport, incremental document
 updates, completion, hover, or rename.
-It also does not persist incremental compilation artifacts; the stable
-fingerprint defines cache inputs without freezing a cache format.
+It also does not yet persist incremental compilation artifacts; schema-2
+fingerprints and the accepted persistent-cache contract define the input,
+layout, validation, atomicity, corruption, and bypass boundaries ahead of the
+storage implementation.
 
 The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`

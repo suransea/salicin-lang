@@ -49,7 +49,7 @@ history remains in the changelog.
 
 ## Now: Persistent Incremental Builds
 
-The existing schema-1 fingerprint already identifies the semantic and native
+The existing schema-2 fingerprint already identifies the semantic and native
 inputs to one selected package-graph target. This milestone turns that
 read-only identity into a safe, content-addressed cache without changing
 language semantics or freezing a precompiled package format.
@@ -59,6 +59,11 @@ Manifest resolution and fingerprinting still run on every invocation; an
 unchanged hit may skip semantic analysis and LLVM generation. Native linking
 remains a separate step so output selection and host linker failures are not
 hidden by the cache.
+
+The artifact-schema-1 contract fixes the user-cache root, sharded
+content-addressed layout, strict metadata and payload validation, atomic
+directory publication, corruption-as-miss behavior, and `--no-cache`
+semantics. INCR-3 now implements that storage boundary before pipeline reuse.
 
 Exit conditions:
 

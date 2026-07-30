@@ -1,6 +1,6 @@
 # Stable Incremental Inputs
 
-Status: implemented fingerprint contract
+Status: implemented schema-2 fingerprint contract
 
 Salicin defines a versioned SHA-256 input fingerprint before defining any
 on-disk incremental artifact format. `salic fingerprint` resolves the same
@@ -10,12 +10,14 @@ native output.
 
 ## Schema
 
-Schema version 1 length-prefixes every variable-width field before hashing.
+Schema version 2 length-prefixes every variable-width field before hashing.
 It includes:
 
 - schema and compiler versions;
 - host operating system and architecture;
 - binary, library, or test target mode;
+- for a test target, the presence and exact UTF-8 bytes of its selection
+  filter;
 - language edition;
 - every compiler-owned `core` and `alloc` source module;
 - every resolved package provider identity, declared name, exact version, and
@@ -41,7 +43,9 @@ The fingerprint excludes:
 Moving an unchanged project therefore preserves its key. Reordering package
 or source vectors also preserves it. Changing source bytes, provider identity,
 dependency aliases, target mode, edition, standard-library source, compiler
-version, OS, or architecture invalidates it.
+version, OS, or architecture invalidates it. Supplying, removing, or changing
+a test filter also invalidates it, including the distinction between no filter
+and an explicitly empty filter.
 
 Source hashing is intentionally conservative: comments and formatting are
 source bytes and invalidate the key even when semantics are unchanged. A
@@ -56,6 +60,6 @@ artifacts are compatible across compiler versions or host targets. A future
 native artifact cache must additionally key Clang/LLVM version, target triple,
 link options, allocator runtime, and external native libraries.
 
-No persistent incremental cache is implemented yet. Cache layout, eviction,
-concurrency, corruption recovery, and remote sharing require a separate
-artifact contract; they are not inferred from the fingerprint filename.
+The accepted [persistent LLVM-IR cache contract](incremental-cache.md) maps
+this fingerprint to artifact-schema-1 entries. Persistent storage and compile
+pipeline integration remain separate implementation workstreams.
