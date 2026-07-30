@@ -25,6 +25,16 @@ initialize response advertises UTF-16 positions and:
     "openClose": true,
     "change": 1,
     "save": { "includeText": true }
+  },
+  "semanticTokensProvider": {
+    "legend": {
+      "tokenTypes": [
+        "keyword", "variable", "typeParameter",
+        "string", "number", "operator"
+      ],
+      "tokenModifiers": []
+    },
+    "full": true
   }
 }
 ```
@@ -56,8 +66,22 @@ The transport owns JSON-RPC, lifecycle, URI decoding, and synchronization.
 and stale-analysis acceptance. The compiler owns package discovery and
 analysis. This boundary avoids a transport-specific parser or type checker.
 
-This milestone publishes no diagnostics or semantic tokens and starts no
-analysis worker. LSP-4 connects accepted snapshots to those features.
+Every accepted synchronization revision is analyzed as an immutable snapshot
+and must pass the session/revision acceptance gate. The server then publishes
+one `textDocument/publishDiagnostics` notification for every graph document,
+including an empty list to clear repaired diagnostics. Open documents carry
+their exact client version. Diagnostics retain stable code, error severity,
+and lexer/parser/resolver/semantic phase data. Only compiler-provided exact
+ranges become LSP diagnostics; an unlocated workspace failure is logged
+instead of receiving a fabricated zero range.
+
+`textDocument/semanticTokens/full` returns the accepted snapshot's ordered
+compiler tokens using the advertised legend. Punctuation and zero-length
+tokens are omitted. Lines, starts, and lengths use LSP UTF-16 delta encoding,
+including Unicode identifiers and non-BMP strings. `resultId` is the exact
+session/revision pair.
+
+Analysis currently runs synchronously after accepted synchronization.
 Incremental range edits, dynamic workspace-folder changes, filesystem
 watching, completion, hover, navigation, rename, editor extensions, and
 network transports remain outside this contract.
@@ -65,7 +89,10 @@ network transports remain outside this contract.
 ## Verification
 
 Unit transcripts cover framing rejection, lifecycle results, advertised
-capabilities, Unicode/reserved URI bytes, full-text changes, and stale-version
-logging. A spawned `salic lsp` process selects one member of a real workspace,
-performs open/change/save/close, shuts down cleanly, emits only framed JSON on
-stdout, and leaves the selected source byte-identical on disk.
+capabilities, Unicode/reserved URI bytes, all four diagnostic phases,
+multi-file URI routing, document versions, diagnostic clearing, UTF-16
+semantic tokens, full-text changes, and stale-version logging. A spawned
+`salic lsp` process selects one member of a real workspace, publishes a parser
+error, answers tokens, clears the repaired error, performs save/close, shuts
+down cleanly, emits only framed JSON on stdout, and leaves the selected source
+byte-identical on disk.

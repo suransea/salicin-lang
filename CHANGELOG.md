@@ -6,6 +6,25 @@ subset.
 
 ## Unreleased
 
+## 0.246.0 - 2026-07-30
+
+- Completed LSP-4 by analyzing every accepted workspace revision and
+  publishing per-document diagnostics with exact file URIs, open-document
+  versions, UTF-16 ranges, stable compiler codes, and explicit
+  lexer/parser/resolver/semantic phase data. Empty publications clear repaired
+  diagnostics; unlocated workspace failures are logged without invented
+  ranges.
+- Advertised and implemented `textDocument/semanticTokens/full` using the
+  compiler's ordered token model, a stable six-kind legend, UTF-16 delta
+  encoding for Unicode identifiers and non-BMP strings, and exact
+  session/revision result IDs. Requests never reuse analysis from a
+  superseded snapshot.
+- Added multi-file and spawned-process protocol coverage for all diagnostic
+  phases, URI/version routing, parser-error repair, semantic-token requests,
+  Unicode lengths, clean shutdown, and byte-identical source files. Updated
+  the transport contract, architecture, status, roadmap, TODO, and current
+  research ledger; LSP-5 is next.
+
 ## 0.245.0 - 2026-07-30
 
 - Completed LSP-3 with `salic lsp` over standard input/output, bounded and

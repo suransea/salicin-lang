@@ -3,7 +3,11 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{json, Value};
 
-use crate::editor::{WorkspaceSession, WorkspaceSessionError};
+use crate::editor::{
+    DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, WorkspaceAnalysis,
+    WorkspaceSession, WorkspaceSessionError, WorkspaceSnapshotId,
+};
+use crate::lexer::TokenKind;
 
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -56,6 +60,7 @@ enum Lifecycle {
 pub struct Server {
     session: WorkspaceSession,
     lifecycle: Lifecycle,
+    latest_analysis: Option<(WorkspaceSnapshotId, WorkspaceAnalysis)>,
 }
 
 impl Server {
@@ -63,6 +68,7 @@ impl Server {
         Self {
             session,
             lifecycle: Lifecycle::WaitingForInitialize,
+            latest_analysis: None,
         }
     }
 
@@ -142,6 +148,20 @@ impl Server {
                                     "openClose": true,
                                     "change": 1,
                                     "save": { "includeText": true }
+                                },
+                                "semanticTokensProvider": {
+                                    "legend": {
+                                        "tokenTypes": [
+                                            "keyword",
+                                            "variable",
+                                            "typeParameter",
+                                            "string",
+                                            "number",
+                                            "operator"
+                                        ],
+                                        "tokenModifiers": []
+                                    },
+                                    "full": true
                                 }
                             },
                             "serverInfo": {
@@ -164,6 +184,22 @@ impl Server {
             }
             "shutdown" => {
                 write_message(writer, &json_rpc_error(id, -32600, "server is not running"))?;
+            }
+            "textDocument/semanticTokens/full" if self.lifecycle == Lifecycle::Running => {
+                if self
+                    .latest_analysis
+                    .as_ref()
+                    .is_none_or(|(snapshot, _)| *snapshot != self.session.snapshot_id())
+                {
+                    self.analyze_and_publish(writer)?;
+                }
+                match self.semantic_tokens(params) {
+                    Ok(result) => write_message(
+                        writer,
+                        &json!({"jsonrpc": "2.0", "id": id, "result": result}),
+                    )?,
+                    Err(message) => write_message(writer, &json_rpc_error(id, -32602, &message))?,
+                }
             }
             _ if self.lifecycle != Lifecycle::Running => {
                 write_message(
@@ -188,24 +224,115 @@ impl Server {
             return Ok(());
         }
         let result = match method {
-            "initialized" | "$/cancelRequest" => return Ok(()),
+            "initialized" => {
+                self.analyze_and_publish(writer)?;
+                return Ok(());
+            }
+            "$/cancelRequest" => return Ok(()),
             "textDocument/didOpen" => self.did_open(params),
             "textDocument/didChange" => self.did_change(params),
             "textDocument/didSave" => self.did_save(params),
             "textDocument/didClose" => self.did_close(params),
             _ => return Ok(()),
         };
-        if let Err(message) = result {
+        match result {
+            Ok(()) => self.analyze_and_publish(writer)?,
+            Err(message) => {
+                write_message(
+                    writer,
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "method": "window/logMessage",
+                        "params": { "type": 1, "message": message }
+                    }),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_and_publish<W: Write>(&mut self, writer: &mut W) -> Result<(), TransportError> {
+        let completed = self.session.snapshot().analyze();
+        let snapshot = completed.id;
+        let versions = completed.document_versions.clone();
+        let Some(analysis) = self.session.accept_analysis(completed) else {
+            return Ok(());
+        };
+
+        for document in &analysis.documents {
+            let diagnostics = analysis
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.document == document.path)
+                .filter_map(lsp_diagnostic)
+                .collect::<Vec<_>>();
+            let version = versions
+                .iter()
+                .find(|(path, _)| path == &document.path)
+                .and_then(|(_, version)| *version);
+            let mut params = serde_json::Map::new();
+            params.insert(
+                "uri".to_owned(),
+                Value::String(path_to_file_uri(&document.path)),
+            );
+            params.insert("diagnostics".to_owned(), Value::Array(diagnostics));
+            if let Some(version) = version {
+                params.insert("version".to_owned(), Value::Number(version.into()));
+            }
+            write_message(
+                writer,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/publishDiagnostics",
+                    "params": params
+                }),
+            )?;
+        }
+
+        for diagnostic in analysis.diagnostics.iter().filter(|diagnostic| {
+            diagnostic.range.is_none()
+                || !analysis
+                    .documents
+                    .iter()
+                    .any(|document| document.path == diagnostic.document)
+        }) {
             write_message(
                 writer,
                 &json!({
                     "jsonrpc": "2.0",
                     "method": "window/logMessage",
-                    "params": { "type": 1, "message": message }
+                    "params": {
+                        "type": 1,
+                        "message": format!(
+                            "{} diagnostic for {} has no exact source range: {}",
+                            phase_name(diagnostic.phase),
+                            diagnostic.document,
+                            diagnostic.message
+                        )
+                    }
                 }),
             )?;
         }
+        self.latest_analysis = Some((snapshot, analysis));
         Ok(())
+    }
+
+    fn semantic_tokens(&self, params: &Value) -> Result<Value, String> {
+        let document = required_object(params, "textDocument")?;
+        let uri = required_string(document, "uri")?;
+        let path = file_uri_to_path(uri)?;
+        let Some((snapshot, analysis)) = &self.latest_analysis else {
+            return Err("workspace analysis is not available".to_owned());
+        };
+        let document = analysis
+            .documents
+            .iter()
+            .find(|document| document.path == path)
+            .ok_or_else(|| format!("unknown workspace document `{path}`"))?;
+        Ok(json!({
+            "resultId": format!("{}:{}", snapshot.session, snapshot.revision),
+            "data": encode_semantic_tokens(&document.tokens)
+        }))
     }
 
     fn did_open(&mut self, params: &Value) -> Result<(), String> {
@@ -264,6 +391,171 @@ impl Server {
     }
 }
 
+fn lsp_diagnostic(diagnostic: &EditorDiagnostic) -> Option<Value> {
+    let range = diagnostic.range?;
+    Some(json!({
+        "range": lsp_range(range),
+        "severity": 1,
+        "code": diagnostic.code,
+        "source": "salicin",
+        "message": diagnostic.message,
+        "data": { "phase": phase_name(diagnostic.phase) }
+    }))
+}
+
+fn lsp_range(range: EditorRange) -> Value {
+    json!({
+        "start": {
+            "line": range.start.line,
+            "character": range.start.utf16_character
+        },
+        "end": {
+            "line": range.end.line,
+            "character": range.end.utf16_character
+        }
+    })
+}
+
+fn phase_name(phase: DiagnosticPhase) -> &'static str {
+    match phase {
+        DiagnosticPhase::Lexer => "lexer",
+        DiagnosticPhase::Parser => "parser",
+        DiagnosticPhase::Resolver => "resolver",
+        DiagnosticPhase::Semantic => "semantic",
+    }
+}
+
+fn encode_semantic_tokens(tokens: &[EditorToken]) -> Vec<u32> {
+    let mut encoded = Vec::new();
+    let mut previous_line = 0;
+    let mut previous_start = 0;
+    let mut first = true;
+    for token in tokens {
+        let Some(token_type) = semantic_token_type(&token.kind) else {
+            continue;
+        };
+        if token.range.start.line != token.range.end.line {
+            continue;
+        }
+        let length = token
+            .range
+            .end
+            .utf16_character
+            .saturating_sub(token.range.start.utf16_character);
+        if length == 0 {
+            continue;
+        }
+        let delta_line = if first {
+            token.range.start.line
+        } else {
+            token.range.start.line.saturating_sub(previous_line)
+        };
+        let delta_start = if first || delta_line != 0 {
+            token.range.start.utf16_character
+        } else {
+            token
+                .range
+                .start
+                .utf16_character
+                .saturating_sub(previous_start)
+        };
+        encoded.extend([delta_line, delta_start, length, token_type, 0]);
+        previous_line = token.range.start.line;
+        previous_start = token.range.start.utf16_character;
+        first = false;
+    }
+    encoded
+}
+
+fn semantic_token_type(kind: &TokenKind) -> Option<u32> {
+    match kind {
+        TokenKind::Let
+        | TokenKind::Pub
+        | TokenKind::Package
+        | TokenKind::Root
+        | TokenKind::Super
+        | TokenKind::Mut
+        | TokenKind::Copy
+        | TokenKind::Move
+        | TokenKind::Comptime
+        | TokenKind::Borrow
+        | TokenKind::Type
+        | TokenKind::Region
+        | TokenKind::Unsafe
+        | TokenKind::Do
+        | TokenKind::If
+        | TokenKind::Else
+        | TokenKind::Return
+        | TokenKind::Throw
+        | TokenKind::While
+        | TokenKind::For
+        | TokenKind::In
+        | TokenKind::Loop
+        | TokenKind::Break
+        | TokenKind::Continue
+        | TokenKind::Extend
+        | TokenKind::Struct
+        | TokenKind::Enum
+        | TokenKind::Trait
+        | TokenKind::Where
+        | TokenKind::Match
+        | TokenKind::Try
+        | TokenKind::True
+        | TokenKind::False => Some(0),
+        TokenKind::Ident(_) => Some(1),
+        TokenKind::RegionName(_) => Some(2),
+        TokenKind::String(_) => Some(3),
+        TokenKind::Integer(_) => Some(4),
+        TokenKind::Arrow
+        | TokenKind::FatArrow
+        | TokenKind::Equal
+        | TokenKind::EqualEqual
+        | TokenKind::Bang
+        | TokenKind::BangEqual
+        | TokenKind::Plus
+        | TokenKind::PlusEqual
+        | TokenKind::Minus
+        | TokenKind::MinusEqual
+        | TokenKind::Star
+        | TokenKind::StarEqual
+        | TokenKind::Slash
+        | TokenKind::SlashEqual
+        | TokenKind::Percent
+        | TokenKind::PercentEqual
+        | TokenKind::Less
+        | TokenKind::LessEqual
+        | TokenKind::Greater
+        | TokenKind::GreaterEqual
+        | TokenKind::AndAnd
+        | TokenKind::OrOr
+        | TokenKind::Amp
+        | TokenKind::AmpEqual
+        | TokenKind::Pipe
+        | TokenKind::PipeEqual
+        | TokenKind::Caret
+        | TokenKind::CaretEqual
+        | TokenKind::Shl
+        | TokenKind::ShlEqual
+        | TokenKind::Shr
+        | TokenKind::ShrEqual
+        | TokenKind::QuestionDot
+        | TokenKind::QuestionQuestion => Some(5),
+        TokenKind::LParen
+        | TokenKind::RParen
+        | TokenKind::LBracket
+        | TokenKind::RBracket
+        | TokenKind::LBrace
+        | TokenKind::RBrace
+        | TokenKind::Colon
+        | TokenKind::Dot
+        | TokenKind::Ellipsis
+        | TokenKind::Comma
+        | TokenKind::Semicolon
+        | TokenKind::Newline
+        | TokenKind::Eof => None,
+    }
+}
+
 fn workspace_error(error: WorkspaceSessionError) -> String {
     format!("document synchronization rejected: {error}")
 }
@@ -289,10 +581,13 @@ fn required_string<'a>(
 }
 
 fn required_i64(value: &serde_json::Map<String, Value>, field: &str) -> Result<i64, String> {
-    value
+    let value = value
         .get(field)
         .and_then(Value::as_i64)
-        .ok_or_else(|| format!("missing integer field `{field}`"))
+        .ok_or_else(|| format!("missing integer field `{field}`"))?;
+    i32::try_from(value)
+        .map(i64::from)
+        .map_err(|_| format!("integer field `{field}` is outside the LSP integer range"))
 }
 
 fn json_rpc_error(id: Value, code: i64, message: &str) -> Value {
@@ -423,6 +718,15 @@ mod tests {
             .collect()
     }
 
+    fn messages(output: Vec<u8>) -> Vec<Value> {
+        let mut reader = Cursor::new(output);
+        let mut messages = Vec::new();
+        while let Some(message) = read_message(&mut reader).unwrap() {
+            messages.push(serde_json::from_slice(&message).unwrap());
+        }
+        messages
+    }
+
     #[test]
     fn lifecycle_advertises_full_sync_and_exits_cleanly() {
         let mut input = framed(&json!({
@@ -500,16 +804,167 @@ mod tests {
         let snapshot = server.session().snapshot();
         assert_eq!(snapshot.documents[0].source, "let main(): i32 = { 3 }\n");
         assert_eq!(snapshot.documents[0].version, None);
-        let mut reader = Cursor::new(output);
-        let _: Value =
-            serde_json::from_slice(&read_message(&mut reader).unwrap().unwrap()).unwrap();
-        let log: Value =
-            serde_json::from_slice(&read_message(&mut reader).unwrap().unwrap()).unwrap();
+        let messages = messages(output);
+        let log = messages
+            .iter()
+            .find(|message| message["method"] == "window/logMessage")
+            .expect("stale change log");
         assert_eq!(log["method"], "window/logMessage");
         assert!(log["params"]["message"]
             .as_str()
             .unwrap()
             .contains("stale version 2"));
+    }
+
+    #[test]
+    fn multi_file_diagnostics_and_unicode_semantic_tokens_use_exact_document_versions() {
+        let root_path = "/tmp/main.sc";
+        let module_path = "/tmp/helper.sc";
+        let helper_module = vec!["helper".to_owned()];
+        let sources = [
+            EditorSource {
+                path: root_path,
+                module_path: &[],
+                source: "pub let root_value(): i32 = { helper.value() }\n",
+                is_root: true,
+            },
+            EditorSource {
+                path: module_path,
+                module_path: &helper_module,
+                source: "pub let value(): i32 = { 42 }\n",
+                is_root: false,
+            },
+        ];
+        let workspace = WorkspaceSession::new(&sources, DocumentTarget::Library).unwrap();
+        let uri = path_to_file_uri(module_path);
+        let mut input = framed(&json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+        }));
+        for message in [
+            json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+            json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{
+                    "uri":uri,
+                    "languageId":"salicin",
+                    "version":7,
+                    "text":"pub let 盐(: i32 = { \"😀\" }\n"
+                }
+            }}),
+            json!({"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full",
+                "params":{"textDocument":{"uri":uri}}}),
+            json!({"jsonrpc":"2.0","id":4,"method":"textDocument/semanticTokens/full",
+                "params":{"textDocument":{"uri":"file:///tmp/unknown.sc"}}}),
+            json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}),
+            json!({"jsonrpc":"2.0","method":"exit"}),
+        ] {
+            input.extend(framed(&message));
+        }
+        let mut output = Vec::new();
+        let code = Server::new(workspace)
+            .run(&mut Cursor::new(input), &mut output)
+            .unwrap();
+        assert_eq!(code, 0);
+        let messages = messages(output);
+
+        let published = messages
+            .iter()
+            .rfind(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"] == uri
+                    && message["params"]["version"] == 7
+            })
+            .expect("versioned module diagnostics");
+        let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0]["data"]["phase"], "parser");
+        assert_eq!(diagnostics[0]["source"], "salicin");
+        assert_eq!(diagnostics[0]["range"]["start"]["line"], 0);
+        assert!(
+            diagnostics[0]["range"]["start"]["character"]
+                .as_u64()
+                .unwrap()
+                >= 8
+        );
+
+        let semantic = messages
+            .iter()
+            .find(|message| message["id"] == 2)
+            .expect("semantic token response");
+        let data = semantic["result"]["data"].as_array().unwrap();
+        assert!(!data.is_empty());
+        assert_eq!(data.len() % 5, 0);
+        assert!(semantic["result"]["resultId"]
+            .as_str()
+            .unwrap()
+            .ends_with(":1"));
+        let data = data
+            .iter()
+            .map(|value| value.as_u64().unwrap() as u32)
+            .collect::<Vec<_>>();
+        let mut line = 0;
+        let mut start = 0;
+        let mut decoded = Vec::new();
+        for token in data.chunks_exact(5) {
+            line += token[0];
+            start = if token[0] == 0 {
+                start + token[1]
+            } else {
+                token[1]
+            };
+            decoded.push((line, start, token[2], token[3]));
+        }
+        assert!(decoded.contains(&(0, 8, 1, 1)), "{decoded:?}");
+        assert!(decoded
+            .iter()
+            .any(|(_, _, length, token_type)| { *length == 4 && *token_type == 3 }));
+        let unknown = messages
+            .iter()
+            .find(|message| message["id"] == 4)
+            .expect("unknown semantic token response");
+        assert_eq!(unknown["error"]["code"], -32602);
+        assert!(messages.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == path_to_file_uri(root_path)
+                && message["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+        }));
+    }
+
+    #[test]
+    fn diagnostic_serialization_preserves_every_compiler_phase() {
+        let range = EditorRange {
+            start: crate::editor::EditorPosition {
+                byte: 1,
+                line: 2,
+                utf16_character: 3,
+            },
+            end: crate::editor::EditorPosition {
+                byte: 5,
+                line: 2,
+                utf16_character: 6,
+            },
+        };
+        for (phase, name) in [
+            (DiagnosticPhase::Lexer, "lexer"),
+            (DiagnosticPhase::Parser, "parser"),
+            (DiagnosticPhase::Resolver, "resolver"),
+            (DiagnosticPhase::Semantic, "semantic"),
+        ] {
+            let diagnostic = EditorDiagnostic {
+                document: "/tmp/main.sc".to_owned(),
+                phase,
+                severity: crate::editor::DiagnosticSeverity::Error,
+                code: format!("salicin.{name}"),
+                message: format!("{name} failed"),
+                range: Some(range),
+            };
+            let serialized = lsp_diagnostic(&diagnostic).unwrap();
+            assert_eq!(serialized["data"]["phase"], name);
+            assert_eq!(serialized["range"]["start"]["line"], 2);
+            assert_eq!(serialized["range"]["start"]["character"], 3);
+            assert_eq!(serialized["range"]["end"]["character"], 6);
+        }
     }
 
     #[test]

@@ -46,8 +46,10 @@ fn lsp_stdio_selects_a_workspace_package_and_synchronizes_without_writing() {
         serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
         serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
             "textDocument":{"uri":uri,"languageId":"salicin","version":1,
-                "text":"let main(): i32 = { 40 }\n"}
+                "text":"let main(: i32 = { \"😀\" }\n"}
         }}),
+        serde_json::json!({"jsonrpc":"2.0","id":3,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
         serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
             "textDocument":{"uri":uri,"version":2},
             "contentChanges":[{"text":"let main(): i32 = { 42 }\n"}]
@@ -83,27 +85,56 @@ fn lsp_stdio_selects_a_workspace_package_and_synchronizes_without_writing() {
     );
 
     let mut responses = Cursor::new(output.stdout);
-    let initialize: serde_json::Value = serde_json::from_slice(
-        &salicin_lang::lsp::read_message(&mut responses)
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    let mut messages = Vec::new();
+    while let Some(message) = salicin_lang::lsp::read_message(&mut responses).unwrap() {
+        messages.push(serde_json::from_slice::<serde_json::Value>(&message).unwrap());
+    }
+    let initialize = messages
+        .iter()
+        .find(|message| message["id"] == 1)
+        .expect("initialize response");
     assert_eq!(initialize["id"], 1);
     assert_eq!(
         initialize["result"]["capabilities"]["textDocumentSync"]["change"],
         1
     );
-    let shutdown: serde_json::Value = serde_json::from_slice(
-        &salicin_lang::lsp::read_message(&mut responses)
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    assert_eq!(
+        initialize["result"]["capabilities"]["semanticTokensProvider"]["full"],
+        true
+    );
+    let shutdown = messages
+        .iter()
+        .find(|message| message["id"] == 2)
+        .expect("shutdown response");
     assert_eq!(shutdown["id"], 2, "unexpected LSP response: {shutdown}");
-    assert!(salicin_lang::lsp::read_message(&mut responses)
-        .unwrap()
-        .is_none());
+    let semantic = messages
+        .iter()
+        .find(|message| message["id"] == 3)
+        .expect("semantic token response");
+    assert!(!semantic["result"]["data"].as_array().unwrap().is_empty());
+    let published = messages
+        .iter()
+        .filter(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(published.len(), 5);
+    assert!(published[0]["params"]["diagnostics"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+    assert_eq!(
+        published[1]["params"]["diagnostics"][0]["data"]["phase"],
+        "parser"
+    );
+    assert!(published[2..]
+        .iter()
+        .all(|message| message["params"]["diagnostics"]
+            .as_array()
+            .is_some_and(Vec::is_empty)));
+    assert_eq!(published[1]["params"]["version"], 1);
+    assert_eq!(published[2]["params"]["version"], 2);
+    assert!(published[4]["params"].get("version").is_none());
 }
 
 #[test]

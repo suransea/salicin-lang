@@ -467,6 +467,34 @@ diagnostic publisher must still cross the existing snapshot gate.
   manually: the server reuses the compiler's editor/session API and adds no
   second lexer, parser, or type system.
 
+### Diagnostics and Highlighting Share Accepted Compiler Facts
+
+Reviewed on 2026-07-30 for LSP diagnostic publication and semantic-token
+encoding. One accepted snapshot now owns both outputs. Diagnostics retain
+their phase and exact source provenance; tokens retain compiler ordering and
+are converted to UTF-16 only at the protocol boundary. This avoids a second
+tooling grammar while leaving richer semantic classification to the planned
+occurrence index.
+
+- [Language Server Protocol
+  3.18](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/)
+  requires diagnostic ranges, permits versioned push publication, and defines
+  the relative five-integer semantic-token format plus server-declared
+  legends. Salicin publishes only exact ranged diagnostics, clears every
+  graph document, and uses snapshot revision identity for full-token results.
+- [Multi language models for on-the-fly syntax highlighting (JSS
+  2026)](https://doi.org/10.1016/j.jss.2026.112932) treats highlighting of
+  partial or invalid programs as a latency-sensitive, normalization problem.
+  Salicin takes the deterministic language-specific route: lexer tokens
+  survive parser failure, use a small normalized legend, and remain available
+  even while the same snapshot reports a syntax error.
+- [LspFuzz: Hunting Bugs in Language Servers (ASE
+  2025)](https://doi.org/10.1109/ASE63991.2025.00183) studies protocol-driven
+  robustness failures across language servers. LSP-4 therefore locks down
+  exact serialization and document routing, while the next LSP-5 acceptance
+  matrix explicitly expands malformed, restart, cancellation, and stale-state
+  transcripts instead of assuming editor clients are well behaved.
+
 ## Review Gate
 
 Before extending the static language:

@@ -44,6 +44,14 @@ current capability inventory. It does not record release history; see the
   command-line package and binary/library selection, UTF-16 position
   negotiation, and strictly versioned full-text open/change/save/close
   synchronization into in-memory workspace overlays;
+- versioned LSP diagnostic publication across multi-file targets with exact
+  file URIs and UTF-16 ranges, stable compiler codes, explicit
+  lexer/parser/resolver/semantic phase data, empty publications that clear
+  repaired documents, and honest logging rather than synthetic ranges for
+  workspace-wide failures;
+- full semantic-token requests backed by ordered compiler tokens, a stable
+  keyword/variable/type-parameter/string/number/operator legend, UTF-16 delta
+  encoding for Unicode and non-BMP text, and snapshot-revision result IDs;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
   inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
@@ -63,8 +71,9 @@ current capability inventory. It does not record release history; see the
   package providers and aliases, module paths, source bytes, corrupt entries,
   failed compilation, concurrent writers, and concurrent warm readers.
 
-The LSP transport does not yet publish diagnostics or semantic tokens and
-does not provide incremental range edits, completion, hover, or rename.
+The LSP transport does not provide incremental range edits, completion,
+hover, or rename. Its baseline protocol acceptance and cancellation matrix is
+not yet complete.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
 performs complete source analysis. Per-package reuse, remote caching, native
 artifact caching, and eviction policy remain outside the implemented

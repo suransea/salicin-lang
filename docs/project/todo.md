@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: LSP Diagnostics Baseline
 
-- [ ] **LSP-4 — Diagnostics and semantic tokens.** Publish phased diagnostics
-  and compiler-derived tokens with exact URI and UTF-16 ranges across a
-  multi-file package.
-
 - [ ] **LSP-5 — Protocol acceptance suite.** Test recorded client transcripts,
   malformed requests, Unicode, multiple documents, stale versions,
   cancellation, server restart, and clean shutdown without depending on a

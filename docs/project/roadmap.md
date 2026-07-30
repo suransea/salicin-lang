@@ -59,8 +59,10 @@ sources, analyzes immutable snapshots on independent threads, and rejects
 results whose session/revision was superseded without writing files.
 `salic lsp` adds bounded JSON-RPC stdio framing, the LSP lifecycle, command
 line workspace/target selection, and full-text open/change/save/close
-synchronization. This milestone next publishes diagnostics and semantic
-tokens from accepted snapshots.
+synchronization. Accepted snapshots now publish versioned, phase-preserving
+diagnostics to exact file URIs and answer full semantic-token requests from
+the compiler token model with UTF-16 delta encoding. This milestone next
+hardens the complete protocol boundary with recorded acceptance transcripts.
 
 The baseline covers workspace discovery, full-document synchronization,
 cancellation or supersession of stale analyses, diagnostics, and semantic
