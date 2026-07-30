@@ -20,18 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Persistent Incremental Builds
-
-- [ ] **INCR-6 — End-to-end invalidation proof.** Cover cold and warm
-  equivalence, checkout relocation, compiler and schema changes, target and
-  command targets, embedded libraries, provider identities, dependency
-  aliases, module paths, source bytes, corrupt entries, failed compilation,
-  and concurrent readers.
-
-P0 is complete only when every workstream above and the roadmap milestone exit
-conditions are satisfied.
-
-## P1: LSP Diagnostics Baseline
+## P0: LSP Diagnostics Baseline
 
 - [ ] **LSP-1 — Structured diagnostic origins.** Replace resolver
   message-parsing and remaining location fallbacks with structured document
@@ -54,7 +43,7 @@ conditions are satisfied.
   cancellation, server restart, and clean shutdown without depending on a
   particular editor.
 
-## P2: Semantic Navigation
+## P1: Semantic Navigation
 
 - [ ] **NAV-1 — Semantic occurrence index.** Define stable snapshot-local
   identities and source occurrences for declarations, aliases, fields,

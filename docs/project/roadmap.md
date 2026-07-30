@@ -47,55 +47,7 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Persistent Incremental Builds
-
-The existing schema-2 fingerprint already identifies the semantic and native
-inputs to one selected package-graph target. This milestone turns that
-read-only identity into a safe, content-addressed cache without changing
-language semantics or freezing a precompiled package format.
-
-The first cache is intentionally whole-graph and stores compiler-owned LLVM IR.
-Manifest resolution and fingerprinting still run on every invocation; an
-unchanged hit may skip semantic analysis and LLVM generation. Native linking
-remains a separate step so output selection and host linker failures are not
-hidden by the cache.
-
-The artifact-schema-2 contract fixes the user-cache root, sharded
-content-addressed layout, strict metadata and payload validation, atomic
-directory publication, corruption-as-miss behavior, and `--no-cache`
-semantics.
-
-The storage boundary is implemented independently of command execution:
-it resolves absolute platform roots, validates a compiler ownership marker,
-returns structured hit/miss reasons, verifies canonical metadata and payload
-digests, and atomically publishes or replaces entries under concurrent
-writers. Pipeline integration reuses validated binary/library IR across
-`emit-ir`, `build`, and `run`, and stores ordered selected names beside test
-IR. `check` remains uncached. Explicit bypass, stderr-only decision tracing,
-and ownership-checked namespace cleanup are implemented. INCR-6 is the active
-next step and closes the milestone with its full invalidation matrix.
-
-Exit conditions:
-
-- cache location, key, payload schema, ownership, and invalidation rules are
-  documented independently of output paths;
-- `build`, `run`, `test`, and `emit-ir` can reuse valid cached IR, while
-  `check` continues to perform source analysis;
-- misses, disabled caching, corrupt or truncated entries, compiler/schema
-  changes, source changes, target changes, and dependency changes behave
-  deterministically;
-- entries are written atomically, a failed compilation cannot publish an
-  entry, and concurrent readers never observe partial data;
-- CLI output makes cache use inspectable without changing ordinary program
-  stdout or exit status;
-- cold and warm outputs are byte-equivalent where the current compiler
-  promises deterministic IR, and the complete repository quality gate passes.
-
-This milestone does not promise per-package reuse, cross-compiler cache
-compatibility, remote caching, eviction policy, or a stable binary artifact
-format.
-
-## Next: LSP Diagnostics Baseline
+## Now: LSP Diagnostics Baseline
 
 The transport-independent editor API already exposes UTF-8 byte ranges,
 UTF-16 positions, tokens, and phased diagnostics. This milestone adds a

@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.242.0 - 2026-07-30
+
+- Completed INCR-6 and the Persistent Incremental Builds milestone with an
+  executable identity and invalidation matrix covering input/artifact schemas,
+  compiler and host identity, core/alloc/std embedded sources, package
+  providers and dependency aliases, module paths, exact source bytes, target
+  modes, test selection, and checkout relocation.
+- Added multi-process CLI proofs for byte-identical cold/warm LLVM IR,
+  relocated checkout hits, binary/library/test separation, canonical
+  incompatible metadata replacement, failed-compilation zero publication,
+  and eight concurrent readers observing only one complete warm artifact.
+- Extended storage and fingerprint unit tests for canonical schema/compiler
+  incompatibility, module-path changes, embedded bundle changes, and every
+  environment identity dimension. Updated the cache/input contracts,
+  architecture, status, research ledger, TODO, and roadmap, promoting LSP
+  Diagnostics Baseline to the active milestone.
+
 ## 0.241.0 - 2026-07-30
 
 - Completed INCR-5 with `--no-cache` lookup/publication bypass and

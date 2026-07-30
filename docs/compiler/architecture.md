@@ -32,7 +32,9 @@ The implementation lives under `compiler/src`:
   pipelines reuse validated entries for `emit-ir`, `build`, `run`, and
   `test`; `check` remains uncached. The driver exposes explicit bypass and
   stderr tracing, while cache cleanup delegates its ownership checks and
-  atomic namespace detachment to the storage module.
+  atomic namespace detachment to the storage module. Unit and multi-process
+  CLI tests maintain the complete identity, corruption, failure, relocation,
+  and concurrency acceptance matrix.
 - `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
   preserve resolved provider identities, and resolve names.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library

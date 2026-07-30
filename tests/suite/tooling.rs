@@ -1,5 +1,6 @@
 use crate::support::*;
 use sha2::{Digest, Sha256};
+use std::process::Stdio;
 
 fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -285,6 +286,173 @@ fn cache_clean_preserves_unowned_root_data_and_refuses_unowned_roots() {
         fs::read_to_string(unowned.join("user-data")).unwrap(),
         "keep"
     );
+}
+
+#[test]
+fn cache_reuses_byte_identical_ir_across_checkout_relocation_and_command_targets() {
+    fn write_project(project: &TestDirectory) {
+        project.write(
+            "salicin.toml",
+            "[package]\nname = \"relocatable\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+        );
+        project.write(
+            "src/main.sc",
+            "let main(): i32 = { shared.answer() }\ntest(\"answer\") { () }\n",
+        );
+        project.write(
+            "src/lib.sc",
+            "pub let answer(): i32 = { shared.answer() }\n",
+        );
+        project.write("src/shared.sc", "pub(package) let answer(): i32 = { 42 }\n");
+    }
+    let first = TestDirectory::new();
+    let relocated = TestDirectory::new();
+    let cache_owner = TestDirectory::new();
+    let cache = cache_owner.create_dir("cache");
+    write_project(&first);
+    write_project(&relocated);
+
+    let emit = |project: &TestDirectory, extra: &[&str]| {
+        let mut command = salic();
+        command
+            .arg("emit-ir")
+            .arg(&project.0)
+            .args(extra)
+            .args(["--cache-trace", "-o", "-"])
+            .env("SALICIN_CACHE_DIR", &cache);
+        command.output().unwrap()
+    };
+    let cold = emit(&first, &[]);
+    let warm = emit(&relocated, &[]);
+    assert!(cold.status.success(), "{}", output_text(&cold));
+    assert!(warm.status.success(), "{}", output_text(&warm));
+    assert_eq!(cold.stdout, warm.stdout);
+    assert!(String::from_utf8_lossy(&cold.stderr).contains(": miss (missing)"));
+    assert!(String::from_utf8_lossy(&warm.stderr).contains(": hit"));
+
+    let library = emit(&relocated, &["--lib"]);
+    assert!(library.status.success(), "{}", output_text(&library));
+    assert!(String::from_utf8_lossy(&library.stderr).contains("cache library"));
+    assert!(String::from_utf8_lossy(&library.stderr).contains(": miss (missing)"));
+
+    let tests = salic()
+        .arg("test")
+        .arg(&relocated.0)
+        .args(["--list", "--cache-trace"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(tests.status.success(), "{}", output_text(&tests));
+    assert_eq!(String::from_utf8_lossy(&tests.stdout), "answer\n");
+    assert!(String::from_utf8_lossy(&tests.stderr).contains("cache test"));
+    assert!(String::from_utf8_lossy(&tests.stderr).contains(": miss (missing)"));
+}
+
+#[test]
+fn cache_rejects_canonical_schema_and_compiler_metadata_changes_end_to_end() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("main.sc", "let main(): i32 = { 0 }\n");
+    let cache = temporary.create_dir("cache");
+    let populate = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["-o", "-"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(populate.status.success(), "{}", output_text(&populate));
+    let fingerprint = command_fingerprint(&source);
+    let metadata_path = cache_entry(&cache, &fingerprint).join("metadata.toml");
+
+    let current_compiler = format!("\"{}\"", env!("CARGO_PKG_VERSION"));
+    let cases = [
+        ("schema", "2".to_owned(), "3".to_owned()),
+        (
+            "compiler",
+            current_compiler,
+            "\"different-compiler\"".to_owned(),
+        ),
+    ];
+    for (field, old, changed) in cases {
+        let metadata = fs::read_to_string(&metadata_path).unwrap();
+        let metadata = replace_metadata_field(metadata, field, &old, &changed);
+        fs::write(&metadata_path, metadata).unwrap();
+        let output = salic()
+            .arg("emit-ir")
+            .arg(&source)
+            .args(["--cache-trace", "-o", "-"])
+            .env("SALICIN_CACHE_DIR", &cache)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", output_text(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(": miss (incompatible-metadata)"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(": published"), "{stderr}");
+    }
+}
+
+#[test]
+fn failed_compilation_never_publishes_its_fingerprint() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("broken.sc", "let main(): i32 = { missing }\n");
+    let cache = temporary.create_dir("cache");
+    let fingerprint = command_fingerprint(&source);
+    let output = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["--cache-trace", "-o", "-"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+    assert!(String::from_utf8_lossy(&output.stderr).contains(": miss (missing)"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(": published"));
+    assert!(!cache_entry(&cache, &fingerprint).exists());
+}
+
+#[test]
+fn concurrent_cache_readers_observe_only_the_complete_warm_artifact() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("main.sc", "let main(): i32 = { 42 }\n");
+    let cache = temporary.create_dir("cache");
+    let cold = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["-o", "-"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(cold.status.success(), "{}", output_text(&cold));
+
+    let mut readers = Vec::new();
+    for _ in 0..8 {
+        readers.push(
+            salic()
+                .arg("emit-ir")
+                .arg(&source)
+                .args(["--cache-trace", "-o", "-"])
+                .env("SALICIN_CACHE_DIR", &cache)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+    }
+    for reader in readers {
+        let output = reader.wait_with_output().unwrap();
+        assert!(output.status.success(), "{}", output_text(&output));
+        assert_eq!(output.stdout, cold.stdout);
+        assert!(String::from_utf8_lossy(&output.stderr).contains(": hit"));
+    }
+}
+
+fn command_fingerprint(source: &Path) -> String {
+    let output = salic().arg("fingerprint").arg(source).output().unwrap();
+    assert!(output.status.success(), "{}", output_text(&output));
+    String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
 fn test_names_digest(names: &[&str]) -> String {

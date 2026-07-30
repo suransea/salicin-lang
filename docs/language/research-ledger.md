@@ -357,6 +357,36 @@ semantics.
   reasons, and ownership-bounded cleanup provide recovery and diagnosis
   without weakening validation.
 
+Reviewed again on 2026-07-30 for the end-to-end invalidation proof. The test
+matrix now perturbs every declared identity dimension independently, then
+checks real cross-process lookup, failure, relocation, corruption, and
+concurrency behavior. Cold and warm results are compared byte-for-byte rather
+than inferred from a hit counter.
+
+- [IRHash: Efficient Multi-Language Compiler Caching by IR-Level Hashing
+  (USENIX ATC 2025)](https://www.usenix.org/conference/atc25/presentation/landsberg)
+  evaluates its cache over histories of multiple real projects and publishes
+  a reproducible artifact. Salicin adopts the same evidence principle at its
+  smaller current scope: an executable matrix is part of the compiler suite,
+  not an informal list of intended hash inputs.
+- [Does Functional Package Management Enable Reproducible Builds at Scale?
+  Yes (2025)](https://arxiv.org/abs/2501.15919) distinguishes rebuildability
+  from bitwise reproducibility across 709,816 package rebuilds. Salicin
+  therefore separately proves successful warm reuse and exact LLVM-byte
+  equality; one is not treated as evidence for the other.
+- [Verifiable Provenance of Software Artifacts with Zero-Knowledge
+  Compilation (2026)](https://arxiv.org/abs/2602.11887) treats source,
+  compiler, and output binding as distinct provenance obligations. Salicin
+  does not claim cryptographic provenance, but its local identity tests
+  explicitly bind compiler version, all source layers, host target, and
+  artifact validation before reuse.
+- [The Promise and Reality of Continuous Integration Caching (EASE
+  2026)](https://conf.researchr.org/details/ease-2026/ease-2026-research-papers/64/The-Promise-and-Reality-of-Continuous-Integration-Caching-An-Empirical-Study-of-Trav)
+  reports corrupted and outdated cache state as recurring maintenance
+  failures. The acceptance suite damages metadata and payloads and verifies a
+  diagnosed miss plus clean replacement, rather than merely testing ideal
+  hits.
+
 ## Review Gate
 
 Before extending the static language:

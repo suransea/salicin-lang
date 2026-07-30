@@ -900,6 +900,40 @@ mod tests {
     }
 
     #[test]
+    fn schema_and_compiler_metadata_changes_are_incompatible_misses() {
+        with_store(|store, _| {
+            let identity = identity(CacheTarget::Binary);
+            store
+                .publish(identity, &artifact("; valid\n", &[]))
+                .unwrap();
+            let metadata_path = store
+                .root()
+                .join(cache_entry_relative_path(identity.fingerprint))
+                .join(CACHE_METADATA_FILE);
+            let original: CacheMetadata =
+                toml::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+
+            let mut schema = CacheMetadata {
+                schema: CACHE_ARTIFACT_SCHEMA_VERSION + 1,
+                ..original
+            };
+            fs::write(&metadata_path, canonical_metadata(&schema).unwrap()).unwrap();
+            assert_eq!(
+                store.lookup(identity),
+                CacheLookup::Miss(CacheMissReason::IncompatibleMetadata)
+            );
+
+            schema.schema = CACHE_ARTIFACT_SCHEMA_VERSION;
+            schema.compiler = "different-compiler".into();
+            fs::write(&metadata_path, canonical_metadata(&schema).unwrap()).unwrap();
+            assert_eq!(
+                store.lookup(identity),
+                CacheLookup::Miss(CacheMissReason::IncompatibleMetadata)
+            );
+        });
+    }
+
+    #[test]
     fn incompatible_identity_and_non_regular_files_never_hit() {
         with_store(|store, _| {
             let binary = identity(CacheTarget::Binary);

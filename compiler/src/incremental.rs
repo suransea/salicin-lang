@@ -79,6 +79,43 @@ pub fn fingerprint_package_graph(
     edition: Edition,
     target: IncrementalTarget<'_>,
 ) -> Result<IncrementalFingerprint, String> {
+    let core = crate::core::incremental_sources(edition).collect::<Vec<_>>();
+    let alloc = crate::alloc::incremental_sources(edition).collect::<Vec<_>>();
+    let standard = crate::standard::incremental_sources(edition).collect::<Vec<_>>();
+    fingerprint_package_graph_with_environment(
+        packages,
+        edition,
+        target,
+        FingerprintEnvironment {
+            input_schema: INPUT_SCHEMA_VERSION,
+            compiler: env!("CARGO_PKG_VERSION"),
+            host_os: std::env::consts::OS,
+            host_arch: std::env::consts::ARCH,
+            edition: edition.as_str(),
+            core: &core,
+            alloc: &alloc,
+            standard: &standard,
+        },
+    )
+}
+
+struct FingerprintEnvironment<'a> {
+    input_schema: u32,
+    compiler: &'a str,
+    host_os: &'a str,
+    host_arch: &'a str,
+    edition: &'a str,
+    core: &'a [(&'a str, &'a str)],
+    alloc: &'a [(&'a str, &'a str)],
+    standard: &'a [(&'a str, &'a str)],
+}
+
+fn fingerprint_package_graph_with_environment(
+    packages: &[SourcePackage],
+    _edition: Edition,
+    target: IncrementalTarget<'_>,
+    environment: FingerprintEnvironment<'_>,
+) -> Result<IncrementalFingerprint, String> {
     validate_graph(packages)?;
     let identities = packages
         .iter()
@@ -89,10 +126,10 @@ pub fn fingerprint_package_graph(
 
     let mut encoder = FingerprintEncoder::new();
     encoder.field(b"salicin.incremental-input");
-    encoder.u32(INPUT_SCHEMA_VERSION);
-    encoder.field(env!("CARGO_PKG_VERSION").as_bytes());
-    encoder.field(std::env::consts::OS.as_bytes());
-    encoder.field(std::env::consts::ARCH.as_bytes());
+    encoder.u32(environment.input_schema);
+    encoder.field(environment.compiler.as_bytes());
+    encoder.field(environment.host_os.as_bytes());
+    encoder.field(environment.host_arch.as_bytes());
     match target {
         IncrementalTarget::Binary => encoder.field(b"binary"),
         IncrementalTarget::Library => encoder.field(b"library"),
@@ -104,22 +141,10 @@ pub fn fingerprint_package_graph(
             }
         }
     }
-    encoder.field(edition.as_str().as_bytes());
-    encode_source_bundle(
-        &mut encoder,
-        b"core",
-        crate::core::incremental_sources(edition),
-    );
-    encode_source_bundle(
-        &mut encoder,
-        b"alloc",
-        crate::alloc::incremental_sources(edition),
-    );
-    encode_source_bundle(
-        &mut encoder,
-        b"std",
-        crate::standard::incremental_sources(edition),
-    );
+    encoder.field(environment.edition.as_bytes());
+    encode_source_bundle(&mut encoder, b"core", environment.core);
+    encode_source_bundle(&mut encoder, b"alloc", environment.alloc);
+    encode_source_bundle(&mut encoder, b"std", environment.standard);
 
     encoder.usize(ordered.len());
     for package in ordered {
@@ -195,15 +220,10 @@ fn validate_graph(packages: &[SourcePackage]) -> Result<(), String> {
     Ok(())
 }
 
-fn encode_source_bundle(
-    encoder: &mut FingerprintEncoder,
-    name: &[u8],
-    sources: impl Iterator<Item = (&'static str, &'static str)>,
-) {
-    let sources = sources.collect::<Vec<_>>();
+fn encode_source_bundle(encoder: &mut FingerprintEncoder, name: &[u8], sources: &[(&str, &str)]) {
     encoder.field(name);
     encoder.usize(sources.len());
-    for (module, source) in sources {
+    for &(module, source) in sources {
         encoder.field(module.as_bytes());
         encoder.field(source.as_bytes());
     }
@@ -339,6 +359,22 @@ mod tests {
         let mut provider = graph();
         provider[1].identity = "registry:public|math@1.0.0".into();
         cases.push((provider, IncrementalTarget::Binary));
+        let mut declared_name = graph();
+        declared_name[1].name = "arithmetic".into();
+        cases.push((declared_name, IncrementalTarget::Binary));
+        let mut version = graph();
+        version[1].version = "1.0.1".into();
+        cases.push((version, IncrementalTarget::Binary));
+        let mut primary = graph();
+        primary[0].is_primary = false;
+        primary[1].is_primary = true;
+        cases.push((primary, IncrementalTarget::Binary));
+        let mut module = graph();
+        module[1].sources[0].module_path = vec!["renamed".into()];
+        cases.push((module, IncrementalTarget::Binary));
+        let mut root_role = graph();
+        root_role[0].sources[0].is_root = false;
+        cases.push((root_role, IncrementalTarget::Binary));
         cases.push((graph(), IncrementalTarget::Library));
 
         for (packages, target) in cases {
@@ -346,6 +382,148 @@ mod tests {
                 baseline,
                 fingerprint_package_graph(&packages, Edition::Edition2026, target).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn invalidates_on_schema_compiler_host_and_every_embedded_source_bundle() {
+        let core = crate::core::incremental_sources(Edition::Edition2026).collect::<Vec<_>>();
+        let alloc = crate::alloc::incremental_sources(Edition::Edition2026).collect::<Vec<_>>();
+        let standard =
+            crate::standard::incremental_sources(Edition::Edition2026).collect::<Vec<_>>();
+        let fingerprint = |input_schema,
+                           compiler: &str,
+                           host_os: &str,
+                           host_arch: &str,
+                           core: &[(&str, &str)],
+                           alloc: &[(&str, &str)],
+                           standard: &[(&str, &str)]| {
+            fingerprint_package_graph_with_environment(
+                &graph(),
+                Edition::Edition2026,
+                IncrementalTarget::Binary,
+                FingerprintEnvironment {
+                    input_schema,
+                    compiler,
+                    host_os,
+                    host_arch,
+                    edition: Edition::Edition2026.as_str(),
+                    core,
+                    alloc,
+                    standard,
+                },
+            )
+            .unwrap()
+        };
+        let baseline = fingerprint(
+            INPUT_SCHEMA_VERSION,
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            &core,
+            &alloc,
+            &standard,
+        );
+        let mut changed_core = core.clone();
+        changed_core[0].1 = "// changed core";
+        let mut changed_core_module = core.clone();
+        changed_core_module[0].0 = "changed-module";
+        let mut changed_alloc = alloc.clone();
+        changed_alloc[0].1 = "// changed alloc";
+        let mut changed_standard = standard.clone();
+        changed_standard[0].1 = "// changed std";
+        let changed_edition = fingerprint_package_graph_with_environment(
+            &graph(),
+            Edition::Edition2026,
+            IncrementalTarget::Binary,
+            FingerprintEnvironment {
+                input_schema: INPUT_SCHEMA_VERSION,
+                compiler: env!("CARGO_PKG_VERSION"),
+                host_os: std::env::consts::OS,
+                host_arch: std::env::consts::ARCH,
+                edition: "different-edition",
+                core: &core,
+                alloc: &alloc,
+                standard: &standard,
+            },
+        )
+        .unwrap();
+        for changed in [
+            changed_edition,
+            fingerprint(
+                INPUT_SCHEMA_VERSION + 1,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &core,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                "different-compiler",
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &core,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                "different-os",
+                std::env::consts::ARCH,
+                &core,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                "different-arch",
+                &core,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &changed_core_module,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &changed_core,
+                &alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &core,
+                &changed_alloc,
+                &standard,
+            ),
+            fingerprint(
+                INPUT_SCHEMA_VERSION,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                &core,
+                &alloc,
+                &changed_standard,
+            ),
+        ] {
+            assert_ne!(baseline, changed);
         }
     }
 

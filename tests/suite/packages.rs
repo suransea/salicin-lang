@@ -540,6 +540,62 @@ fn incremental_fingerprint_is_path_independent_and_input_sensitive() {
 }
 
 #[test]
+fn incremental_cli_invalidates_each_package_graph_identity_dimension() {
+    fn write_project(project: &TestDirectory) {
+        project.write(
+            "salicin.toml",
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\
+             \n[dependencies]\nmath = { path = \"dep\" }\n",
+        );
+        project.write("src/main.sc", "let main(): i32 = { 0 }\n");
+        project.write("src/feature.sc", "pub(package) let value(): i32 = { 1 }\n");
+        project.write(
+            "dep/salicin.toml",
+            "[package]\nname = \"math\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+        );
+        project.write("dep/src/lib.sc", "pub let answer(): i32 = { 42 }\n");
+    }
+    fn fingerprint(project: &TestDirectory) -> Vec<u8> {
+        let output = salic().arg("fingerprint").arg(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", output_text(&output));
+        output.stdout
+    }
+
+    let baseline = TestDirectory::new();
+    let alias = TestDirectory::new();
+    let provider = TestDirectory::new();
+    let module = TestDirectory::new();
+    let source = TestDirectory::new();
+    for project in [&baseline, &alias, &provider, &module, &source] {
+        write_project(project);
+    }
+    alias.write(
+        "salicin.toml",
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\
+         \n[dependencies]\narithmetic = { path = \"dep\" }\n",
+    );
+    provider.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"math\"\nversion = \"1.0.1\"\nedition = \"2026\"\n",
+    );
+    fs::rename(module.join("src/feature.sc"), module.join("src/renamed.sc")).unwrap();
+    source.write(
+        "src/feature.sc",
+        "pub(package) let value(): i32 = { 1 }\n// byte change\n",
+    );
+
+    let baseline = fingerprint(&baseline);
+    for changed in [
+        fingerprint(&alias),
+        fingerprint(&provider),
+        fingerprint(&module),
+        fingerprint(&source),
+    ] {
+        assert_ne!(baseline, changed);
+    }
+}
+
+#[test]
 fn virtual_workspace_selects_packages_and_shares_lock_and_build_roots() {
     let workspace = TestDirectory::new();
     workspace.write(

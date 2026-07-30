@@ -149,6 +149,27 @@ Concurrent compilations may recreate the namespace after detachment; a writer
 racing inside the detached snapshot may miss publication and continue
 normally from its compiled result.
 
+## Executable Invalidation Matrix
+
+The repository acceptance suite proves the complete first-cache boundary:
+
+- cold and warm `emit-ir` produce byte-identical LLVM text, and an unchanged
+  project relocated to another absolute checkout is a hit;
+- binary `emit-ir`, `build`, and `run` share one entry, while library and test
+  targets, test filters, and ordered test-name metadata remain distinct;
+- input-schema, artifact-schema, compiler-version, host OS/architecture,
+  edition, core/alloc/std embedded source, provider identity, dependency
+  alias, module path, root role, and exact source-byte changes invalidate;
+- malformed canonical metadata, truncation, digest mismatch, invalid UTF-8,
+  non-regular files, and symbolic links are misses and never reach Clang;
+- a parse or semantic failure publishes no entry for its fingerprint;
+- concurrent writers expose one complete winner, and concurrent warm readers
+  all observe the same complete artifact bytes.
+
+The matrix tests identity dimensions in isolation where possible and then
+exercises lookup through separate CLI processes. This is correctness evidence,
+not a performance benchmark or a promise of cache compatibility.
+
 ## Explicit Non-Goals
 
 Artifact schema 2 does not provide:

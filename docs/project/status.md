@@ -43,13 +43,19 @@ current capability inventory. It does not record release history; see the
   entries, while test entries also preserve ordered selected names;
 - cache bypass and stderr-only decision tracing for every cached compilation
   command, plus ownership-marker-checked atomic cleanup of only the persistent
-  LLVM-IR namespace.
+  LLVM-IR namespace;
+- executable invalidation acceptance covering cold/warm byte equality,
+  checkout relocation, input and artifact schemas, compiler and host identity,
+  binary/library/test targets, command sharing, core/alloc/std source bundles,
+  package providers and aliases, module paths, source bytes, corrupt entries,
+  failed compilation, concurrent writers, and concurrent warm readers.
 
 The compiler does not yet provide an LSP transport, incremental document
 updates, completion, hover, or rename.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
-performs complete source analysis. Cache eviction policy and full invalidation
-acceptance remain pending.
+performs complete source analysis. Per-package reuse, remote caching, native
+artifact caching, and eviction policy remain outside the implemented
+whole-graph cache.
 
 The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`
