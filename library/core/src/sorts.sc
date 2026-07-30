@@ -25,8 +25,6 @@ pub let effects: sort(2)
 pub let parameters: sort(2)
 /// Sort of trait requirements consumed by compile-time constraint queries.
 pub let constraint: sort(2)
-/// Sort of parser-produced declarations consumed by syntax contracts.
-pub let declaration: sort(2)
 
 /// Compile-time relation between values classified by sorts.
 pub let is(comptime right: sort(2)) = trait(comptime self: sort(2)) {

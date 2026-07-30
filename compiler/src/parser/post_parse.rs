@@ -934,7 +934,6 @@ fn validate_type_static_fragments(
                 if let Some(kind) = fragments.get(name) {
                     let sort = match kind {
                         StaticFragmentKind::Constraint => "constraint",
-                        StaticFragmentKind::Declaration => "declaration",
                     };
                     return Err(format!(
                         "{sort} fragment parameter `{name}` cannot be used as a runtime type"
@@ -950,7 +949,6 @@ fn validate_type_static_fragments(
                 if let Some(kind) = fragments.get(name) {
                     let sort = match kind {
                         StaticFragmentKind::Constraint => "constraint",
-                        StaticFragmentKind::Declaration => "declaration",
                     };
                     return Err(format!(
                         "{sort} fragment parameter `{name}` cannot be used as a runtime type"

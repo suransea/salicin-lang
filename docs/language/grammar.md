@@ -65,9 +65,8 @@ test_registration =
 A test registration cannot have an attribute or visibility. Its string must be
 non-empty, and the trailing block is the test body. `test` remains an ordinary
 identifier outside this top-level form. The edition-owned
-`pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
-declaration validates the body contract; syntax consumes the string as
-compile-time runner metadata.
+`pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
+declaration validates the static name and body contract.
 
 ### 2.0.1 Declaration and guard forms
 
@@ -77,17 +76,16 @@ These three spellings occupy different grammatical categories:
   `core.test` contract above. Its metadata name is consumed by syntax and its
   body has type
   `with(core.error.throwing(core.string.string))((): ())`.
-- `extend(pattern, ...) { ... }` is an implementation declaration. It adds
-  members or trait evidence and does not denote a callable value, so it has no
-  function declaration in `core`.
+- `extend(pattern, ...) { ... }` is an implementation declaration. Its
+  optional `(requires: condition)` entry is a compile-time `bool` header
+  parameter; `extend` itself has no fake function declaration in `core`.
 - `requires(goals) expression` is an initializer guard. It constrains the
-  guarded declaration and does not denote a runtime callable or ordinary
-  computation value, so it likewise has no function declaration in `core`.
+  function body through the source-visible `core.requires` contract, passing
+  the compile-time `bool` and delayed body closure.
 
-`extend` and `requires` are nevertheless declared below as grammar
-productions and checked by the compiler's edition semantics. Giving either an
-ordinary `let` signature would incorrectly make it first-class and erase its
-binding or solver behavior.
+Trait inheritance uses the same labeled `(requires: condition)` compile-time
+`bool` header parameter as `extend`; it does not invoke the function-body
+guard contract.
 
 ### 2.1 Let Declarations
 
@@ -164,7 +162,6 @@ compile_parameter_sort =
   | contextual("effects")
   | contextual("parameters")
   | contextual("constraint")
-  | contextual("declaration")
   | IDENT
   | constructor_sort ;
 
@@ -180,9 +177,9 @@ constructor_sort_parameter =
     contextual("comptime"), IDENT, ":", compile_parameter_sort ;
 ```
 
-`constraint` and `declaration` classify compiler-produced static fragments.
-They cannot have defaults, be supplied as explicit source arguments, or occur
-as runtime types. Their only producer is syntax-contract elaboration.
+`constraint` classifies normalized compiler-produced solver goals. It cannot
+have a default, be supplied as an explicit source argument, or occur as a
+runtime type.
 
 A compile-time parameter is always introduced by `comptime`. Whether a
 parenthesized declaration group is compile-time or runtime is therefore
@@ -383,8 +380,10 @@ bodyless declarations rather than builtin definitions.
 The root `core` module also contains the public overloads
 `pub let foreign(comptime abi: abi): never = builtin()` and
 `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, plus
-`pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`. They authorize the
-`foreign(c, ...)` initializer and top-level test registration respectively;
+`pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
+and the generic `requires(condition, body)` contract. They authorize the
+`foreign(c, ...)` initializer, top-level test registration, and function-body
+guard respectively;
 `c` is a finite `abi` sort value, while linker and test-name strings remain syntax metadata.
 
 ## 3. Types

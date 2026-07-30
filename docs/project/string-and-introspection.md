@@ -542,13 +542,13 @@ The source-backed syntax contract changes from the removed string sort to the
 ordinary type:
 
 ```salicin
-pub let test(
+pub let test(comptime name: string)(
   move body: with(core.error.throwing(core.string.string))((): ()),
 ): () = builtin()
 ```
 
-The top-level `test("name") { ... }` syntax consumes `name` as compiler
-metadata; it is deliberately absent from the runtime declaration. The body
+The top-level `test("name") { ... }` syntax supplies `name` as compiler
+metadata to the validated contract. The body
 returns unit and may fail only through `throwing(string)`. Registration names
 are read from `CtfeValue::String`, encoded deterministically for symbols when
 needed, and decoded only at the CLI boundary. The symbol encoding is not the

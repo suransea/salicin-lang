@@ -61,10 +61,9 @@ impl StaticValue {
 
 /// Equality and construction policy for compiler-owned surface fragments.
 ///
-/// Fragments preserve source provenance and binder identity, so they are not
+/// Constraint fragments preserve source provenance and binder identity, so they are not
 /// user-comparable or source-constructible. The elaborator is their sole
-/// producer; constraints normalize into [`Constraint`] before solver use,
-/// while declarations remain ordered surface trees until elaboration.
+/// producer; they normalize into [`Constraint`] before solver use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaticFragmentPolicy {
     pub source_constructible: bool,
@@ -190,7 +189,6 @@ mod tests {
     #[test]
     fn static_fragment_policy_forbids_source_construction_runtime_lowering_and_comparison() {
         assert!(Sort::Fragment(crate::ast::StaticFragmentKind::Constraint).is_static_fragment());
-        assert!(Sort::Fragment(crate::ast::StaticFragmentKind::Declaration).is_static_fragment());
         assert_eq!(
             STATIC_FRAGMENT_POLICY,
             StaticFragmentPolicy {

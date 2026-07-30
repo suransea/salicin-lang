@@ -1722,7 +1722,7 @@ fn mounted_standard_exports_match_the_validated_bundles() {
     let expected_core = CORE_NEVER_EXPORTS
         .iter()
         .map(|name| ("never", *name))
-        .chain([("@core", "test")])
+        .chain([("@core", "test"), ("@core", "requires")])
         .chain(CORE_MARKER_EXPORTS.iter().map(|name| ("marker", *name)))
         .chain(
             CORE_PRIMITIVE_EXPORTS

@@ -18,7 +18,8 @@ not use `builtin()` merely as an optimization annotation.
 The same private root module declares
 `pub let foreign(comptime abi: abi): never = builtin()`,
 `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()`, and
-`pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`.
+`pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`,
+and the generic `requires(condition: bool, body)` function-body guard.
 These are canonical syntax
 contracts for foreign initializers and test registrations. `c` is the member of the finite
 `abi` sort selected by `foreign(c)`; `test("name")` consumes its ordinary string

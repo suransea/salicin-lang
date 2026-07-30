@@ -1940,7 +1940,6 @@ impl Parser {
                 "effects" => Some(Sort::Effects),
                 "parameters" => Some(Sort::Parameters),
                 "constraint" => Some(Sort::Fragment(crate::ast::StaticFragmentKind::Constraint)),
-                "declaration" => Some(Sort::Fragment(crate::ast::StaticFragmentKind::Declaration)),
                 _ => Some(Sort::Named(kind)),
             };
             if let Some(parameter_kind) = parameter_kind {
@@ -1979,7 +1978,7 @@ impl Parser {
 
         self.expect(
             &TokenKind::Region,
-            "`type`, `usize`, `access`, `effect`, `effects`, `parameters`, a constructor sort, or `region`",
+            "`type`, `usize`, `access`, `effect`, `effects`, `parameters`, `constraint`, a constructor sort, or `region`",
         )?;
         if name == "static" {
             return Err(self.error_at(
@@ -5320,7 +5319,6 @@ impl Parser {
 fn static_fragment_name(kind: crate::ast::StaticFragmentKind) -> &'static str {
     match kind {
         crate::ast::StaticFragmentKind::Constraint => "constraint",
-        crate::ast::StaticFragmentKind::Declaration => "declaration",
     }
 }
 

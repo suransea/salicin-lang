@@ -342,8 +342,8 @@ pub enum Sort {
     /// A normalized, order-insensitive row of zero or more effect identities.
     Effects,
     Parameters,
-    /// A compiler-produced, erased surface fragment. Source expressions
-    /// cannot construct or lower values of either fragment sort.
+    /// A compiler-produced, erased constraint fragment. Source expressions
+    /// cannot construct or lower values of this sort.
     Fragment(StaticFragmentKind),
     /// A variadic pack of `parameters` schemas used as repeated runtime groups
     /// by compiler-validated control contracts such as `match`.
@@ -364,7 +364,6 @@ pub enum Sort {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StaticFragmentKind {
     Constraint,
-    Declaration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

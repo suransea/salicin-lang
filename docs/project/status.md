@@ -140,9 +140,9 @@ Implemented lexical and declaration features include:
 - private, package, and public visibility;
 - contextual control, passing, sort, and borrow words;
 - compiler-owned abstract sorts written `let name: sort(2)`;
-- dedicated erased `constraint` and `declaration` fragment sorts, rejected as
-  runtime types, explicit source arguments, defaulted parameters, runtime
-  storage, and user-comparable values;
+- a dedicated erased `constraint` fragment sort, rejected as a runtime type,
+  explicit source argument, defaulted parameter, runtime storage, and
+  user-comparable value; no `declaration` sort is present;
 - defined sorts written `let name = sort(1) { ... }`, including empty sorts;
 - ordinary closed enums usable as compile-time value types;
 - explicit core-private `builtin()` initializers for compiler-owned
@@ -152,10 +152,11 @@ Implemented lexical and declaration features include:
 - explicit erased inputs for those syntax declarations:
   the one- and two-argument `foreign` overloads select the finite
   `abi.c` value, while
-  `pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
-  receives the syntax-owned body after the compiler consumes UTF-8 name
-  metadata. This legacy `test` shape is not yet the static-name contract;
-  `extend` and `requires` likewise remain parser-owned until SYN-2.
+  `pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`
+  receives the UTF-8 name and unit-returning throwing body;
+  `core.requires` receives a compile-time boolean and delayed function body.
+  Trait and extension requirements remain labeled boolean header parameters,
+  and `extend` has no fake callable declaration.
 
 Types, traits, functions, values, modules, parameters, and ordinary sorts use
 `snake_case`.

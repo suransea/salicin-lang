@@ -51,33 +51,31 @@ history remains in the changelog.
 ## Now: Syntax Declaration Contracts
 
 `test("name") { ... }`, `extend(...) { ... }`, and
-`requires(goals) expression` are parser-owned surface forms. Only `test`
-currently has a source-visible edition contract, and that contract describes
-the unit-returning `throwing(string)` body without representing the static
-name. The other two forms cannot be described honestly with an ordinary
-runtime callable because their operands include constraints and declarations.
+`requires(goals) expression` now use the minimal source-backed model. `test`
+passes its static string name and a unit-returning `throwing(string)` closure.
+Function-body `requires` passes a compile-time `bool` and a delayed closure.
+Trait and extension requirements are labeled compile-time boolean header
+parameters; `extend` itself has no callable contract.
 
-The erased `constraint` and `declaration` classifiers are now implemented:
-only syntax elaboration may produce them, and neither can cross into runtime
-types, storage, effects, explicit source arguments, or user equality. The
-active work now makes all three forms elaborate through compiler-validated
-source contracts. Surface source locations remain authoritative for
-diagnostics; no generated contract invocation may leak into user errors.
+The erased `constraint` classifier remains the solver boundary. The premature
+`declaration` classifier has been removed: the current fixed syntax does not
+need first-class declaration fragments. Active work is the acceptance pass
+across formatting, diagnostics, fixtures, and documentation.
 
 Exit conditions:
 
-- constraint and declaration fragments have explicit static sorts,
-  normalization/equality rules, and phase separation;
+- constraint fragments have explicit normalization and phase separation;
 - the `test` contract includes its static string name and accepts only a
   unit-returning closure with exactly `throwing(string)`;
-- `extend` and `requires` have source-visible contracts that actively govern
-  elaboration rather than decorative builtin signatures;
+- function-body `requires` uses its validated boolean/closure contract, while
+  trait and extension requirements remain boolean header parameters;
+- `extend` has no decorative builtin signature;
 - missing or malformed edition contracts fail core-bundle validation;
 - grammar, formatter preservation, diagnostics, core sources, fixtures, and
   documentation agree on one contract shape.
 
-General macros, reflection, arbitrary syntax extension, and runtime
-first-class declaration values remain deferred.
+Additional reflection and syntax-fragment sorts are ordered later under
+META-1 rather than being inferred from these fixed forms.
 
 ## Later: Semantic Navigation
 
@@ -124,6 +122,14 @@ Exit conditions:
 Publishing, credentials, mirrors, a hosted service, precompiled interfaces,
 and a stable package protocol remain outside this milestone.
 
+## Later: Compile-Time Metaprogramming Foundations
+
+After the daily-development milestones, Salicin may add more static sorts for
+typed reflection and metaprogramming. META-1 must first define scope safety,
+phase separation, equality and normalization, permitted fragment producers,
+resource limits, and source diagnostics. No unused `declaration` sort is
+reserved in advance.
+
 ## Design Candidates
 
 These gaps need an accepted contract and sequencing decision before entering
@@ -144,6 +150,7 @@ the executable queue:
 - broader by-value C interoperability;
 - precompiled package interfaces and distribution artifacts;
 - analyzer decomposition along the existing semantic phase boundaries.
+- typed compile-time reflection and syntax/declaration fragment classifiers.
 
 Refactoring may accompany an active milestone when it creates a narrow
 boundary required by that milestone. A repository-wide rewrite is not itself
@@ -157,7 +164,7 @@ The following remain intentionally outside the accepted roadmap:
 - implicit ambient I/O or allocation authority;
 - garbage collection as a second ownership model;
 - runtime trait objects and open-world dispatch;
-- macros, reflection, and general compile-time execution;
+- macros and general compile-time execution before META-1;
 - a public package registry service;
 - a stable ABI or 1.0 compatibility promise.
 

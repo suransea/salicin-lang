@@ -135,9 +135,8 @@ test("arithmetic") {
 test target during compilation; it is not an ordinary runtime call and does
 not introduce a user binding. The form is authorized by the private edition
 contract
-`pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`;
-the string remains compile-time runner metadata rather than a runtime
-argument. The name must be a non-empty
+`pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()`.
+The name must be a non-empty
 string literal and is used in diagnostics. Registrations are private to their
 source package and cannot have visibility or attributes.
 
@@ -192,11 +191,11 @@ compiler-owned abstract sorts use `: sort(2)`, while user-defined finite sorts u
 Finite members are named through their Sort, as in `optimization.release`.
 
 `type`, `region`, `effect`, `effects`, and `parameters` are compiler-owned
-abstract compile-time sorts. `constraint` and `declaration` are erased static
-fragment sorts produced only by syntax elaboration: source cannot construct,
-default, explicitly pass, compare, store, or use either as a runtime type.
-Constraint fragments normalize into solver goals; declaration fragments retain
-ordered surface structure and provenance until elaboration. `string` is an ordinary runtime type accepted by
+abstract compile-time sorts. `constraint` is an erased static fragment sort
+produced only by syntax elaboration: source cannot construct, default,
+explicitly pass, compare, store, or use it as a runtime type. Constraint
+fragments normalize into solver goals. There is no `declaration` sort.
+`string` is an ordinary runtime type accepted by
 CTFE. `access` is the finite sort `sort(1) { shared mut }`. `bool` remains an ordinary
 closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
 or defined finite sort can be used the same way.
@@ -238,7 +237,8 @@ The same root module publicly declares the other syntax-owned contracts:
 ```sc fragment
 pub let foreign(comptime abi: abi): never = builtin()
 pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()
-pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()
+pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()
+pub let requires(comptime condition: bool, comptime e: effects, comptime result: type): with(e)(move body: with(e)((): result)): result = builtin()
 ```
 
 `foreign(c, ...)` passes the finite `abi.c` value (using the contextual short spelling `c`) as
@@ -246,6 +246,11 @@ statically validated metadata to its containing function declaration;
 `test("name") { ... }` consumes its compile-time `string` name in syntax and
 supplies a body whose only escaping effect is structured test failure. Neither
 metadata payload is a runtime value.
+
+The function-definition form `= requires(condition) { body }` supplies a
+compile-time `bool` and a delayed parameterless closure to `core.requires`.
+Trait and extension requirements instead occupy their declaration header as
+the labeled compile-time boolean parameter `(requires: condition)`.
 
 ## 4. Types and Compile-Time Parameters
 

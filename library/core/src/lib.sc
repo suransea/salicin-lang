@@ -7,9 +7,19 @@ pub let abi = core.foreign.abi
 pub let foreign = core.foreign.foreign
 // Test names are consumed by the `test("...") { ... }` syntax. Each
 // compiler-owned registration returns unit and may throw an owned message.
-pub let test(
+pub let test(comptime name: string)(
   move body: with(core.error.throwing(core.string.string))((): ()),
 ): () = builtin()
+
+// Function-definition guard. The parser supplies the normalized compile-time
+// boolean and delays the guarded body as a parameterless closure.
+pub let requires(
+  comptime condition: bool,
+  comptime e: effects,
+  comptime result: type,
+): with(e)(
+  move body: with(e)((): result),
+): result = builtin()
 
 pub let never = core.never.never
 pub let movable = core.marker.movable

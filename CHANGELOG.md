@@ -6,6 +6,24 @@ subset.
 
 ## Unreleased
 
+## 0.249.0 - 2026-07-30
+
+- Removed the premature `declaration` sort introduced in 0.248.0. Fixed
+  syntax forms do not require first-class declaration fragments; broader
+  reflection and metaprogramming sorts are deferred to META-1 with explicit
+  scope-safety and phase-separation gates.
+- Tightened the source-backed `test` contract to include its compile-time
+  `string` name while retaining the required unit-returning
+  `throwing(string)` closure and `()` result. Boolean-returning test bodies
+  remain rejected.
+- Added the validated function-body `requires` contract: a compile-time
+  `bool`, effect row, result type, and delayed parameterless closure.
+  Trait and extension requirements remain labeled boolean header parameters;
+  `extend` deliberately has no decorative callable declaration.
+- Updated the grammar, specification, standard-library contract, status,
+  roadmap, TODO, and current PL research ledger for the minimal boolean-guard
+  model.
+
 ## 0.248.0 - 2026-07-30
 
 - Added compiler-owned `constraint` and `declaration` static fragment sorts.

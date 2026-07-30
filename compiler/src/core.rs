@@ -164,6 +164,7 @@ pub enum LangItemKind {
     Builtin,
     Foreign,
     Test,
+    Requires,
     Option,
     Result,
     Never,
@@ -268,10 +269,11 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 104] = [
+    const ALL: [Self; 105] = [
         Self::Builtin,
         Self::Foreign,
         Self::Test,
+        Self::Requires,
         Self::Option,
         Self::Result,
         Self::Never,
@@ -380,6 +382,7 @@ impl LangItemKind {
             Self::Builtin => "builtin",
             Self::Foreign => "foreign",
             Self::Test => "test",
+            Self::Requires => "requires",
             Self::Option => "option",
             Self::Result => "result",
             Self::Never => "never",
@@ -525,6 +528,7 @@ impl LangItemKind {
             Self::Builtin
             | Self::Foreign
             | Self::Test
+            | Self::Requires
             | Self::CopyParameters
             | Self::MoveParameters
             | Self::ComptimeParameters
@@ -608,6 +612,7 @@ impl LangItemKind {
             Self::Builtin
             | Self::Foreign
             | Self::Test
+            | Self::Requires
             | Self::Option
             | Self::Result
             | Self::Never
@@ -1105,6 +1110,7 @@ impl LangItems {
             LangItemKind::Builtin
             | LangItemKind::Foreign
             | LangItemKind::Test
+            | LangItemKind::Requires
             | LangItemKind::CopyParameters
             | LangItemKind::MoveParameters
             | LangItemKind::ComptimeParameters
@@ -1255,7 +1261,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_SORTS}\n{EDITION_2026_FOREIGN}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin() = builtin()\npub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()\npub let requires(comptime condition: bool, comptime e: effects, comptime result: type): with(e)(move body: with(e)((): result)): result = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1730,6 +1736,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         LangItemKind::Builtin,
         LangItemKind::Foreign,
         LangItemKind::Test,
+        LangItemKind::Requires,
         LangItemKind::CopyParameters,
         LangItemKind::MoveParameters,
         LangItemKind::ComptimeParameters,
@@ -1841,7 +1848,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
 }
 
 fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<String>) {
-    for name in ["constraint", "declaration"] {
+    for name in ["constraint"] {
         let fragments = program
             .items
             .iter()
@@ -2017,6 +2024,7 @@ fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut
         LangItemKind::Builtin
             | LangItemKind::Foreign
             | LangItemKind::Test
+            | LangItemKind::Requires
             | LangItemKind::CopyParameters
             | LangItemKind::MoveParameters
             | LangItemKind::ComptimeParameters
@@ -2251,7 +2259,6 @@ fn is_core_support_item(name: &str) -> bool {
             | "sort_of"
             | "type_of"
             | "constraint"
-            | "declaration"
             | "is"
     )
 }
@@ -2329,9 +2336,10 @@ fn visibility_name(visibility: Visibility) -> &'static str {
 fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<String>) {
     match (kind, item) {
         (LangItemKind::Builtin, _) => validate_builtin_bootstrap(item, diagnostics),
-        (LangItemKind::Foreign | LangItemKind::Test, Item::Function(function)) => {
-            validate_syntax_contract(kind, function, diagnostics)
-        }
+        (
+            LangItemKind::Foreign | LangItemKind::Test | LangItemKind::Requires,
+            Item::Function(function),
+        ) => validate_syntax_contract(kind, function, diagnostics),
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
@@ -2582,23 +2590,70 @@ fn validate_syntax_contract(
     let valid = match kind {
         LangItemKind::Foreign => foreign_contract_arity(function).is_some(),
         LangItemKind::Test => {
-            function.compile_groups.is_empty()
+            matches!(
+                function.compile_groups.as_slice(),
+                [parameters]
+                    if matches!(
+                        parameters.as_slice(),
+                        [CompileParam {
+                            name,
+                            kind: Sort::Named(sort),
+                            default: None,
+                        }] if name == "name"
+                            && sort.split(['.', ':']).rfind(|part| !part.is_empty())
+                                == Some("string")
+                    )
+            ) && single_moved_callable(
+                function,
+                "body",
+                Type::Unit,
+                FunctionEffects {
+                    custom: vec![Type::Named(
+                        "core.error.throwing".to_owned(),
+                        vec![Type::Named("core.string.string".to_owned(), Vec::new())],
+                    )],
+                    ..FunctionEffects::default()
+                },
+            ) && function.return_type == Some(Type::Unit)
+        }
+        LangItemKind::Requires => {
+            function.compile_groups
+                == vec![vec![
+                    CompileParam {
+                        name: "condition".to_owned(),
+                        kind: Sort::Named("bool".to_owned()),
+                        default: None,
+                    },
+                    CompileParam {
+                        name: "e".to_owned(),
+                        kind: Sort::Effects,
+                        default: None,
+                    },
+                    CompileParam {
+                        name: "result".to_owned(),
+                        kind: Sort::Type,
+                        default: None,
+                    },
+                ]]
                 && single_moved_callable(
                     function,
                     "body",
-                    Type::Unit,
+                    named_type("result"),
                     FunctionEffects {
-                        custom: vec![Type::Named(
-                            "core.error.throwing".to_owned(),
-                            vec![Type::Named("core.string.string".to_owned(), Vec::new())],
-                        )],
+                        parameters: vec!["e".to_owned()],
                         ..FunctionEffects::default()
                     },
                 )
-                && function.return_type == Some(Type::Unit)
+                && function.return_type == Some(named_type("result"))
+                && function.effects
+                    == FunctionEffects {
+                        parameters: vec!["e".to_owned()],
+                        ..FunctionEffects::default()
+                    }
         }
         _ => false,
-    } && function.effects == FunctionEffects::default()
+    } && (kind == LangItemKind::Requires
+        || function.effects == FunctionEffects::default())
         && function.where_predicates.is_empty()
         && function.foreign.is_none()
         && function.builtin
@@ -2609,7 +2664,10 @@ fn validate_syntax_contract(
                 "pub let foreign(comptime abi: abi): never = builtin()` or `pub let foreign(comptime abi: abi, comptime symbol: string): never = builtin()"
             }
             LangItemKind::Test => {
-                "pub let test(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()"
+                "pub let test(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()"
+            }
+            LangItemKind::Requires => {
+                "pub let requires(comptime condition: bool, comptime e: effects, comptime result: type): with(e)(move body: with(e)((): result)): result = builtin()"
             }
             _ => unreachable!(),
         };

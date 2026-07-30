@@ -1445,6 +1445,7 @@ fn remove_nonruntime_syntax_contracts(program: &mut Program, lang_items: &LangIt
         LangItemKind::Builtin,
         LangItemKind::Foreign,
         LangItemKind::Test,
+        LangItemKind::Requires,
     ]
     .map(|kind| lang_items.get(kind).canonical_name());
     let introspection = [

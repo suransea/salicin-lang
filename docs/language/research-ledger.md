@@ -531,6 +531,14 @@ declaration block or constraint goal. The accepted follow-up therefore first
 introduces static constraint/declaration fragment sorts, then makes surface
 elaboration validate all three contracts.
 
+Superseded on 2026-07-30 after simplifying the accepted surface model. The
+implemented `declaration` sort was removed: `test` needs a static string and
+typed closure, function-body `requires` needs a compile-time boolean and
+closure, and trait/extension requirements are labeled boolean header
+parameters. Only the solver-owned `constraint` fragment remains. General
+declaration or syntax fragments are deferred to META-1 rather than reserved
+without a consumer.
+
 - [Localizing Type Errors for Syntactic Sugar by Lifting (OOPSLA
   2026)](https://2026.splashcon.org/details/oopsla-2026/53/Localizing-Type-Errors-for-Syntactic-Sugar-by-Lifting)
   lifts core typing rules while preserving surface locations and fixable
@@ -538,16 +546,37 @@ elaboration validate all three contracts.
   not participate in elaboration.
 - [When Do Staging Annotations Preserve Semantics? (2026)](https://arxiv.org/abs/2606.30854)
   tracks staged let insertion as an effect to preserve evaluation semantics.
-  Salicin's narrower contract must likewise keep declaration fragments erased
-  and prevent runtime effects or values from crossing into syntax metadata.
+  Any future META-1 fragment design must likewise prevent runtime effects or
+  values from crossing into syntax metadata.
 - [First-Class Constrained Types: Elaboration, Type Inference, Approximation,
   and a Characterization (ICFP
   2026)](https://icfp26.sigplan.org/details/icfp-2026-icfp-papers/29/First-Class-Constrained-Types-Elaboration-Type-Inference-Approximation-and-a-Char)
   separates the surface representation of constraints from their elaborated
   typing meaning. Salicin adopts the narrower compiler-owned boundary:
-  `constraint` fragments normalize into solver IR, while `declaration`
-  fragments retain order and provenance; neither is source-constructible,
-  user-comparable, or runtime-lowerable.
+  `constraint` fragments normalize into solver IR. The paper remains relevant
+  to META-1, but does not justify adding a declaration classifier before a
+  reflection feature consumes it.
+
+### Minimal Boolean Guards Before General Reflection
+
+Reviewed on 2026-07-30 after the declaration-fragment design was withdrawn.
+The current forms require no general quotation facility: delayed closures
+preserve evaluation, while normalized boolean goals preserve solver behavior.
+
+- [Contextual Metaprogramming for Session Types
+  (2026)](https://arxiv.org/abs/2601.15180) demonstrates why future code
+  fragments need an explicit typing context. Salicin therefore defers new
+  reflection sorts to META-1 instead of treating today's fixed declaration
+  forms as context-free fragments.
+- [Taming Scope Extrusion in Gradual Imperative Metaprogramming
+  (2026)](https://arxiv.org/abs/2602.19951) makes scope safety a first-class
+  metaprogramming obligation. META-1 must establish that invariant before a
+  declaration or syntax sort becomes source-visible.
+- [When Do Staging Annotations Preserve Semantics?
+  (2026)](https://arxiv.org/abs/2606.30854) shows that fragment manipulation
+  can alter evaluation order. The minimal `requires(condition, body)` contract
+  therefore delays only an ordinary typed closure and introduces no general
+  fragment substitution.
 
 ## Review Gate
 

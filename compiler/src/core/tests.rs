@@ -127,12 +127,12 @@ fn edition_2026_bundle_parses_and_validates() {
     let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
     assert_eq!(bundle.edition(), Edition::Edition2026);
-    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 422);
+    assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 421);
     for kind in LangItemKind::ALL {
         let lang_item = bundle.lang_items().get(kind);
         assert_eq!(lang_item.kind(), kind);
         let canonical = match kind {
-            LangItemKind::Builtin | LangItemKind::Test => {
+            LangItemKind::Builtin | LangItemKind::Test | LangItemKind::Requires => {
                 format!("core::{}", kind.source_name())
             }
             LangItemKind::Foreign => "core::foreign::foreign".to_owned(),
@@ -263,7 +263,7 @@ fn edition_2026_bundle_parses_and_validates() {
         );
         assert_eq!(lang_item.canonical_name(), canonical.as_str());
         let module_path: Vec<&str> = match kind {
-            LangItemKind::Builtin | LangItemKind::Test => vec![],
+            LangItemKind::Builtin | LangItemKind::Test | LangItemKind::Requires => vec![],
             LangItemKind::Foreign | LangItemKind::AbiSort => vec!["foreign"],
             LangItemKind::Option => vec!["option"],
             LangItemKind::Result => vec!["result"],
@@ -450,6 +450,21 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
                 "move body: with(core.error.throwing(core.string.string))((): i32),",
             ),
         ),
+        (
+            "lib",
+            "test",
+            EDITION_2026_LIB.replace("(comptime name: string)", "(comptime name: usize)"),
+        ),
+        (
+            "lib",
+            "requires",
+            EDITION_2026_LIB.replace("comptime condition: bool,", "comptime condition: usize,"),
+        ),
+        (
+            "lib",
+            "requires",
+            EDITION_2026_LIB.replace("move body: with(e)((): result),", "move body: result,"),
+        ),
     ] {
         let modules = edition_2026_test_modules(&[(module, &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -511,20 +526,16 @@ fn builtin_markers_are_explicit_and_bounded_core_contracts() {
 fn constraint_query_contracts_are_explicit_and_bounded() {
     for malformed in [
         EDITION_2026_SORTS.replace("pub let constraint: sort(2)", "pub let constraint: sort(1)"),
-        EDITION_2026_SORTS.replace(
-            "pub let declaration: sort(2)",
-            "pub let declaration: sort(1)",
-        ),
-        EDITION_2026_SORTS.replace("pub let declaration: sort(2)", ""),
         EDITION_2026_SORTS.replace("comptime right: constraint", "comptime right: type"),
         EDITION_2026_SORTS.replace("): bool = builtin()", "): usize = builtin()"),
     ] {
         let modules = edition_2026_test_modules(&[("sorts", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(
-            error.diagnostics().iter().any(|diagnostic| {
-                diagnostic.contains("constraint") || diagnostic.contains("declaration")
-            }),
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("constraint")),
             "{:?}",
             error.diagnostics()
         );
