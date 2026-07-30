@@ -142,6 +142,151 @@ fn test_list_reuses_cached_ordered_test_names() {
     assert_eq!(String::from_utf8_lossy(&second.stdout), "cached-alpha\n");
 }
 
+#[test]
+fn cache_trace_reports_cold_warm_and_bypassed_decisions_only_on_stderr() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("main.sc", "let main(): i32 = { 0 }\n");
+    let cache = temporary.create_dir("cache");
+
+    let invoke = || {
+        salic()
+            .arg("emit-ir")
+            .arg(&source)
+            .args(["--cache-trace", "-o", "-"])
+            .env("SALICIN_CACHE_DIR", &cache)
+            .output()
+            .unwrap()
+    };
+    let cold = invoke();
+    assert!(cold.status.success(), "{}", output_text(&cold));
+    let cold_stderr = String::from_utf8_lossy(&cold.stderr);
+    assert!(cold_stderr.contains(": miss (missing)"), "{cold_stderr}");
+    assert!(cold_stderr.contains(": published"), "{cold_stderr}");
+    assert!(String::from_utf8_lossy(&cold.stdout).contains("define i32 @main"));
+
+    let warm = invoke();
+    assert!(warm.status.success(), "{}", output_text(&warm));
+    let warm_stderr = String::from_utf8_lossy(&warm.stderr);
+    assert!(warm_stderr.contains(": hit"), "{warm_stderr}");
+    assert!(!String::from_utf8_lossy(&warm.stdout).contains("salic: cache"));
+
+    let fingerprint = salic().arg("fingerprint").arg(&source).output().unwrap();
+    let fingerprint = String::from_utf8(fingerprint.stdout).unwrap();
+    fs::write(
+        cache_entry(&cache, fingerprint.trim()).join("module.ll"),
+        "damaged",
+    )
+    .unwrap();
+    let repaired = invoke();
+    assert!(repaired.status.success(), "{}", output_text(&repaired));
+    let repaired_stderr = String::from_utf8_lossy(&repaired.stderr);
+    assert!(
+        repaired_stderr.contains(": miss (invalid-payload)"),
+        "{repaired_stderr}"
+    );
+    assert!(repaired_stderr.contains(": published"), "{repaired_stderr}");
+
+    let bypassed = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["--no-cache", "--cache-trace", "-o", "-"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(bypassed.status.success(), "{}", output_text(&bypassed));
+    let bypassed_stderr = String::from_utf8_lossy(&bypassed.stderr);
+    assert!(bypassed_stderr.contains(": bypassed"), "{bypassed_stderr}");
+    assert!(!bypassed_stderr.contains(": hit"), "{bypassed_stderr}");
+    assert!(
+        !bypassed_stderr.contains(": published"),
+        "{bypassed_stderr}"
+    );
+
+    let fresh_cache = temporary.create_dir("fresh-cache");
+    let fresh_bypass = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["--no-cache", "-o", "-"])
+        .env("SALICIN_CACHE_DIR", &fresh_cache)
+        .output()
+        .unwrap();
+    assert!(
+        fresh_bypass.status.success(),
+        "{}",
+        output_text(&fresh_bypass)
+    );
+    assert!(
+        fs::read_dir(&fresh_cache).unwrap().next().is_none(),
+        "bypass must not initialize or publish into the cache root"
+    );
+
+    let disabled = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["--cache-trace", "-o", "-"])
+        .env("SALICIN_CACHE_DIR", "relative-cache")
+        .current_dir(&temporary.0)
+        .output()
+        .unwrap();
+    assert!(disabled.status.success(), "{}", output_text(&disabled));
+    assert!(
+        String::from_utf8_lossy(&disabled.stderr).contains(": disabled (relative-override)"),
+        "{}",
+        output_text(&disabled)
+    );
+    assert!(!temporary.join("relative-cache").exists());
+}
+
+#[test]
+fn cache_clean_preserves_unowned_root_data_and_refuses_unowned_roots() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write("main.sc", "let main(): i32 = { 0 }\n");
+    let cache = temporary.create_dir("cache");
+    let populated = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .args(["-o", "-"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(populated.status.success(), "{}", output_text(&populated));
+    fs::write(cache.join("unrelated"), "preserve").unwrap();
+
+    let cleaned = salic()
+        .args(["cache", "clean"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(cleaned.status.success(), "{}", output_text(&cleaned));
+    assert!(!cache.join("llvm-ir").exists());
+    assert_eq!(
+        fs::read_to_string(cache.join("unrelated")).unwrap(),
+        "preserve"
+    );
+    assert!(cache.join(".salicin-cache-root").is_file());
+
+    let empty = salic()
+        .args(["cache", "clean"])
+        .env("SALICIN_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert!(empty.status.success(), "{}", output_text(&empty));
+    assert!(String::from_utf8_lossy(&empty.stdout).contains("already empty"));
+
+    let unowned = temporary.create_dir("unowned");
+    fs::write(unowned.join("user-data"), "keep").unwrap();
+    let refused = salic()
+        .args(["cache", "clean"])
+        .env("SALICIN_CACHE_DIR", &unowned)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{}", output_text(&refused));
+    assert_eq!(
+        fs::read_to_string(unowned.join("user-data")).unwrap(),
+        "keep"
+    );
+}
+
 fn test_names_digest(names: &[&str]) -> String {
     let mut encoder = Sha256::new();
     encoder.update((names.len() as u64).to_le_bytes());

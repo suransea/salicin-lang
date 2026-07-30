@@ -125,15 +125,29 @@ Failed parsing, analysis, code generation, or native linking cannot publish a
 new entry. A native-link failure does not invalidate already validated LLVM
 IR.
 
-`emit-ir`, `build`, `run`, and `test` now perform lookup after complete input
-resolution and publish only successfully emitted IR. `check` never consults
-this cache. `--no-cache` is reserved for those four cached commands; it forbids
-both lookup and publication for that invocation. `check` always analyzes
-source and does not use the LLVM-IR cache. Cache tracing, cleanup, and pipeline
-controls are implemented by later INCR workstreams; reserving their
-behavior here does not claim that their CLI is already available. Root
-resolution plus strict local lookup/publication are implemented by
-`incremental_cache.rs`.
+`emit-ir`, `build`, `run`, and `test` perform lookup after complete input
+resolution and publish only successfully emitted IR. `--no-cache` on those
+commands forbids both lookup and publication for that invocation. It still
+resolves and fingerprints the complete input and does not alter generated IR.
+`check` always analyzes source and rejects cache-control flags.
+
+`--cache-trace` writes decisions only to stderr. Each line identifies the
+binary, library, or test target, its complete lowercase fingerprint, and one
+of: `bypassed`, `hit`, a structured miss reason, disabled caching with its
+cause, publication, concurrent-winner reuse, or a nonfatal publication error.
+It never changes ordinary stdout, generated IR, native program output, or exit
+status.
+
+`salic cache clean` first resolves and opens the exact cache root, including
+ownership-marker validation. It atomically renames only the `llvm-ir`
+namespace to a unique detached sibling and removes that detached directory
+without following a namespace symbolic link. The root marker and unrelated
+root children remain. A missing namespace succeeds as already empty; an
+unowned root, invalid marker, symbolic link, non-directory namespace, or I/O
+failure is reported and nothing outside the validated namespace is removed.
+Concurrent compilations may recreate the namespace after detachment; a writer
+racing inside the detached snapshot may miss publication and continue
+normally from its compiled result.
 
 ## Explicit Non-Goals
 

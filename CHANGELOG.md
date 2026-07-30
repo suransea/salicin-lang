@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.241.0 - 2026-07-30
+
+- Completed INCR-5 with `--no-cache` lookup/publication bypass and
+  `--cache-trace` stderr-only reporting of stable target fingerprints, hits,
+  structured misses, disabled roots, and publication outcomes.
+- Added `salic cache clean`, which validates the root ownership marker,
+  atomically detaches only the compiler-owned `llvm-ir` namespace, preserves
+  unrelated root data, rejects symbolic-link and non-directory namespaces,
+  and treats a missing namespace as an idempotent success.
+- Added storage and CLI acceptance tests for cold/warm/bypassed traces,
+  stdout isolation, scoped flag parsing, idempotent cleanup, unowned-root
+  refusal, unrelated-data preservation, and symbolic-link non-traversal.
+  Updated the cache contract, architecture, status, TODO, roadmap, and current
+  research ledger; INCR-6 is next.
+
 ## 0.240.0 - 2026-07-30
 
 - Completed INCR-4 by connecting validated whole-graph LLVM-IR cache entries

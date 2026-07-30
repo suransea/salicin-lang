@@ -71,7 +71,9 @@ returns structured hit/miss reasons, verifies canonical metadata and payload
 digests, and atomically publishes or replaces entries under concurrent
 writers. Pipeline integration reuses validated binary/library IR across
 `emit-ir`, `build`, and `run`, and stores ordered selected names beside test
-IR. `check` remains uncached. INCR-5 is the active next step.
+IR. `check` remains uncached. Explicit bypass, stderr-only decision tracing,
+and ownership-checked namespace cleanup are implemented. INCR-6 is the active
+next step and closes the milestone with its full invalidation matrix.
 
 Exit conditions:
 

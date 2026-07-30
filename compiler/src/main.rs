@@ -27,8 +27,9 @@ use salicin_lang::{
     formatter::format_source,
     incremental::{fingerprint_package_graph, IncrementalTarget},
     incremental_cache::{
-        resolve_cache_root, CacheArtifact, CacheEntryIdentity, CacheLookup, CacheRootResolution,
-        CacheStore, CacheTarget,
+        resolve_cache_root, CacheArtifact, CacheCleanOutcome, CacheEntryIdentity, CacheLookup,
+        CacheMissReason, CachePublishOutcome, CacheRootDisabled, CacheRootResolution, CacheStore,
+        CacheTarget,
     },
 };
 
@@ -41,6 +42,7 @@ Usage:
   salic check [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
   salic emit-ir [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen] [-o <path>]
   salic fingerprint [path] [-p <package>] [--bin <name> | --lib] [--locked | --frozen]
+  salic cache clean
   salic fmt [path] [--check]
   salic run [path] [-p <package>] [--bin <name>] [--locked | --frozen] [-- <args>...]
   salic test [path] [-p <package>] [--bin <name>] [--locked | --frozen] [--list] [--filter <text>]
@@ -54,6 +56,7 @@ Commands:
   fmt        Format one source file or every source in the selected package
   run        Compile and run a program; arguments after -- go to the program
   test       Compile all test declarations into one runner and run it
+  cache clean Remove compiler-owned persistent LLVM-IR cache entries
 
 Options:
   -o, --output <path>  Select the output path
@@ -62,6 +65,8 @@ Options:
       --lib            Select the library target (check and emit-ir only)
       --list           List selected test names without running them (test only)
       --filter <text>  Select test names containing UTF-8 text (test only)
+      --no-cache       Bypass lookup and publication (build/emit-ir/run/test)
+      --cache-trace    Report cache decisions on stderr (build/emit-ir/run/test)
   -p, --package <name> Select a workspace package
       --locked         Require salicin.lock to be present and current
       --frozen         Require the lockfile and forbid dependency network access
@@ -85,6 +90,7 @@ enum Action {
         lock_mode: LockMode,
         bin: Option<String>,
         output: Option<PathBuf>,
+        cache: CacheOptions,
     },
     Check {
         input: Option<PathBuf>,
@@ -98,6 +104,7 @@ enum Action {
         lock_mode: LockMode,
         target: TargetSelection,
         output: Option<PathBuf>,
+        cache: CacheOptions,
     },
     Fingerprint {
         input: Option<PathBuf>,
@@ -115,6 +122,7 @@ enum Action {
         lock_mode: LockMode,
         bin: Option<String>,
         args: Vec<OsString>,
+        cache: CacheOptions,
     },
     Test {
         input: Option<PathBuf>,
@@ -123,7 +131,9 @@ enum Action {
         bin: Option<String>,
         list: bool,
         filter: Option<String>,
+        cache: CacheOptions,
     },
+    CacheClean,
 }
 
 #[derive(Clone)]
@@ -147,6 +157,13 @@ struct CompileArgs {
     lock_mode: LockMode,
     output: Option<PathBuf>,
     target: TargetSelection,
+    cache: CacheOptions,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CacheOptions {
+    bypass: bool,
+    trace: bool,
 }
 
 fn main() {
@@ -184,6 +201,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             lock_mode: LockMode::Update,
             bin: None,
             output: None,
+            cache: CacheOptions::default(),
         }));
     };
 
@@ -197,7 +215,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if args.len() == 2
         && matches!(
             first.to_str(),
-            Some("build" | "check" | "emit-ir" | "fingerprint" | "fmt" | "run" | "test")
+            Some("build" | "check" | "emit-ir" | "fingerprint" | "fmt" | "run" | "test" | "cache")
         )
         && (is(&args[1], "-h") || is(&args[1], "--help"))
     {
@@ -206,7 +224,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
 
     let action = match first.to_str() {
         Some("build") => {
-            let parsed = parse_compile_args("build", &args[1..], true, false)?;
+            let parsed = parse_compile_args("build", &args[1..], true, false, true)?;
             let bin = selection_bin(parsed.target, "build")?;
             Action::Build {
                 input: parsed.input,
@@ -214,10 +232,11 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 lock_mode: parsed.lock_mode,
                 bin,
                 output: parsed.output,
+                cache: parsed.cache,
             }
         }
         Some("check") => {
-            let parsed = parse_compile_args("check", &args[1..], false, true)?;
+            let parsed = parse_compile_args("check", &args[1..], false, true, false)?;
             Action::Check {
                 input: parsed.input,
                 package: parsed.package,
@@ -226,17 +245,18 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
         }
         Some("emit-ir") => {
-            let parsed = parse_compile_args("emit-ir", &args[1..], true, true)?;
+            let parsed = parse_compile_args("emit-ir", &args[1..], true, true, true)?;
             Action::EmitIr {
                 input: parsed.input,
                 package: parsed.package,
                 lock_mode: parsed.lock_mode,
                 target: parsed.target,
                 output: parsed.output,
+                cache: parsed.cache,
             }
         }
         Some("fingerprint") => {
-            let parsed = parse_compile_args("fingerprint", &args[1..], false, true)?;
+            let parsed = parse_compile_args("fingerprint", &args[1..], false, true, false)?;
             Action::Fingerprint {
                 input: parsed.input,
                 package: parsed.package,
@@ -250,16 +270,32 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         }
         Some("run") => parse_run(&args[1..])?,
         Some("test") => parse_test(&args[1..])?,
+        Some("cache") => {
+            if args.len() == 2 && is(&args[1], "clean") {
+                Action::CacheClean
+            } else {
+                return Err("'cache' requires exactly the subcommand 'clean'".into());
+            }
+        }
         _ if starts_with_dash(first)
             && !matches!(
                 first.to_str(),
-                Some("-o" | "--output" | "--bin" | "-p" | "--package" | "--locked" | "--frozen")
+                Some(
+                    "-o" | "--output"
+                        | "--bin"
+                        | "-p"
+                        | "--package"
+                        | "--locked"
+                        | "--frozen"
+                        | "--no-cache"
+                        | "--cache-trace"
+                )
             ) =>
         {
             return Err(format!("unknown option '{}'", first.to_string_lossy()));
         }
         _ => {
-            let parsed = parse_compile_args("build", &args, true, false)?;
+            let parsed = parse_compile_args("build", &args, true, false, true)?;
             let bin = selection_bin(parsed.target, "build")?;
             Action::Build {
                 input: parsed.input,
@@ -267,6 +303,7 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 lock_mode: parsed.lock_mode,
                 bin,
                 output: parsed.output,
+                cache: parsed.cache,
             }
         }
     };
@@ -305,12 +342,14 @@ fn parse_compile_args(
     args: &[OsString],
     allow_output: bool,
     allow_lib: bool,
+    allow_cache: bool,
 ) -> Result<CompileArgs, String> {
     let mut input = None;
     let mut output = None;
     let mut package = None;
     let mut lock_mode = LockMode::Update;
     let mut target = TargetSelection::Default;
+    let mut cache = CacheOptions::default();
     let mut index = 0;
 
     while index < args.len() {
@@ -379,6 +418,25 @@ fn parse_compile_args(
                 return Err(format!("'{command}' accepts only one target selector"));
             }
             target = TargetSelection::Lib;
+        } else if is(argument, "--no-cache") || is(argument, "--cache-trace") {
+            if !allow_cache {
+                return Err(format!(
+                    "'{command}' does not support '{}'",
+                    argument.to_string_lossy()
+                ));
+            }
+            let selected = if is(argument, "--no-cache") {
+                &mut cache.bypass
+            } else {
+                &mut cache.trace
+            };
+            if *selected {
+                return Err(format!(
+                    "'{command}' accepts '{}' only once",
+                    argument.to_string_lossy()
+                ));
+            }
+            *selected = true;
         } else if starts_with_dash(argument) {
             return Err(format!(
                 "unknown option '{}' for '{command}'",
@@ -401,6 +459,7 @@ fn parse_compile_args(
         lock_mode,
         output,
         target,
+        cache,
     })
 }
 
@@ -419,13 +478,14 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
         None => (args, Vec::new()),
     };
 
-    let parsed = parse_compile_args("run", compiler_args, false, false).map_err(|message| {
-        if separator.is_none() && compiler_args.len() > 1 {
-            format!("{message}; place program arguments after '--'")
-        } else {
-            message
-        }
-    })?;
+    let parsed =
+        parse_compile_args("run", compiler_args, false, false, true).map_err(|message| {
+            if separator.is_none() && compiler_args.len() > 1 {
+                format!("{message}; place program arguments after '--'")
+            } else {
+                message
+            }
+        })?;
     let bin = selection_bin(parsed.target, "run")?;
     Ok(Action::Run {
         input: parsed.input,
@@ -433,6 +493,7 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
         lock_mode: parsed.lock_mode,
         bin,
         args: program_args,
+        cache: parsed.cache,
     })
 }
 
@@ -465,7 +526,7 @@ fn parse_test(args: &[OsString]) -> Result<Action, String> {
         }
         index += 1;
     }
-    let parsed = parse_compile_args("test", &compile_args, false, false)?;
+    let parsed = parse_compile_args("test", &compile_args, false, false, true)?;
     let bin = selection_bin(parsed.target, "test")?;
     Ok(Action::Test {
         input: parsed.input,
@@ -474,6 +535,7 @@ fn parse_test(args: &[OsString]) -> Result<Action, String> {
         bin,
         list,
         filter,
+        cache: parsed.cache,
     })
 }
 
@@ -485,6 +547,7 @@ fn execute(action: Action) -> i32 {
             lock_mode,
             bin,
             output,
+            cache,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -511,7 +574,7 @@ fn execute(action: Action) -> i32 {
                 return 2;
             }
 
-            let ir = match compile_target(&target) {
+            let ir = match compile_target(&target, cache) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -550,6 +613,7 @@ fn execute(action: Action) -> i32 {
             lock_mode,
             target,
             output,
+            cache,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -569,7 +633,7 @@ fn execute(action: Action) -> i32 {
                     }
                 }
             }
-            let ir = match compile_target(&target) {
+            let ir = match compile_target(&target, cache) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -615,6 +679,7 @@ fn execute(action: Action) -> i32 {
             lock_mode,
             bin,
             args,
+            cache,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -626,7 +691,7 @@ fn execute(action: Action) -> i32 {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
-            let ir = match compile_target(&target) {
+            let ir = match compile_target(&target, cache) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -645,6 +710,7 @@ fn execute(action: Action) -> i32 {
             bin,
             list,
             filter,
+            cache,
         } => {
             let target = match resolve_input(
                 input.as_deref(),
@@ -656,7 +722,7 @@ fn execute(action: Action) -> i32 {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
-            let compilation = match compile_test_target(&target, filter.as_deref()) {
+            let compilation = match compile_test_target(&target, filter.as_deref(), cache) {
                 Ok(compilation) => compilation,
                 Err(()) => return 1,
             };
@@ -691,6 +757,7 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
+        Action::CacheClean => clean_incremental_cache(),
     }
 }
 
@@ -1366,7 +1433,7 @@ fn read_source(source: &Path) -> Result<String, ()> {
     }
 }
 
-fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
+fn compile_target(target: &ResolvedTarget, cache: CacheOptions) -> Result<String, ()> {
     let packages = read_target_packages(target)?;
     let cache_target = if target.is_library {
         CacheTarget::Library
@@ -1374,16 +1441,25 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
         CacheTarget::Binary
     };
     let identity = cache_identity(target, &packages, cache_target, None)?;
-    if let Some(store) = open_incremental_cache() {
-        if let CacheLookup::Hit(artifact) = store.lookup(identity) {
-            return Ok(artifact.llvm_ir);
+    if cache.bypass {
+        trace_cache(cache, identity, "bypassed");
+        return compile_loaded_target(target, &packages);
+    }
+    if let Some(store) = open_incremental_cache(cache, identity) {
+        match store.lookup(identity) {
+            CacheLookup::Hit(artifact) => {
+                trace_cache(cache, identity, "hit");
+                return Ok(artifact.llvm_ir);
+            }
+            CacheLookup::Miss(reason) => {
+                trace_cache(cache, identity, &format!("miss ({})", miss_reason(reason)));
+            }
         }
-        let llvm_ir = compile_loaded_target(target, &packages)?;
         let artifact = CacheArtifact {
-            llvm_ir,
+            llvm_ir: compile_loaded_target(target, &packages)?,
             test_names: Vec::new(),
         };
-        let _ = store.publish(identity, &artifact);
+        trace_publication(cache, identity, store.publish(identity, &artifact));
         return Ok(artifact.llvm_ir);
     }
     compile_loaded_target(target, &packages)
@@ -1392,22 +1468,33 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
 fn compile_test_target(
     target: &ResolvedTarget,
     filter: Option<&str>,
+    cache: CacheOptions,
 ) -> Result<salicin_lang::TestCompilation, ()> {
     let packages = read_target_packages(target)?;
     let identity = cache_identity(target, &packages, CacheTarget::Test, filter)?;
-    if let Some(store) = open_incremental_cache() {
-        if let CacheLookup::Hit(artifact) = store.lookup(identity) {
-            return Ok(salicin_lang::TestCompilation {
-                ir: artifact.llvm_ir,
-                names: artifact.test_names,
-            });
+    if cache.bypass {
+        trace_cache(cache, identity, "bypassed");
+        return compile_loaded_test_target(target, &packages, filter);
+    }
+    if let Some(store) = open_incremental_cache(cache, identity) {
+        match store.lookup(identity) {
+            CacheLookup::Hit(artifact) => {
+                trace_cache(cache, identity, "hit");
+                return Ok(salicin_lang::TestCompilation {
+                    ir: artifact.llvm_ir,
+                    names: artifact.test_names,
+                });
+            }
+            CacheLookup::Miss(reason) => {
+                trace_cache(cache, identity, &format!("miss ({})", miss_reason(reason)));
+            }
         }
         let compilation = compile_loaded_test_target(target, &packages, filter)?;
         let artifact = CacheArtifact {
             llvm_ir: compilation.ir.clone(),
             test_names: compilation.names.clone(),
         };
-        let _ = store.publish(identity, &artifact);
+        trace_publication(cache, identity, store.publish(identity, &artifact));
         return Ok(compilation);
     }
     compile_loaded_test_target(target, &packages, filter)
@@ -1507,11 +1594,120 @@ fn cache_identity(
     })
 }
 
-fn open_incremental_cache() -> Option<CacheStore> {
-    let CacheRootResolution::Available(root) = resolve_cache_root() else {
-        return None;
+fn open_incremental_cache(cache: CacheOptions, identity: CacheEntryIdentity) -> Option<CacheStore> {
+    let root = match resolve_cache_root() {
+        CacheRootResolution::Available(root) => root,
+        CacheRootResolution::Disabled(reason) => {
+            trace_cache(
+                cache,
+                identity,
+                &format!("disabled ({})", root_disabled_reason(reason)),
+            );
+            return None;
+        }
     };
-    CacheStore::open(root).ok()
+    match CacheStore::open(root) {
+        Ok(store) => Some(store),
+        Err(error) => {
+            trace_cache(cache, identity, &format!("disabled ({error})"));
+            None
+        }
+    }
+}
+
+fn trace_cache(cache: CacheOptions, identity: CacheEntryIdentity, decision: &str) {
+    if cache.trace {
+        eprintln!(
+            "salic: cache {} {}: {decision}",
+            cache_target_name(identity.target),
+            identity.fingerprint
+        );
+    }
+}
+
+fn trace_publication(
+    cache: CacheOptions,
+    identity: CacheEntryIdentity,
+    result: Result<CachePublishOutcome, salicin_lang::incremental_cache::CacheStoreError>,
+) {
+    let decision = match result {
+        Ok(CachePublishOutcome::Published) => "published".into(),
+        Ok(CachePublishOutcome::AlreadyPresent) => "publication reused concurrent winner".into(),
+        Err(error) => format!("publication skipped ({error})"),
+    };
+    trace_cache(cache, identity, &decision);
+}
+
+fn cache_target_name(target: CacheTarget) -> &'static str {
+    match target {
+        CacheTarget::Binary => "binary",
+        CacheTarget::Library => "library",
+        CacheTarget::Test => "test",
+    }
+}
+
+fn miss_reason(reason: CacheMissReason) -> &'static str {
+    match reason {
+        CacheMissReason::Missing => "missing",
+        CacheMissReason::Unreadable => "unreadable",
+        CacheMissReason::InvalidEntryKind => "invalid-entry-kind",
+        CacheMissReason::InvalidMetadata => "invalid-metadata",
+        CacheMissReason::IncompatibleMetadata => "incompatible-metadata",
+        CacheMissReason::InvalidPayload => "invalid-payload",
+    }
+}
+
+fn root_disabled_reason(reason: CacheRootDisabled) -> &'static str {
+    match reason {
+        CacheRootDisabled::RelativeOverride => "relative-override",
+        CacheRootDisabled::NoAbsolutePlatformDirectory => "no-absolute-platform-directory",
+    }
+}
+
+fn clean_incremental_cache() -> i32 {
+    let root = match resolve_cache_root() {
+        CacheRootResolution::Available(root) => root,
+        CacheRootResolution::Disabled(reason) => {
+            eprintln!(
+                "salic: cache clean unavailable: {}",
+                root_disabled_reason(reason)
+            );
+            return 1;
+        }
+    };
+    let store = match CacheStore::open(root.clone()) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!(
+                "salic: cache clean failed for '{}': {error}",
+                root.display()
+            );
+            return 1;
+        }
+    };
+    match store.clean() {
+        Ok(CacheCleanOutcome::Cleaned) => {
+            println!(
+                "removed persistent LLVM-IR cache entries from {}",
+                root.display()
+            );
+            0
+        }
+        Ok(CacheCleanOutcome::Empty) => {
+            println!(
+                "persistent LLVM-IR cache is already empty at {}",
+                root.display()
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!(
+                "salic: cache clean failed for '{}': {error}",
+                root.display()
+            );
+            1
+        }
+    }
 }
 
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {
@@ -2083,6 +2279,39 @@ mod tests {
                 "invalid test selection arguments were accepted"
             );
         }
+    }
+
+    #[test]
+    fn cache_controls_are_scoped_to_cached_commands() {
+        let parsed = parse_args(
+            ["emit-ir", "main.sc", "--no-cache", "--cache-trace"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+        )
+        .unwrap();
+        let ParsedArgs::Action(Action::EmitIr { cache, .. }) = parsed else {
+            panic!("expected emit-ir action");
+        };
+        assert!(cache.bypass);
+        assert!(cache.trace);
+
+        for arguments in [
+            vec!["check", "main.sc", "--no-cache"],
+            vec!["fingerprint", "main.sc", "--cache-trace"],
+            vec!["emit-ir", "--no-cache", "--no-cache"],
+            vec!["cache"],
+            vec!["cache", "clean", "extra"],
+        ] {
+            assert!(
+                parse_args(arguments.into_iter().map(OsString::from).collect()).is_err(),
+                "invalid cache control arguments were accepted"
+            );
+        }
+        assert!(matches!(
+            parse_args(["cache", "clean"].into_iter().map(OsString::from).collect()).unwrap(),
+            ParsedArgs::Action(Action::CacheClean)
+        ));
     }
 
     fn frame(index: u64, status: u8, has_message: u8, length: u64, payload: &[u8]) -> Vec<u8> {

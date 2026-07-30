@@ -22,11 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Persistent Incremental Builds
 
-- [ ] **INCR-5 — Cache control and observability.** Add a documented way to
-  bypass the cache and an inspectable hit/miss reason that does not pollute
-  program stdout. Define safe cleanup of compiler-owned entries without
-  deleting user outputs.
-
 - [ ] **INCR-6 — End-to-end invalidation proof.** Cover cold and warm
   equivalence, checkout relocation, compiler and schema changes, target and
   command targets, embedded libraries, provider identities, dependency

@@ -30,7 +30,9 @@ The implementation lives under `compiler/src`:
   the private user-cache root and implements strict local lookup, validation,
   corruption replacement, and atomic concurrent publication. Command
   pipelines reuse validated entries for `emit-ir`, `build`, `run`, and
-  `test`; `check` remains uncached.
+  `test`; `check` remains uncached. The driver exposes explicit bypass and
+  stderr tracing, while cache cleanup delegates its ownership checks and
+  atomic namespace detachment to the storage module.
 - `manifest.rs`, `lockfile.rs`, and `modules.rs` load package/workspace graphs,
   preserve resolved provider identities, and resolve names.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library

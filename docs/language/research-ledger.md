@@ -334,6 +334,29 @@ length-framed digest. Cache lookup remains behind complete input resolution;
   transformation modular. The uncached compiler remains the miss path and
   publication happens only after that path returns a complete artifact.
 
+Reviewed again on 2026-07-30 for cache control and observability. Cache reuse
+is now explicitly optional and inspectable: bypass retains the base compiler
+path, tracing reports every reuse decision outside semantic stdout, and
+cleanup detaches only a marker-owned artifact namespace. This makes stale or
+damaged state diagnosable without allowing cache state to become language
+semantics.
+
+- [DeCo: A Core Calculus for Incremental Functional Programming with Generic
+  Data Types (OOPSLA 2026)](https://doi.org/10.1145/3798264) gives explicit
+  semantics to incremental reuse rather than treating caching as an invisible
+  implementation accident. Salicin similarly exposes the operational
+  decision while keeping the uncached result authoritative.
+- [Differential Execution with Lexical Tracing (OOPSLA
+  2026)](https://doi.org/10.1145/3798261) proves cache stability and
+  correctness together. Salicin's trace names the complete stable identity
+  and exact rejection reason so future invalidation tests can observe the same
+  invariant enforced by lookup.
+- [The Promise and Reality of Continuous Integration Caching (EASE
+  2026)](https://arxiv.org/abs/2601.19146) finds stale cached artifacts in a
+  substantial fraction of studied projects. Explicit bypass, corruption
+  reasons, and ownership-bounded cleanup provide recovery and diagnosis
+  without weakening validation.
+
 ## Review Gate
 
 Before extending the static language:

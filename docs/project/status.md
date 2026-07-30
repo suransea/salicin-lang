@@ -40,13 +40,16 @@ current capability inventory. It does not record release history; see the
   canonical metadata and digest validation, structured miss reasons,
   corruption replacement, symbolic-link rejection, and lock-free concurrent
   publication; `emit-ir`, `build`, and `run` reuse the same binary/library
-  entries, while test entries also preserve ordered selected names.
+  entries, while test entries also preserve ordered selected names;
+- cache bypass and stderr-only decision tracing for every cached compilation
+  command, plus ownership-marker-checked atomic cleanup of only the persistent
+  LLVM-IR namespace.
 
 The compiler does not yet provide an LSP transport, incremental document
 updates, completion, hover, or rename.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
-performs complete source analysis, and cache bypass, tracing, and cleanup
-controls remain pending.
+performs complete source analysis. Cache eviction policy and full invalidation
+acceptance remain pending.
 
 The initial [standard-library usability surface](standard-library-surface.md)
 is accepted. It fixes the `core`/`alloc`/host-`std` layers, all-`snake_case`

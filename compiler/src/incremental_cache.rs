@@ -129,6 +129,12 @@ pub enum CachePublishOutcome {
     AlreadyPresent,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheCleanOutcome {
+    Cleaned,
+    Empty,
+}
+
 #[derive(Debug)]
 pub enum CacheStoreError {
     RootMustBeAbsolute,
@@ -290,6 +296,32 @@ impl CacheStore {
             }
         }
         Err(CacheStoreError::PublicationContended)
+    }
+
+    /// Atomically detach and remove the compiler-owned LLVM-IR namespace.
+    ///
+    /// The root marker is retained, unrelated root children are untouched,
+    /// and a symbolic-link or non-directory namespace is rejected.
+    pub fn clean(&self) -> Result<CacheCleanOutcome, CacheStoreError> {
+        let namespace = self.root.join(CACHE_KIND);
+        let metadata = match fs::symlink_metadata(&namespace) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(CacheCleanOutcome::Empty);
+            }
+            Err(error) => return Err(CacheStoreError::Io(error)),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(CacheStoreError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cache artifact namespace is not an owned directory",
+            )));
+        }
+        let detached = unique_path(&self.root, "llvm-ir-clean");
+        fs::rename(&namespace, &detached)?;
+        fs::remove_dir_all(&detached)?;
+        sync_directory_best_effort(&self.root);
+        Ok(CacheCleanOutcome::Cleaned)
     }
 }
 
@@ -963,5 +995,47 @@ mod tests {
         assert!(payload.llvm_ir.starts_with("; writer "));
         assert_eq!(payload.test_names.len(), 1);
         fs::remove_dir_all(root).expect("remove temporary cache");
+    }
+
+    #[test]
+    fn cleanup_removes_only_the_owned_artifact_namespace() {
+        with_store(|store, root| {
+            let identity = identity(CacheTarget::Binary);
+            store
+                .publish(identity, &artifact("; cached\n", &[]))
+                .unwrap();
+            fs::write(root.join("unrelated"), "preserve").unwrap();
+            assert_eq!(store.clean().unwrap(), CacheCleanOutcome::Cleaned);
+            assert_eq!(
+                store.lookup(identity),
+                CacheLookup::Miss(CacheMissReason::Missing)
+            );
+            assert_eq!(
+                fs::read_to_string(root.join("unrelated")).unwrap(),
+                "preserve"
+            );
+            assert!(root.join(CACHE_ROOT_MARKER).is_file());
+            assert_eq!(store.clean().unwrap(), CacheCleanOutcome::Empty);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_rejects_a_symbolic_link_namespace_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root();
+        let outside = temporary_root();
+        fs::write(outside.join("keep"), "preserve").unwrap();
+        let store = CacheStore::open(root.clone()).unwrap();
+        symlink(&outside, root.join(CACHE_KIND)).unwrap();
+        assert!(matches!(store.clean(), Err(CacheStoreError::Io(_))));
+        assert_eq!(
+            fs::read_to_string(outside.join("keep")).unwrap(),
+            "preserve"
+        );
+        fs::remove_file(root.join(CACHE_KIND)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 }
