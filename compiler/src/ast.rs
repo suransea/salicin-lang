@@ -104,6 +104,7 @@ pub struct UseDecl {
     pub visibility: Visibility,
     pub path: Vec<String>,
     pub alias: Option<String>,
+    pub source: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -30,7 +30,10 @@ current capability inventory. It does not record release history; see the
   `--package` selection, local path dependencies, shared build roots, and
   deterministic source-aware lockfiles;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
-  UTF-16 positions, phased precision metadata, and multi-document routing;
+  UTF-16 positions, structured document identity, phase, severity, stable
+  code, optional exact ranges, and multi-document routing; resolver origins
+  are carried structurally rather than recovered from rendered messages, and
+  missing ranges are never replaced with synthetic byte-zero positions;
 - versioned SHA-256 incremental input fingerprints over compiler, target,
   test selection, standard-library, provider-graph, module, and source-byte
   inputs, plus an artifact-schema-2 whole-graph LLVM-IR cache
@@ -630,9 +633,8 @@ declaration, `where`, trailing-closure, and match indentation. Comments and
 dependencies remain source-owned; the passing fixture corpus is idempotent
 under repeated formatting.
 
-The editor API remains transport-independent. Structured resolver diagnostics,
-versioned in-memory document state, incremental parsing, and an LSP transport
-are not yet implemented.
+The editor API remains transport-independent. Versioned in-memory document
+state, incremental parsing, and an LSP transport are not yet implemented.
 
 ## Known Boundaries
 

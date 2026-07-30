@@ -6,6 +6,24 @@ subset.
 
 ## Unreleased
 
+## 0.243.0 - 2026-07-30
+
+- Completed LSP-1 with structured resolver and editor diagnostics carrying
+  document identity, phase, error severity, stable phase code, message, and an
+  optional exact UTF-8/UTF-16 range. Added `analyze_document_at` for named
+  buffers and retained rendered strings only at existing terminal-facing
+  compatibility boundaries.
+- Removed resolver message parsing, byte-zero/first-token fallback ranges, and
+  range-precision metadata. Item declarations, imports, name resolution, and
+  nominal C-layout validation now retain production-time source provenance;
+  document-wide failures honestly omit a range.
+- Clarified that source-backed `core.test` accepts only a unit-returning
+  `throwing(string)` action, removed the final stale boolean signature, and
+  documented why declaration-forming `extend` and constraint-guard
+  `requires` are grammar contracts rather than ordinary callable
+  declarations. Updated the editor contract, architecture, status, roadmap,
+  TODO, and current research ledger.
+
 ## 0.242.0 - 2026-07-30
 
 - Completed INCR-6 and the Persistent Incremental Builds milestone with an

@@ -543,14 +543,14 @@ ordinary type:
 
 ```salicin
 pub let test(
-  comptime name: string,
-)
-  (move body: (): bool): () = builtin()
+  move body: with(core.error.throwing(core.string.string))((): ()),
+): () = builtin()
 ```
 
-Core validation checks that `name` uses
-`CompileClassifier::RuntimeType(core.string.string)`. Registration names are
-read from `CtfeValue::String`, encoded deterministically for symbols when
+The top-level `test("name") { ... }` syntax consumes `name` as compiler
+metadata; it is deliberately absent from the runtime declaration. The body
+returns unit and may fail only through `throwing(string)`. Registration names
+are read from `CtfeValue::String`, encoded deterministically for symbols when
 needed, and decoded only at the CLI boundary. The symbol encoding is not the
 semantic identity of the string.
 

@@ -1,6 +1,6 @@
 use crate::ast::SourceLocation;
 use crate::lexer::{lex, TokenKind};
-use crate::modules::{resolve_sources, SourceUnit};
+use crate::modules::{resolve_sources_diagnostics, ResolverDiagnostic, SourceUnit};
 use crate::{codegen, parser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,9 +18,8 @@ pub enum DiagnosticPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RangePrecision {
-    Exact,
-    Fallback,
+pub enum DiagnosticSeverity {
+    Error,
 }
 
 /// One source position in both compiler-native UTF-8 bytes and the UTF-16
@@ -46,11 +45,12 @@ pub struct EditorToken {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorDiagnostic {
-    pub path: Option<String>,
+    pub document: String,
     pub phase: DiagnosticPhase,
+    pub severity: DiagnosticSeverity,
+    pub code: String,
     pub message: String,
     pub range: Option<EditorRange>,
-    pub range_precision: Option<RangePrecision>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +81,16 @@ pub struct WorkspaceAnalysis {
 /// Lex, parse, resolve, and type-check one editor document without generating
 /// code. Later phases run only when every earlier phase succeeds.
 pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysis {
+    analyze_document_at("<document>", source, target)
+}
+
+/// Analyze one named editor document. The identity is preserved on every
+/// diagnostic, including document-wide failures that have no exact range.
+pub fn analyze_document_at(
+    document: &str,
+    source: &str,
+    target: DocumentTarget,
+) -> DocumentAnalysis {
     let index = SourceIndex::new(source);
     let tokens = match lex(source) {
         Ok(tokens) => tokens,
@@ -89,11 +99,12 @@ pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysi
             return DocumentAnalysis {
                 tokens: Vec::new(),
                 diagnostics: vec![EditorDiagnostic {
-                    path: None,
+                    document: document.to_owned(),
                     phase: DiagnosticPhase::Lexer,
+                    severity: DiagnosticSeverity::Error,
+                    code: "salicin.lex".to_owned(),
                     message: error.message,
                     range: Some(range),
-                    range_precision: Some(RangePrecision::Exact),
                 }],
             };
         }
@@ -109,17 +120,18 @@ pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysi
         return DocumentAnalysis {
             tokens: editor_tokens,
             diagnostics: vec![EditorDiagnostic {
-                path: None,
+                document: document.to_owned(),
                 phase: DiagnosticPhase::Parser,
+                severity: DiagnosticSeverity::Error,
+                code: "salicin.parse".to_owned(),
                 message: error.message,
                 range: Some(index.byte_range(error.start_byte, error.end_byte)),
-                range_precision: Some(RangePrecision::Exact),
             }],
         };
     }
 
-    let program = match resolve_sources(&[SourceUnit {
-        path: "<document>".into(),
+    let program = match resolve_sources_diagnostics(&[SourceUnit {
+        path: document.into(),
         module_path: Vec::new(),
         source: source.into(),
         is_root: true,
@@ -130,7 +142,7 @@ pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysi
                 tokens: editor_tokens,
                 diagnostics: diagnostics
                     .into_iter()
-                    .map(|diagnostic| resolver_diagnostic(&index, diagnostic))
+                    .map(|diagnostic| resolver_diagnostic(&index, diagnostic, document))
                     .collect(),
             };
         }
@@ -139,7 +151,6 @@ pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysi
         DocumentTarget::Library => codegen::check_library(&program),
         DocumentTarget::Binary => codegen::check(&program),
     };
-    let fallback_range = editor_tokens.first().map(|token| token.range);
     let diagnostics = checked
         .err()
         .unwrap_or_default()
@@ -151,18 +162,17 @@ pub fn analyze_document(source: &str, target: DocumentTarget) -> DocumentAnalysi
                 .and_then(|origin| origin.source.as_deref())
                 .cloned();
             EditorDiagnostic {
-                path: None,
+                document: source
+                    .as_ref()
+                    .and_then(|location| location.path.clone())
+                    .unwrap_or_else(|| document.to_owned()),
                 phase: DiagnosticPhase::Semantic,
+                severity: DiagnosticSeverity::Error,
+                code: "salicin.semantic".to_owned(),
                 message: diagnostic.message,
                 range: source
                     .as_ref()
-                    .map(|location| index.location_range(location))
-                    .or(fallback_range),
-                range_precision: Some(if source.is_some() {
-                    RangePrecision::Exact
-                } else {
-                    RangePrecision::Fallback
-                }),
+                    .map(|location| index.location_range(location)),
             }
         })
         .collect();
@@ -188,8 +198,10 @@ pub fn analyze_workspace(
             Ok(tokens) => tokens,
             Err(error) => {
                 diagnostics.push(EditorDiagnostic {
-                    path: Some(source.path.to_owned()),
+                    document: source.path.to_owned(),
                     phase: DiagnosticPhase::Lexer,
+                    severity: DiagnosticSeverity::Error,
+                    code: "salicin.lex".to_owned(),
                     message: error.message,
                     range: Some(index.scalar_range(
                         error.line,
@@ -197,7 +209,6 @@ pub fn analyze_workspace(
                         error.line,
                         error.column + 1,
                     )),
-                    range_precision: Some(RangePrecision::Exact),
                 });
                 documents.push(WorkspaceDocumentAnalysis {
                     path: source.path.to_owned(),
@@ -215,11 +226,12 @@ pub fn analyze_workspace(
             .collect();
         if let Err(error) = parser::parse_tokens(tokens) {
             diagnostics.push(EditorDiagnostic {
-                path: Some(source.path.to_owned()),
+                document: source.path.to_owned(),
                 phase: DiagnosticPhase::Parser,
+                severity: DiagnosticSeverity::Error,
+                code: "salicin.parse".to_owned(),
                 message: error.message,
                 range: Some(index.byte_range(error.start_byte, error.end_byte)),
-                range_precision: Some(RangePrecision::Exact),
             });
         }
         documents.push(WorkspaceDocumentAnalysis {
@@ -243,7 +255,7 @@ pub fn analyze_workspace(
             is_root: source.is_root,
         })
         .collect::<Vec<_>>();
-    let program = match resolve_sources(&units) {
+    let program = match resolve_sources_diagnostics(&units) {
         Ok(program) => program,
         Err(errors) => {
             diagnostics.extend(
@@ -266,18 +278,21 @@ pub fn analyze_workspace(
             .origin
             .as_ref()
             .and_then(|origin| origin.source.as_deref());
-        let path = location.and_then(|location| location.path.clone());
+        let document = location
+            .and_then(|location| location.path.clone())
+            .unwrap_or_else(|| "<workspace>".to_owned());
         let range = location.and_then(|location| {
             let path = location.path.as_deref()?;
             let document = sources.iter().position(|source| source.path == path)?;
             Some(indexes[document].location_range(location))
         });
         diagnostics.push(EditorDiagnostic {
-            path,
+            document,
             phase: DiagnosticPhase::Semantic,
+            severity: DiagnosticSeverity::Error,
+            code: "salicin.semantic".to_owned(),
             message: diagnostic.message,
             range,
-            range_precision: range.map(|_| RangePrecision::Exact),
         });
     }
     WorkspaceAnalysis {
@@ -286,96 +301,48 @@ pub fn analyze_workspace(
     }
 }
 
-fn resolver_diagnostic(index: &SourceIndex<'_>, diagnostic: String) -> EditorDiagnostic {
-    let stripped = diagnostic
-        .strip_prefix("<document>:")
-        .unwrap_or(&diagnostic);
-    let mut parts = stripped.trim_start().splitn(3, ':');
-    let line = parts.next().and_then(|part| part.parse::<usize>().ok());
-    let column = parts.next().and_then(|part| part.parse::<usize>().ok());
-    let (message, range) = match (line, column) {
-        (Some(line), Some(column)) => {
-            let remainder = parts.next().unwrap_or(stripped).trim_start();
-            (
-                remainder
-                    .strip_prefix("error:")
-                    .unwrap_or(remainder)
-                    .trim_start()
-                    .to_owned(),
-                Some(index.scalar_range(line, column, line, column + 1)),
-            )
-        }
-        _ => (
-            stripped
-                .trim_start()
-                .strip_prefix("error:")
-                .unwrap_or(stripped.trim_start())
-                .trim_start()
-                .to_owned(),
-            Some(index.byte_range(0, 0)),
-        ),
-    };
+fn resolver_diagnostic(
+    index: &SourceIndex<'_>,
+    diagnostic: ResolverDiagnostic,
+    default_document: &str,
+) -> EditorDiagnostic {
+    let document = diagnostic
+        .document
+        .unwrap_or_else(|| default_document.to_owned());
+    let range = diagnostic
+        .location
+        .as_ref()
+        .map(|location| index.location_range(location));
     EditorDiagnostic {
-        path: None,
+        document,
         phase: DiagnosticPhase::Resolver,
-        message,
+        severity: DiagnosticSeverity::Error,
+        code: diagnostic.code.to_owned(),
+        message: diagnostic.message,
         range,
-        range_precision: Some(if line.is_some() && column.is_some() {
-            RangePrecision::Exact
-        } else {
-            RangePrecision::Fallback
-        }),
     }
 }
 
 fn workspace_resolver_diagnostic(
     sources: &[EditorSource<'_>],
     indexes: &[SourceIndex<'_>],
-    diagnostic: String,
+    diagnostic: ResolverDiagnostic,
 ) -> EditorDiagnostic {
-    for (source, index) in sources.iter().zip(indexes) {
-        let Some(stripped) = diagnostic
-            .strip_prefix(source.path)
-            .and_then(|diagnostic| diagnostic.strip_prefix(':'))
-        else {
-            continue;
-        };
-        let mut parts = stripped.trim_start().splitn(3, ':');
-        let line = parts.next().and_then(|part| part.parse::<usize>().ok());
-        let column = parts.next().and_then(|part| part.parse::<usize>().ok());
-        if let (Some(line), Some(column)) = (line, column) {
-            let remainder = parts.next().unwrap_or(stripped).trim_start();
-            return EditorDiagnostic {
-                path: Some(source.path.to_owned()),
-                phase: DiagnosticPhase::Resolver,
-                message: remainder
-                    .strip_prefix("error:")
-                    .unwrap_or(remainder)
-                    .trim_start()
-                    .to_owned(),
-                range: Some(index.scalar_range(line, column, line, column + 1)),
-                range_precision: Some(RangePrecision::Exact),
-            };
-        }
-        return EditorDiagnostic {
-            path: Some(source.path.to_owned()),
-            phase: DiagnosticPhase::Resolver,
-            message: stripped
-                .trim_start()
-                .strip_prefix("error:")
-                .unwrap_or(stripped.trim_start())
-                .trim_start()
-                .to_owned(),
-            range: Some(index.byte_range(0, 0)),
-            range_precision: Some(RangePrecision::Fallback),
-        };
-    }
+    let document = diagnostic
+        .document
+        .clone()
+        .unwrap_or_else(|| "<workspace>".to_owned());
+    let range = diagnostic.location.as_ref().and_then(|location| {
+        let source_index = sources.iter().position(|source| source.path == document)?;
+        Some(indexes[source_index].location_range(location))
+    });
     EditorDiagnostic {
-        path: None,
+        document,
         phase: DiagnosticPhase::Resolver,
-        message: diagnostic,
-        range: None,
-        range_precision: None,
+        severity: DiagnosticSeverity::Error,
+        code: diagnostic.code.to_owned(),
+        message: diagnostic.message,
+        range,
     }
 }
 
@@ -516,11 +483,9 @@ mod tests {
             DocumentTarget::Binary,
         );
         assert_eq!(semantic.diagnostics[0].phase, DiagnosticPhase::Semantic);
-        assert_eq!(
-            semantic.diagnostics[0].range_precision,
-            Some(RangePrecision::Exact)
-        );
-        assert_eq!(semantic.diagnostics[0].path, None);
+        assert_eq!(semantic.diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(semantic.diagnostics[0].code, "salicin.semantic");
+        assert_eq!(semantic.diagnostics[0].document, "<document>");
         let range = semantic.diagnostics[0]
             .range
             .expect("semantic diagnostic range");
@@ -529,19 +494,51 @@ mod tests {
     }
 
     #[test]
-    fn line_less_resolver_diagnostics_mark_fallback_ranges() {
+    fn resolver_diagnostics_use_structured_origins_without_fallback_ranges() {
         let analysis = analyze(
             "let value: i32 = 1\nlet value: i32 = 2\n",
             DocumentTarget::Library,
         );
         assert_eq!(analysis.diagnostics[0].phase, DiagnosticPhase::Resolver);
-        assert_eq!(
-            analysis.diagnostics[0].range_precision,
-            Some(RangePrecision::Fallback)
+        assert_eq!(analysis.diagnostics[0].document, "<document>");
+        assert_eq!(analysis.diagnostics[0].code, "salicin.resolve");
+        let range = analysis.diagnostics[0]
+            .range
+            .expect("duplicate declaration origin");
+        assert_eq!((range.start.line, range.start.utf16_character), (1, 0));
+        assert_ne!(range.start.byte, 0);
+    }
+
+    #[test]
+    fn named_document_import_diagnostics_preserve_identity_and_exact_span() {
+        let analysis =
+            analyze_document_at("src/main.sc", "use missing.item\n", DocumentTarget::Library);
+        let [diagnostic] = analysis.diagnostics.as_slice() else {
+            panic!("expected one import diagnostic");
+        };
+        assert_eq!(diagnostic.document, "src/main.sc");
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Resolver);
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert_eq!(diagnostic.code, "salicin.resolve");
+        let range = diagnostic.range.expect("import source range");
+        assert_eq!((range.start.byte, range.end.byte), (0, 16));
+    }
+
+    #[test]
+    fn document_wide_failures_do_not_invent_a_range() {
+        let analysis = analyze_document_at(
+            "src/lib.sc",
+            "let answer: i32 = 42\n",
+            DocumentTarget::Binary,
         );
-        let range = analysis.diagnostics[0].range.unwrap();
-        assert_eq!(range.start.byte, 0);
-        assert_eq!(range.end.byte, 0);
+        let diagnostic = analysis
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("no `main`"))
+            .expect("missing-main diagnostic");
+        assert_eq!(diagnostic.document, "src/lib.sc");
+        assert_eq!(diagnostic.code, "salicin.semantic");
+        assert_eq!(diagnostic.range, None);
     }
 
     #[test]
@@ -581,14 +578,14 @@ mod tests {
             .iter()
             .find(|diagnostic| diagnostic.phase == DiagnosticPhase::Semantic)
             .expect("semantic diagnostic");
-        assert_eq!(diagnostic.path.as_deref(), Some("part.sc"));
+        assert_eq!(diagnostic.document, "part.sc");
         let range = diagnostic.range.expect("cross-file semantic range");
         assert_eq!((range.start.line, range.start.utf16_character), (1, 2));
         assert_eq!((range.end.line, range.end.utf16_character), (1, 9));
     }
 
     #[test]
-    fn every_failure_fixture_produces_ranged_editor_diagnostics() {
+    fn every_failure_fixture_produces_structured_editor_diagnostics() {
         use std::sync::{Arc, Mutex};
 
         let directory =
@@ -622,11 +619,12 @@ mod tests {
                         path.display()
                     );
                     assert!(
-                        analysis
-                            .diagnostics
-                            .iter()
-                            .all(|diagnostic| diagnostic.range.is_some()),
-                        "{} had an unranged diagnostic: {:?}",
+                        analysis.diagnostics.iter().all(|diagnostic| {
+                            !diagnostic.document.is_empty()
+                                && diagnostic.severity == DiagnosticSeverity::Error
+                                && diagnostic.code.starts_with("salicin.")
+                        }),
+                        "{} had an unstructured diagnostic: {:?}",
                         path.display(),
                         analysis.diagnostics
                     );

@@ -21,16 +21,26 @@ source text, including non-BMP characters.
 
 ## Analysis APIs
 
-`analyze_document` lexes, parses, resolves, and semantically checks one source
-document. `analyze_workspace` applies the same phases to a complete source
-module graph and routes diagnostics to their owning paths. Later phases run
-only when earlier phases succeed.
+`analyze_document` lexes, parses, resolves, and semantically checks an
+anonymous source document. `analyze_document_at` accepts an explicit stable
+document identity. `analyze_workspace` applies the same phases to a complete
+source module graph and routes diagnostics to their owning documents. Later
+phases run only when earlier phases succeed.
 
-Diagnostics identify their lexer, parser, resolver, or semantic phase.
-`RangePrecision::Exact` means the range came from the rejected source
-construct. `RangePrecision::Fallback` marks a synthetic range used when an
-older resolver or semantic diagnostic has no source location. Graph-level
-diagnostics that cannot belong to one document may omit both range and path.
+Every diagnostic carries a non-empty document identity, lexer/parser/resolver/
+semantic phase, error severity, stable phase code, human-readable message,
+and an optional exact range. `salicin.lex`, `salicin.parse`,
+`salicin.resolve`, and `salicin.semantic` are stable coarse codes; later work
+may add more specific codes without changing these phase identities.
+
+Resolver diagnostics are structured at their production boundary. Parser
+errors, item declarations, imports, name resolution, and semantic nominal
+layout checks preserve source origins without recovering paths or positions
+from rendered text. A document-wide or graph-wide failure with no rejected
+source construct has `range = None`. The API never invents byte-zero or
+first-token fallback ranges. Terminal-facing compiler entry points continue
+to render structured resolver diagnostics into their existing strings only at
+the outer compatibility boundary.
 
 ## Verification
 
@@ -38,9 +48,13 @@ Regression coverage verifies:
 
 - UTF-8 bytes and UTF-16 positions for Unicode identifiers and non-BMP text;
 - exact parser and semantic ranges;
-- explicit fallback precision for location-free diagnostics;
+- explicit document, phase, severity, and stable code on every failure
+  fixture;
+- exact duplicate-declaration and import ranges with no rendered-message
+  parsing or fallback coordinates;
 - diagnostic routing across multiple source modules;
-- a ranged diagnostic for every repository failure fixture.
+- honest omission of ranges for failures that do not identify a source
+  construct.
 
 Incremental parsing, document synchronization, completion, hover, rename, and
 the JSON-RPC transport remain later LSP work.

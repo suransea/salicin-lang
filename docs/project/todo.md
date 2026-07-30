@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: LSP Diagnostics Baseline
 
-- [ ] **LSP-1 — Structured diagnostic origins.** Replace resolver
-  message-parsing and remaining location fallbacks with structured document
-  identity, phase, source range, severity, and stable diagnostic code.
-
 - [ ] **LSP-2 — Versioned workspace snapshots.** Add a stateful analysis
   session that overlays open buffers on the resolved package graph, tracks
   document versions, and discards superseded results without writing files.

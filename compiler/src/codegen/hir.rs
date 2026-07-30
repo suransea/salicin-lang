@@ -329,6 +329,7 @@ pub(super) struct FieldLayout {
 pub(super) struct StructLayout {
     pub(super) name: String,
     pub(super) source_name: String,
+    pub(super) origin: ItemOrigin,
     pub(super) representation: StructRepresentation,
     pub(super) fields: Vec<FieldLayout>,
 }

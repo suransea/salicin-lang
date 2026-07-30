@@ -63,6 +63,7 @@ impl Analyzer {
             StructLayout {
                 name: name.to_owned(),
                 source_name,
+                origin: owner_access.origin,
                 representation: definition.representation,
                 fields,
             },

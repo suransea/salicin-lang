@@ -150,7 +150,6 @@ fn parses_globals_and_curried_functions() {
              let add(copy x: i32)(y: i32): i32 = { x + y }\n",
     )
     .unwrap();
-
     assert_eq!(program.items.len(), 2);
     let Item::Function(function) = &program.items[1] else {
         panic!("expected function");
@@ -275,7 +274,7 @@ fn preserves_top_level_visibility_alongside_items() {
 
 #[test]
 fn parses_and_expands_import_declarations() {
-    let program = parse(
+    let mut program = parse(
         "use net.http.client\n\
              use net.http.client as other_client\n\
              pub use net.http.{get, post as send}\n\
@@ -283,6 +282,13 @@ fn parses_and_expands_import_declarations() {
              let answer = 42\n",
     )
     .unwrap();
+    assert!(program
+        .uses
+        .iter()
+        .all(|declaration| declaration.source.is_some()));
+    for declaration in &mut program.uses {
+        declaration.source = None;
+    }
 
     assert_eq!(
         program.uses,
@@ -291,26 +297,31 @@ fn parses_and_expands_import_declarations() {
                 visibility: Visibility::Private,
                 path: vec!["net".into(), "http".into(), "client".into()],
                 alias: None,
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Private,
                 path: vec!["net".into(), "http".into(), "client".into()],
                 alias: Some("other_client".into()),
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Public,
                 path: vec!["net".into(), "http".into(), "get".into()],
                 alias: None,
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Public,
                 path: vec!["net".into(), "http".into(), "post".into()],
                 alias: Some("send".into()),
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Package,
                 path: vec!["root".into(), "core".into(), "value".into()],
                 alias: None,
+                source: None,
             },
         ]
     );
@@ -320,7 +331,7 @@ fn parses_and_expands_import_declarations() {
 
 #[test]
 fn parses_qualified_let_bindings_as_transparent_entity_aliases() {
-    let program = parse(
+    let mut program = parse(
         "let option = core.option\n\
              let http_client = net.http.client\n\
              pub let status = net.http.status\n\
@@ -329,6 +340,13 @@ fn parses_qualified_let_bindings_as_transparent_entity_aliases() {
              let answer = 42\n",
     )
     .unwrap();
+    assert!(program
+        .uses
+        .iter()
+        .all(|declaration| declaration.source.is_some()));
+    for declaration in &mut program.uses {
+        declaration.source = None;
+    }
 
     assert_eq!(
         program.uses,
@@ -337,21 +355,25 @@ fn parses_qualified_let_bindings_as_transparent_entity_aliases() {
                 visibility: Visibility::Private,
                 path: vec!["core".into(), "option".into()],
                 alias: Some("option".into()),
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Private,
                 path: vec!["net".into(), "http".into(), "client".into()],
                 alias: Some("http_client".into()),
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Public,
                 path: vec!["net".into(), "http".into(), "status".into()],
                 alias: Some("status".into()),
+                source: None,
             },
             UseDecl {
                 visibility: Visibility::Package,
                 path: vec!["root".into(), "core".into(), "value".into()],
                 alias: Some("value".into()),
+                source: None,
             },
         ]
     );
@@ -2162,9 +2184,10 @@ fn parses_closed_types_as_compile_parameter_types() {
 
 #[test]
 fn parses_string_as_an_ordinary_named_type() {
-    let program =
-        parse("let register(comptime name: string)(move body: (): bool): () = builtin()\n")
-            .unwrap();
+    let program = parse(
+        "let register(comptime name: string)(move body: with(core.error.throwing(core.string.string))((): ())): () = builtin()\n",
+    )
+    .unwrap();
     let [Item::Function(function)] = program.items.as_slice() else {
         panic!("expected one metadata function");
     };

@@ -387,6 +387,32 @@ than inferred from a hit counter.
   diagnosed miss plus clean replacement, rather than merely testing ideal
   hits.
 
+### Structured Diagnostics Are Compiler Data
+
+Reviewed on 2026-07-30 for the transport-independent LSP diagnostics
+baseline. Resolver and semantic producers now carry document identity and
+source provenance as data. Human-readable rendering is a terminal boundary,
+not an input to editor analysis. A missing source construct remains an absent
+range rather than a plausible-looking byte-zero fallback.
+
+- [Language Server Protocol 3.18](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnostic)
+  standardizes diagnostic range, severity, and code as protocol fields.
+  Salicin retains the same distinctions before transport serialization and
+  keeps UTF-16 conversion in the source-index boundary.
+- [Detecting Bugs in Rust Compiler Fix Suggestions via
+  Constraint-Violation-Guided Mutation (FSE
+  2026)](https://conf.researchr.org/details/fse-2026/fse-2026-research-papers/91/Detecting-Bugs-in-Rust-Compiler-Fix-Suggestions-via-Constraint-Violation-Guided-Mutat)
+  reports that most studied rustc suggestion faults arise in language-specific
+  semantic components rather than generic diagnostic formatting. Salicin
+  therefore attaches origins where parsing, resolution, and nominal semantic
+  checks create failures instead of attempting recovery in the editor layer.
+- [Compiler-Guided Inference-Time Adaptation: Improving GPT-5 Programming
+  Performance in Idris (2026)](https://arxiv.org/abs/2602.11481) finds local
+  compiler feedback substantially more effective than documentation-only
+  guidance for a low-resource language. Stable machine fields and honest
+  provenance keep that feedback usable by editors and automated consumers
+  without making generated prose part of the API.
+
 ## Review Gate
 
 Before extending the static language:

@@ -789,6 +789,7 @@ impl Analyzer {
             field
         });
 
+        let origin = access.origin.clone();
         self.collection
             .nominal_accesses
             .insert(name.clone(), access);
@@ -797,6 +798,7 @@ impl Analyzer {
             StructLayout {
                 name: name.clone(),
                 source_name: name.clone(),
+                origin,
                 representation: crate::ast::StructRepresentation::Salicin,
                 fields,
             },

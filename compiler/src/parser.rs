@@ -303,6 +303,7 @@ impl Parser {
         &mut self,
         visibility: Visibility,
     ) -> Result<UseDecl, ParseError> {
+        let start = self.current().clone();
         self.expect(&TokenKind::Let, "`let`")?;
         let alias = if self.take(&TokenKind::Mut) {
             "mut".to_owned()
@@ -316,10 +317,17 @@ impl Parser {
                 self.expect_path_continuation(&path, "an alias target path segment after `.`")?,
             );
         }
+        let end = self.tokens[self.index.saturating_sub(1)].clone();
         Ok(UseDecl {
             visibility,
             path,
             alias: Some(alias),
+            source: Some(crate::ast::SourceSpan {
+                line: start.line,
+                column: start.column,
+                end_line: end.end_line,
+                end_column: end.end_column,
+            }),
         })
     }
 
@@ -337,6 +345,7 @@ impl Parser {
     }
 
     fn use_declaration(&mut self, visibility: Visibility) -> Result<Vec<UseDecl>, ParseError> {
+        let start = self.current().clone();
         if !self.at_context_ident("use") {
             return Err(self.error_here("expected `use`"));
         }
@@ -368,10 +377,17 @@ impl Parser {
                 path.join(".")
             )));
         }
+        let end = self.tokens[self.index.saturating_sub(1)].clone();
         Ok(vec![UseDecl {
             visibility,
             path,
             alias,
+            source: Some(crate::ast::SourceSpan {
+                line: start.line,
+                column: start.column,
+                end_line: end.end_line,
+                end_column: end.end_column,
+            }),
         }])
     }
 
@@ -388,6 +404,7 @@ impl Parser {
         let mut declarations = Vec::new();
         let mut bindings = HashSet::new();
         loop {
+            let start = self.current().clone();
             let member = self.expect_relative_path_segment("an import name")?;
             let alias = if self.at_context_ident("as") {
                 self.advance();
@@ -411,6 +428,12 @@ impl Parser {
                 visibility,
                 path,
                 alias,
+                source: Some(crate::ast::SourceSpan {
+                    line: start.line,
+                    column: start.column,
+                    end_line: self.tokens[self.index.saturating_sub(1)].end_line,
+                    end_column: self.tokens[self.index.saturating_sub(1)].end_column,
+                }),
             });
 
             if self.take(&TokenKind::Comma) {

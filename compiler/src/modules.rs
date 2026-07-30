@@ -8,10 +8,72 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, ItemOrigin, MatchArm,
-    Param, Pattern, PatternField, PatternFields, Program, Sort, StaticExpr, Stmt, StructDef,
-    TraitDef, TraitMember, Type, UseDecl, VariantFields, Visibility,
+    Param, Pattern, PatternField, PatternFields, Program, Sort, SourceLocation, StaticExpr, Stmt,
+    StructDef, TraitDef, TraitMember, Type, UseDecl, VariantFields, Visibility,
 };
 use crate::{lexer, parser};
+
+/// A resolver failure before it is rendered for a terminal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolverDiagnostic {
+    pub code: &'static str,
+    pub message: String,
+    pub document: Option<String>,
+    pub location: Option<SourceLocation>,
+}
+
+impl ResolverDiagnostic {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            code: "salicin.resolve",
+            message: message.into(),
+            document: None,
+            location: None,
+        }
+    }
+
+    fn at_document(document: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            document: Some(document.into()),
+            ..Self::new(message)
+        }
+    }
+
+    fn at_location(
+        document: impl Into<String>,
+        location: SourceLocation,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            document: Some(document.into()),
+            location: Some(location),
+            ..Self::new(message)
+        }
+    }
+
+    fn rendered(&self) -> String {
+        match (&self.document, &self.location) {
+            (Some(document), Some(location)) => {
+                format!(
+                    "{document}:{}:{}: error: {}",
+                    location.line, location.column, self.message
+                )
+            }
+            (Some(document), None) => format!("{document}: error: {}", self.message),
+            (None, _) => self.message.clone(),
+        }
+    }
+
+    pub(crate) fn rendered_without_document(&self) -> String {
+        match &self.location {
+            Some(location) => format!(
+                "error: {}:{}: {}",
+                location.line, location.column, self.message
+            ),
+            None => format!("error: {}", self.message),
+        }
+    }
+}
 
 /// One source file and the module assigned to it by package discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,7 +138,19 @@ pub fn is_valid_module_segment(segment: &str) -> bool {
 /// Unknown names remain unchanged so the normal semantic analyzer can report
 /// built-in, associated-member, and genuinely unresolved-name diagnostics.
 pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
-    resolve_packages(&[SourcePackage {
+    resolve_sources_diagnostics(sources).map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.rendered())
+            .collect()
+    })
+}
+
+/// Structured counterpart of [`resolve_sources`] for editor integrations.
+pub fn resolve_sources_diagnostics(
+    sources: &[SourceUnit],
+) -> Result<Program, Vec<ResolverDiagnostic>> {
+    resolve_packages_diagnostics(&[SourcePackage {
         id: PackageId(0),
         name: "source".to_owned(),
         version: "0.0.0".to_owned(),
@@ -93,6 +167,17 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
 /// internal, non-source-spellable namespace while each package keeps its own
 /// `root`, `super`, dependency aliases, and `pub(package)` boundary.
 pub fn resolve_packages(packages: &[SourcePackage]) -> Result<Program, Vec<String>> {
+    resolve_packages_diagnostics(packages).map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.rendered())
+            .collect()
+    })
+}
+
+pub fn resolve_packages_diagnostics(
+    packages: &[SourcePackage],
+) -> Result<Program, Vec<ResolverDiagnostic>> {
     resolve_packages_impl(packages, StandardLibraryExposure::user())
 }
 
@@ -111,6 +196,7 @@ pub(crate) fn resolve_embedded_sources(sources: &[SourceUnit]) -> Result<Program
         }],
         StandardLibraryExposure::none_for_embedded(),
     )
+    .map_err(render_resolver_diagnostics)
 }
 
 /// Resolve compiler-owned `alloc` modules while exposing the already-validated
@@ -131,6 +217,7 @@ pub(crate) fn resolve_embedded_alloc_sources(
         }],
         StandardLibraryExposure::core_for_embedded(),
     )
+    .map_err(render_resolver_diagnostics)
 }
 
 /// Resolve compiler-owned `std` modules while exposing the already-validated
@@ -149,14 +236,19 @@ pub(crate) fn resolve_embedded_std_sources(sources: &[SourceUnit]) -> Result<Pro
         }],
         StandardLibraryExposure::core_alloc_for_embedded(),
     )
+    .map_err(render_resolver_diagnostics)
 }
 
 fn resolve_packages_impl(
     packages: &[SourcePackage],
     standard_library: StandardLibraryExposure,
-) -> Result<Program, Vec<String>> {
-    let (prepared, dependencies, mut diagnostics) =
+) -> Result<Program, Vec<ResolverDiagnostic>> {
+    let (prepared, dependencies, layout_diagnostics) =
         validate_package_layout(packages, standard_library.allow_source_standard_modules);
+    let mut diagnostics = layout_diagnostics
+        .into_iter()
+        .map(ResolverDiagnostic::new)
+        .collect::<Vec<_>>();
     let mut parsed = Vec::with_capacity(prepared.len());
 
     for unit in prepared {
@@ -168,7 +260,17 @@ fn resolve_packages_impl(
                 package_id: unit.package_id,
                 program,
             }),
-            Err(error) => diagnostics.push(format!("{}: error: {error}", unit.source.path)),
+            Err(error) => diagnostics.push(ResolverDiagnostic::at_location(
+                &unit.source.path,
+                SourceLocation {
+                    path: Some(unit.source.path.clone()),
+                    line: error.line,
+                    column: error.column,
+                    end_line: error.line,
+                    end_column: error.column.saturating_add(1),
+                },
+                error.message,
+            )),
         }
     }
 
@@ -182,13 +284,20 @@ fn resolve_packages_impl(
         || standard_library.expose_alloc
         || standard_library.expose_std
     {
-        install_standard_namespaces(
+        let mut standard_diagnostics = Vec::new();
+        let required = install_standard_namespaces(
             &parsed,
             &mut symbols,
             &mut module_paths,
-            &mut collection_diagnostics,
+            &mut standard_diagnostics,
             standard_library,
-        )
+        );
+        collection_diagnostics.extend(
+            standard_diagnostics
+                .into_iter()
+                .map(ResolverDiagnostic::new),
+        );
+        required
     } else {
         HashMap::new()
     };
@@ -238,16 +347,17 @@ fn resolve_packages_impl(
         debug_assert_eq!(unit_items.len(), unit_visibilities.len());
         debug_assert_eq!(unit_items.len(), unit_origins.len());
 
-        let context = ResolveContext {
-            source_path: &source.path,
-            module_path: &module_path,
-            package_root: &package_root,
-        };
         for ((mut item, visibility), mut origin) in unit_items
             .into_iter()
             .zip(unit_visibilities)
             .zip(unit_origins)
         {
+            let context = ResolveContext {
+                source_path: &source.path,
+                module_path: &module_path,
+                package_root: &package_root,
+                location: origin.source.as_deref(),
+            };
             resolver.rewrite_item(&mut item, context);
             items.push(item);
             item_visibilities.push(visibility);
@@ -264,7 +374,7 @@ fn resolve_packages_impl(
     if let Err(message) = parser::infer_extend_parameters(&mut items) {
         resolver
             .diagnostics
-            .push(format!("<packages>: error: {message}"));
+            .push(ResolverDiagnostic::at_document("<packages>", message));
     }
 
     if resolver.diagnostics.is_empty() {
@@ -298,11 +408,21 @@ fn resolve_packages_impl(
         if diagnostics.is_empty() {
             Ok(program)
         } else {
-            Err(diagnostics)
+            Err(diagnostics
+                .into_iter()
+                .map(ResolverDiagnostic::new)
+                .collect())
         }
     } else {
         Err(resolver.diagnostics)
     }
+}
+
+fn render_resolver_diagnostics(diagnostics: Vec<ResolverDiagnostic>) -> Vec<String> {
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.rendered())
+        .collect()
 }
 
 struct ParsedUnit<'a> {
@@ -870,7 +990,7 @@ fn validate_dependency_graph(packages: &[SourcePackage]) -> Vec<String> {
 fn collect_symbols(
     parsed: &[ParsedUnit<'_>],
     dependencies: &DependencyTable,
-) -> (SymbolTable, HashSet<Vec<String>>, Vec<String>) {
+) -> (SymbolTable, HashSet<Vec<String>>, Vec<ResolverDiagnostic>) {
     let mut symbols: SymbolTable = HashMap::new();
     let mut symbol_namespaces = HashMap::<Vec<String>, HashSet<DeclarationNamespace>>::new();
     let mut module_paths = HashSet::new();
@@ -892,18 +1012,19 @@ fn collect_symbols(
 
     for unit in parsed {
         if unit.program.items.len() != unit.program.item_visibilities.len() {
-            diagnostics.push(format!(
-                "{}: error: internal error: parsed item visibility count does not match item count",
-                unit.source.path
+            diagnostics.push(ResolverDiagnostic::at_document(
+                &unit.source.path,
+                "internal error: parsed item visibility count does not match item count",
             ));
             continue;
         }
 
-        for (item, visibility) in unit
+        for ((item, visibility), origin) in unit
             .program
             .items
             .iter()
             .zip(&unit.program.item_visibilities)
+            .zip(&unit.program.item_origins)
         {
             let Some(name) = declaration_name(item) else {
                 continue;
@@ -913,9 +1034,10 @@ fn collect_symbols(
                     .get(&unit.package_root)
                     .is_some_and(|aliases| aliases.contains_key(name))
             {
-                diagnostics.push(format!(
-                    "{}: error: root declaration `{name}` conflicts with dependency alias `{name}`",
-                    unit.source.path
+                diagnostics.push(item_resolver_diagnostic(
+                    unit,
+                    origin,
+                    format!("root declaration `{name}` conflicts with dependency alias `{name}`"),
                 ));
             }
             let mut logical_path = unit.module_path.clone();
@@ -940,9 +1062,13 @@ fn collect_symbols(
                     || (namespace != DeclarationNamespace::Type
                         && occupied.contains(&DeclarationNamespace::Type));
                 if type_value_pair && *visibility != previous.visibility {
-                    diagnostics.push(format!(
-                        "{}: error: declaration `{name}` must use the same visibility as the same-named declaration in {}",
-                        unit.source.path, previous.source_path
+                    diagnostics.push(item_resolver_diagnostic(
+                        unit,
+                        origin,
+                        format!(
+                            "declaration `{name}` must use the same visibility as the same-named declaration in {}",
+                            previous.source_path
+                        ),
                     ));
                     continue;
                 }
@@ -972,29 +1098,41 @@ fn collect_symbols(
                         continue;
                     }
                     let Some(overloads) = function_overloads.get_mut(&logical_path) else {
-                        diagnostics.push(format!(
-                            "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
-                            unit.source.path,
-                            display_module(&unit.module_path),
-                            previous.source_path
+                        diagnostics.push(item_resolver_diagnostic(
+                            unit,
+                            origin,
+                            format!(
+                                "duplicate declaration `{name}` in module `{}`; first declared in {}",
+                                display_module(&unit.module_path),
+                                previous.source_path
+                            ),
                         ));
                         continue;
                     };
                     if *visibility != previous.visibility {
-                        diagnostics.push(format!(
-                            "{}: error: overloads of `{name}` must use the same visibility as the declaration in {}",
-                            unit.source.path, previous.source_path
+                        diagnostics.push(item_resolver_diagnostic(
+                            unit,
+                            origin,
+                            format!(
+                                "overloads of `{name}` must use the same visibility as the declaration in {}",
+                                previous.source_path
+                            ),
                         ));
                     } else if !overloads.insert(shape) && !(name == "foreign" && function.builtin) {
                         if let Some(test_name) = decode_test_registration_name(name) {
-                            diagnostics.push(format!(
-                                "{}: error: duplicate test registration name {test_name:?}",
-                                unit.source.path
+                            diagnostics.push(item_resolver_diagnostic(
+                                unit,
+                                origin,
+                                format!("duplicate test registration name {test_name:?}"),
                             ));
                         } else {
-                            diagnostics.push(format!(
-                                "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
-                                unit.source.path, previous.source_path
+                            diagnostics.push(item_resolver_diagnostic(
+                                unit,
+                                origin,
+                                format!(
+                                    "duplicate overload `{name}` has the same parameter labels as the declaration in {}",
+                                    previous.source_path
+                                ),
                             ));
                         }
                     }
@@ -1009,11 +1147,14 @@ fn collect_symbols(
                         .insert(namespace);
                     continue;
                 } else {
-                    diagnostics.push(format!(
-                        "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
-                        unit.source.path,
-                        display_module(&unit.module_path),
-                        previous.source_path
+                    diagnostics.push(item_resolver_diagnostic(
+                        unit,
+                        origin,
+                        format!(
+                            "duplicate declaration `{name}` in module `{}`; first declared in {}",
+                            display_module(&unit.module_path),
+                            previous.source_path
+                        ),
                     ));
                 }
             } else {
@@ -1066,16 +1207,33 @@ fn collect_symbols(
                 .get(&unit.module_path)
                 .is_some_and(|children| children.contains(name))
             {
-                diagnostics.push(format!(
-                    "{}: error: declaration `{name}` conflicts with child module `{}`",
-                    unit.source.path,
-                    canonical_name(&unit.module_path, name)
+                diagnostics.push(item_resolver_diagnostic(
+                    unit,
+                    origin,
+                    format!(
+                        "declaration `{name}` conflicts with child module `{}`",
+                        canonical_name(&unit.module_path, name)
+                    ),
                 ));
             }
         }
     }
 
     (symbols, module_paths, diagnostics)
+}
+
+fn item_resolver_diagnostic(
+    unit: &ParsedUnit<'_>,
+    origin: &ItemOrigin,
+    message: impl Into<String>,
+) -> ResolverDiagnostic {
+    if let Some(source) = origin.source.as_deref() {
+        let mut location = source.clone();
+        location.path = Some(unit.source.path.clone());
+        ResolverDiagnostic::at_location(&unit.source.path, location, message)
+    } else {
+        ResolverDiagnostic::at_document(&unit.source.path, message)
+    }
 }
 
 fn decode_test_registration_name(name: &str) -> Option<String> {
@@ -1825,6 +1983,17 @@ struct ImportDef {
     module_path: Vec<String>,
     package_root: Vec<String>,
     source_path: String,
+    source: Option<SourceLocation>,
+}
+
+impl ImportDef {
+    fn diagnostic(&self, message: impl Into<String>) -> ResolverDiagnostic {
+        if let Some(location) = &self.source {
+            ResolverDiagnostic::at_location(&self.source_path, location.clone(), message)
+        } else {
+            ResolverDiagnostic::at_document(&self.source_path, message)
+        }
+    }
 }
 
 fn collect_imports(
@@ -1832,16 +2001,17 @@ fn collect_imports(
     symbols: &SymbolTable,
     module_paths: &HashSet<Vec<String>>,
     dependencies: &DependencyTable,
-) -> (AliasTable, Vec<String>) {
+) -> (AliasTable, Vec<ResolverDiagnostic>) {
     let mut definitions: HashMap<Vec<String>, ImportDef> = HashMap::new();
     let mut diagnostics = Vec::new();
 
     for unit in parsed {
         for declaration in &unit.program.uses {
             let Some(alias) = import_alias(declaration) else {
-                diagnostics.push(format!(
-                    "{}: error: import path must not be empty",
-                    unit.source.path
+                diagnostics.push(use_resolver_diagnostic(
+                    unit,
+                    declaration,
+                    "import path must not be empty",
                 ));
                 continue;
             };
@@ -1851,14 +2021,15 @@ fn collect_imports(
                     .last()
                     .is_some_and(|target| target == "mut");
             if !is_valid_import_alias(&alias) && !finite_sort_keyword_alias {
-                diagnostics.push(format!(
-                    "{}: error: `{alias}` cannot be used as an import alias",
-                    unit.source.path
+                diagnostics.push(use_resolver_diagnostic(
+                    unit,
+                    declaration,
+                    format!("`{alias}` cannot be used as an import alias"),
                 ));
                 continue;
             }
             if let Err(message) = validate_import_path(declaration) {
-                diagnostics.push(format!("{}: error: {message}", unit.source.path));
+                diagnostics.push(use_resolver_diagnostic(unit, declaration, message));
                 continue;
             }
 
@@ -1871,29 +2042,47 @@ fn collect_imports(
                 module_path: unit.module_path.clone(),
                 package_root: unit.package_root.clone(),
                 source_path: unit.source.path.clone(),
+                source: declaration.source.as_ref().map(|span| SourceLocation {
+                    path: Some(unit.source.path.clone()),
+                    line: span.line,
+                    column: span.column,
+                    end_line: span.end_line,
+                    end_column: span.end_column,
+                }),
             };
 
             if let Some(symbol) = symbols.get(&key) {
-                diagnostics.push(format!(
-                    "{}: error: import alias `{}` conflicts with declaration in {}",
-                    unit.source.path, definition.alias, symbol.source_path
+                diagnostics.push(use_resolver_diagnostic(
+                    unit,
+                    declaration,
+                    format!(
+                        "import alias `{}` conflicts with declaration in {}",
+                        definition.alias, symbol.source_path
+                    ),
                 ));
             } else if unit.module_path == unit.package_root
                 && dependencies
                     .get(&unit.package_root)
                     .is_some_and(|aliases| aliases.contains_key(&definition.alias))
             {
-                diagnostics.push(format!(
-                    "{}: error: import alias `{}` conflicts with dependency alias `{}`",
-                    unit.source.path, definition.alias, definition.alias
+                diagnostics.push(use_resolver_diagnostic(
+                    unit,
+                    declaration,
+                    format!(
+                        "import alias `{}` conflicts with dependency alias `{}`",
+                        definition.alias, definition.alias
+                    ),
                 ));
             } else if let Some(previous) = definitions.get(&key) {
-                diagnostics.push(format!(
-                    "{}: error: duplicate import alias `{}` for `{}` and `{}`",
-                    unit.source.path,
-                    definition.alias,
-                    display_path(&previous.path),
-                    display_path(&definition.path)
+                diagnostics.push(use_resolver_diagnostic(
+                    unit,
+                    declaration,
+                    format!(
+                        "duplicate import alias `{}` for `{}` and `{}`",
+                        definition.alias,
+                        display_path(&previous.path),
+                        display_path(&definition.path)
+                    ),
                 ));
             } else {
                 definitions.insert(key, definition);
@@ -1921,6 +2110,28 @@ fn collect_imports(
         let _ = graph.resolve_alias(&key);
     }
     (graph.resolved, graph.diagnostics)
+}
+
+fn use_resolver_diagnostic(
+    unit: &ParsedUnit<'_>,
+    declaration: &UseDecl,
+    message: impl Into<String>,
+) -> ResolverDiagnostic {
+    if let Some(span) = &declaration.source {
+        ResolverDiagnostic::at_location(
+            &unit.source.path,
+            SourceLocation {
+                path: Some(unit.source.path.clone()),
+                line: span.line,
+                column: span.column,
+                end_line: span.end_line,
+                end_column: span.end_column,
+            },
+            message,
+        )
+    } else {
+        ResolverDiagnostic::at_document(&unit.source.path, message)
+    }
 }
 
 fn import_alias(declaration: &UseDecl) -> Option<String> {
@@ -1986,7 +2197,7 @@ struct ImportGraph<'a> {
     resolved: AliasTable,
     failed: HashSet<Vec<String>>,
     stack: Vec<Vec<String>>,
-    diagnostics: Vec<String>,
+    diagnostics: Vec<ResolverDiagnostic>,
 }
 
 #[derive(Clone)]
@@ -2017,15 +2228,18 @@ impl ImportGraph<'_> {
                 .map(|entry| entry.join("."))
                 .collect();
             cycle.push(key.join("."));
-            let source = self
-                .definitions
-                .get(key)
-                .map(|definition| definition.source_path.as_str())
-                .unwrap_or("<package>");
-            self.diagnostics.push(format!(
-                "{source}: error: cyclic import aliases: {}",
-                cycle.join(" -> ")
-            ));
+            let diagnostic = self.definitions.get(key).map_or_else(
+                || {
+                    ResolverDiagnostic::at_document(
+                        "<package>",
+                        format!("cyclic import aliases: {}", cycle.join(" -> ")),
+                    )
+                },
+                |definition| {
+                    definition.diagnostic(format!("cyclic import aliases: {}", cycle.join(" -> ")))
+                },
+            );
+            self.diagnostics.push(diagnostic);
             self.failed.extend(self.stack[start..].iter().cloned());
             return Err(());
         }
@@ -2052,13 +2266,12 @@ impl ImportGraph<'_> {
                 &definition.module_path,
                 &definition.package_root,
             ) {
-                self.diagnostics.push(format!(
-                    "{}: error: import `{}` cannot access {} target `{}`",
-                    definition.source_path,
+                self.diagnostics.push(definition.diagnostic(format!(
+                    "import `{}` cannot access {} target `{}`",
                     display_path(&definition.path),
                     visibility_description(access.visibility),
                     access.display
-                ));
+                )));
                 self.failed.insert(key.to_vec());
                 return Err(());
             }
@@ -2070,14 +2283,13 @@ impl ImportGraph<'_> {
             .min_by_key(|access| visibility_rank(access.visibility))
             .expect("every import target has an access boundary");
         if visibility_rank(definition.visibility) > visibility_rank(limiting_access.visibility) {
-            self.diagnostics.push(format!(
-                "{}: error: {} use `{}` cannot re-export {} target `{}`",
-                definition.source_path,
+            self.diagnostics.push(definition.diagnostic(format!(
+                "{} use `{}` cannot re-export {} target `{}`",
                 visibility_source(definition.visibility),
                 display_path(&definition.path),
                 visibility_description(limiting_access.visibility),
                 limiting_access.display
-            ));
+            )));
             self.failed.insert(key.to_vec());
             return Err(());
         }
@@ -2100,8 +2312,7 @@ impl ImportGraph<'_> {
         ) {
             Ok(candidates) => candidates,
             Err(message) => {
-                self.diagnostics
-                    .push(format!("{}: error: {message}", definition.source_path));
+                self.diagnostics.push(definition.diagnostic(message));
                 return Err(());
             }
         };
@@ -2124,11 +2335,10 @@ impl ImportGraph<'_> {
                 }
             }
         }
-        self.diagnostics.push(format!(
-            "{}: error: unknown import `{}`",
-            definition.source_path,
+        self.diagnostics.push(definition.diagnostic(format!(
+            "unknown import `{}`",
             display_path(&definition.path)
-        ));
+        )));
         Err(())
     }
 
@@ -3000,6 +3210,19 @@ struct ResolveContext<'a> {
     source_path: &'a str,
     module_path: &'a [String],
     package_root: &'a [String],
+    location: Option<&'a SourceLocation>,
+}
+
+impl ResolveContext<'_> {
+    fn diagnostic(self, message: impl Into<String>) -> ResolverDiagnostic {
+        if let Some(location) = self.location {
+            let mut location = location.clone();
+            location.path = Some(self.source_path.to_owned());
+            ResolverDiagnostic::at_location(self.source_path, location, message)
+        } else {
+            ResolverDiagnostic::at_document(self.source_path, message)
+        }
+    }
 }
 
 struct Resolver {
@@ -3008,7 +3231,7 @@ struct Resolver {
     aliases: AliasTable,
     dependencies: DependencyTable,
     required_imports: HashMap<String, String>,
-    diagnostics: Vec<String>,
+    diagnostics: Vec<ResolverDiagnostic>,
 }
 
 #[derive(Clone)]
@@ -3830,8 +4053,7 @@ impl Resolver {
                     ),
                     Visibility::Public => unreachable!("public names are always accessible"),
                 };
-                self.diagnostics
-                    .push(format!("{}: error: {message}", context.source_path));
+                self.diagnostics.push(context.diagnostic(message));
             }
         }
         Some(reference.canonical)
@@ -3955,11 +4177,10 @@ impl Resolver {
         if !logical_path.is_empty()
             && self.longest_module_prefix(logical_path, context) == logical_path.len()
         {
-            self.diagnostics.push(format!(
-                "{}: error: module `{}` cannot be used as {usage}",
-                context.source_path,
+            self.diagnostics.push(context.diagnostic(format!(
+                "module `{}` cannot be used as {usage}",
                 logical_path.join(".")
-            ));
+            )));
         }
     }
 
@@ -3977,10 +4198,9 @@ impl Resolver {
         let Some(import_path) = self.required_imports.get(name) else {
             return false;
         };
-        self.diagnostics.push(format!(
-            "{}: error: standard-library item `{name}` is not in the prelude; bind it with `let {name} = {import_path}`",
-            context.source_path
-        ));
+        self.diagnostics.push(context.diagnostic(format!(
+            "standard-library item `{name}` is not in the prelude; bind it with `let {name} = {import_path}`"
+        )));
         true
     }
 }

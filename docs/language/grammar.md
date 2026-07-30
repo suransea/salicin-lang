@@ -69,6 +69,26 @@ identifier outside this top-level form. The edition-owned
 declaration validates the body contract; syntax consumes the string as
 compile-time runner metadata.
 
+### 2.0.1 Declaration and guard forms
+
+These three spellings occupy different grammatical categories:
+
+- `test("name") { ... }` is a declaration form backed by the source-visible
+  `core.test` contract above. Its metadata name is consumed by syntax and its
+  body has type
+  `with(core.error.throwing(core.string.string))((): ())`.
+- `extend(pattern, ...) { ... }` is an implementation declaration. It adds
+  members or trait evidence and does not denote a callable value, so it has no
+  function declaration in `core`.
+- `requires(goals) expression` is an initializer guard. It constrains the
+  guarded declaration and does not denote a runtime callable or ordinary
+  computation value, so it likewise has no function declaration in `core`.
+
+`extend` and `requires` are nevertheless declared below as grammar
+productions and checked by the compiler's edition semantics. Giving either an
+ordinary `let` signature would incorrectly make it first-class and erase its
+binding or solver behavior.
+
 ### 2.1 Let Declarations
 
 ```ebnf

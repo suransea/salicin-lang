@@ -102,25 +102,34 @@ fn validate_sized_value_positions(program: &HirProgram) -> Result<(), Vec<Diagno
         .collect::<HashMap<_, _>>();
     for layout in &program.structs {
         if layout.representation == StructRepresentation::C && layout.fields.is_empty() {
-            diagnostics.push(Diagnostic::new(format!(
-                "C representation struct `{}` cannot be empty",
-                layout.source_name
-            )));
+            diagnostics.push(Diagnostic::at_origin(
+                format!(
+                    "C representation struct `{}` cannot be empty",
+                    layout.source_name
+                ),
+                Some(layout.origin.clone()),
+            ));
         }
         for field in &layout.fields {
             if !field.ty.is_sized_value() {
-                diagnostics.push(Diagnostic::new(format!(
-                    "field `{}.{}` has unsized type `{}`; store a borrow or pointer instead",
-                    layout.name, field.name, field.ty
-                )));
+                diagnostics.push(Diagnostic::at_origin(
+                    format!(
+                        "field `{}.{}` has unsized type `{}`; store a borrow or pointer instead",
+                        layout.name, field.name, field.ty
+                    ),
+                    Some(layout.origin.clone()),
+                ));
             }
             if layout.representation == StructRepresentation::C
                 && !c_field_type_is_valid(&field.ty, &struct_representations)
             {
-                diagnostics.push(Diagnostic::new(format!(
-                    "field `{}.{}` has type `{}`, which is not valid in `struct(c)`",
-                    layout.source_name, field.name, field.ty
-                )));
+                diagnostics.push(Diagnostic::at_origin(
+                    format!(
+                        "field `{}.{}` has type `{}`, which is not valid in `struct(c)`",
+                        layout.source_name, field.name, field.ty
+                    ),
+                    Some(layout.origin.clone()),
+                ));
             }
         }
     }

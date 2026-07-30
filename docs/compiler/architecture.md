@@ -23,8 +23,13 @@ The implementation lives under `compiler/src`:
   performs extend-parameter inference plus compile-parameter scope normalization and validation
   after syntax parsing; `parser/tests.rs` keeps parser regressions out of the implementation file.
 - `editor.rs` exposes token ranges and phased frontend diagnostics in UTF-8
-  bytes and zero-based UTF-16 coordinates. It analyzes either one document or
-  a complete source graph without coupling the compiler to an LSP transport.
+  bytes and zero-based UTF-16 coordinates. Diagnostics preserve document
+  identity, phase, severity, stable code, and optional exact range.
+  `modules.rs` produces structured resolver diagnostics and renders strings
+  only for legacy CLI/compiler entry points; the editor never parses rendered
+  messages or manufactures fallback locations. It analyzes either one
+  document or a complete source graph without coupling the compiler to an LSP
+  transport.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
   the private user-cache root and implements strict local lookup, validation,

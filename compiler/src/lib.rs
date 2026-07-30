@@ -40,7 +40,7 @@ fn format_codegen_diagnostics(diagnostics: Vec<codegen::Diagnostic>) -> Vec<Stri
 }
 
 fn parse_and_resolve_single_source(source: &str) -> Result<ast::Program, Vec<String>> {
-    modules::resolve_sources(&[modules::SourceUnit {
+    modules::resolve_sources_diagnostics(&[modules::SourceUnit {
         path: "<source>".into(),
         module_path: Vec::new(),
         source: source.into(),
@@ -49,12 +49,7 @@ fn parse_and_resolve_single_source(source: &str) -> Result<ast::Program, Vec<Str
     .map_err(|diagnostics| {
         diagnostics
             .into_iter()
-            .map(|diagnostic| {
-                diagnostic
-                    .strip_prefix("<source>: ")
-                    .unwrap_or(&diagnostic)
-                    .to_owned()
-            })
+            .map(|diagnostic| diagnostic.rendered_without_document())
             .collect()
     })
 }

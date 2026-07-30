@@ -989,6 +989,7 @@ impl Analyzer {
                     origin: ItemOrigin::default(),
                 }
             });
+        let origin = access.origin.clone();
         self.collection
             .nominal_accesses
             .insert(canonical.clone(), access);
@@ -1000,6 +1001,7 @@ impl Analyzer {
                     StructLayout {
                         name: canonical.clone(),
                         source_name: template_name.to_owned(),
+                        origin,
                         representation: self.collection.struct_templates[template_name]
                             .representation,
                         fields: Vec::new(),

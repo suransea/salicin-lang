@@ -50,8 +50,11 @@ history remains in the changelog.
 ## Now: LSP Diagnostics Baseline
 
 The transport-independent editor API already exposes UTF-8 byte ranges,
-UTF-16 positions, tokens, and phased diagnostics. This milestone adds a
-stateful workspace session and a minimal Language Server Protocol transport.
+UTF-16 positions, tokens, and diagnostics with structured document identity,
+phase, severity, stable code, and optional exact range. Resolver origins are
+no longer reconstructed from rendered messages and missing locations are
+never replaced with fallback coordinates. This milestone next adds a stateful
+workspace session and a minimal Language Server Protocol transport.
 
 The baseline covers workspace discovery, full-document synchronization,
 cancellation or supersession of stale analyses, diagnostics, and semantic
