@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::ast::SourceLocation;
-use crate::lexer::{lex, TokenKind};
+use crate::ast::{
+    EnumDef, ExtendDef, ExtendMember, Item, Program, SourceLocation, TraitMember, VariantFields,
+};
+use crate::lexer::{lex, Token, TokenKind};
 use crate::modules::{resolve_sources_diagnostics, ResolverDiagnostic, SourceUnit};
 use crate::{codegen, parser};
 
@@ -80,6 +82,57 @@ pub struct WorkspaceDocumentAnalysis {
 pub struct WorkspaceAnalysis {
     pub documents: Vec<WorkspaceDocumentAnalysis>,
     pub diagnostics: Vec<EditorDiagnostic>,
+    /// Source-backed semantic facts for this complete, successfully checked
+    /// snapshot. Invalid snapshots deliberately publish no partial index.
+    pub semantic_index: SemanticIndex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct SemanticSymbolId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticSymbolKind {
+    Declaration,
+    Alias,
+    Field,
+    Variant,
+    Overload,
+    TraitMember,
+    Implementation,
+    ExtensionMember,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticOccurrenceRole {
+    Declaration,
+    Reference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticSymbol {
+    pub id: SemanticSymbolId,
+    /// Deterministic within one immutable snapshot. This is a source identity,
+    /// never a generated specialization or native linker name.
+    pub key: String,
+    pub kind: SemanticSymbolKind,
+    pub document: String,
+    pub range: EditorRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticOccurrence {
+    pub document: String,
+    pub range: EditorRange,
+    pub role: SemanticOccurrenceRole,
+    /// Empty means unresolved, and multiple entries preserve ambiguity for a
+    /// later navigation query instead of selecting by traversal order.
+    pub symbols: Vec<SemanticSymbolId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SemanticIndex {
+    pub symbols: Vec<SemanticSymbol>,
+    pub occurrences: Vec<SemanticOccurrence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -510,6 +563,7 @@ pub fn analyze_workspace(
         .collect::<Vec<_>>();
     let mut documents = Vec::with_capacity(sources.len());
     let mut diagnostics = Vec::new();
+    let mut source_tokens = Vec::with_capacity(sources.len());
     for (source, index) in sources.iter().zip(&indexes) {
         let tokens = match lex(source.source) {
             Ok(tokens) => tokens,
@@ -531,6 +585,7 @@ pub fn analyze_workspace(
                     path: source.path.to_owned(),
                     tokens: Vec::new(),
                 });
+                source_tokens.push(Vec::new());
                 continue;
             }
         };
@@ -541,7 +596,7 @@ pub fn analyze_workspace(
                 range: index.byte_range(token.start_byte, token.end_byte),
             })
             .collect();
-        if let Err(error) = parser::parse_tokens(tokens) {
+        if let Err(error) = parser::parse_tokens(tokens.clone()) {
             diagnostics.push(EditorDiagnostic {
                 document: source.path.to_owned(),
                 phase: DiagnosticPhase::Parser,
@@ -555,11 +610,13 @@ pub fn analyze_workspace(
             path: source.path.to_owned(),
             tokens: editor_tokens,
         });
+        source_tokens.push(tokens);
     }
     if !diagnostics.is_empty() {
         return WorkspaceAnalysis {
             documents,
             diagnostics,
+            semantic_index: SemanticIndex::default(),
         };
     }
 
@@ -583,6 +640,7 @@ pub fn analyze_workspace(
             return WorkspaceAnalysis {
                 documents,
                 diagnostics,
+                semantic_index: SemanticIndex::default(),
             };
         }
     };
@@ -612,10 +670,508 @@ pub fn analyze_workspace(
             range,
         });
     }
+    let semantic_index = if diagnostics.is_empty() {
+        build_semantic_index(sources, &indexes, &source_tokens, &program)
+    } else {
+        SemanticIndex::default()
+    };
     WorkspaceAnalysis {
         documents,
         diagnostics,
+        semantic_index,
     }
+}
+
+#[derive(Debug)]
+struct PendingSemanticSymbol {
+    key: String,
+    kind: SemanticSymbolKind,
+    document_index: usize,
+    token_index: usize,
+}
+
+fn build_semantic_index(
+    sources: &[EditorSource<'_>],
+    indexes: &[SourceIndex<'_>],
+    tokens: &[Vec<Token>],
+    program: &Program,
+) -> SemanticIndex {
+    let mut pending = Vec::new();
+    let mut overload_counts = HashMap::<String, usize>::new();
+    for item in &program.items {
+        if let Item::Function(function) = item {
+            *overload_counts.entry(function.name.clone()).or_default() += 1;
+        }
+    }
+
+    for (item_index, (item, origin)) in program.items.iter().zip(&program.item_origins).enumerate()
+    {
+        let Some(location) = origin.source.as_deref() else {
+            continue;
+        };
+        let Some(path) = location.path.as_deref() else {
+            continue;
+        };
+        let Some(document_index) = sources.iter().position(|source| source.path == path) else {
+            continue;
+        };
+        let document_tokens = &tokens[document_index];
+        let Some(start) = document_tokens
+            .iter()
+            .position(|token| token.line == location.line && token.column == location.column)
+        else {
+            continue;
+        };
+        let end = program
+            .item_origins
+            .iter()
+            .skip(item_index + 1)
+            .filter_map(|next| next.source.as_deref())
+            .find(|next| next.path.as_deref() == Some(path))
+            .and_then(|next| {
+                document_tokens
+                    .iter()
+                    .position(|token| token.line == next.line && token.column == next.column)
+            })
+            .unwrap_or(document_tokens.len());
+
+        match item {
+            Item::Extend(extension) => collect_extension_symbols(
+                extension,
+                path,
+                document_index,
+                start,
+                end,
+                document_tokens,
+                &mut pending,
+            ),
+            _ => {
+                let Some((canonical, name)) = item_identity(item) else {
+                    continue;
+                };
+                let Some(name_token) = find_ident(document_tokens, start, end, name) else {
+                    continue;
+                };
+                let kind = match item {
+                    Item::TypeAlias(_) => SemanticSymbolKind::Alias,
+                    Item::Function(_)
+                        if overload_counts.get(canonical).copied().unwrap_or_default() > 1 =>
+                    {
+                        SemanticSymbolKind::Overload
+                    }
+                    _ => SemanticSymbolKind::Declaration,
+                };
+                let key = if kind == SemanticSymbolKind::Overload {
+                    format!(
+                        "{canonical}#{}:{}",
+                        path, document_tokens[name_token].start_byte
+                    )
+                } else {
+                    canonical.to_owned()
+                };
+                pending.push(PendingSemanticSymbol {
+                    key: key.clone(),
+                    kind,
+                    document_index,
+                    token_index: name_token,
+                });
+                collect_item_children(
+                    item,
+                    &key,
+                    document_index,
+                    name_token + 1,
+                    end,
+                    document_tokens,
+                    &mut pending,
+                );
+            }
+        }
+    }
+
+    collect_import_aliases(sources, tokens, &mut pending);
+    pending.sort_by_key(|symbol| {
+        (
+            symbol.document_index,
+            tokens[symbol.document_index][symbol.token_index].start_byte,
+            symbol.key.clone(),
+        )
+    });
+    pending.dedup_by(|left, right| {
+        left.document_index == right.document_index && left.token_index == right.token_index
+    });
+    let key_counts = pending.iter().fold(HashMap::new(), |mut counts, symbol| {
+        *counts.entry(symbol.key.clone()).or_insert(0usize) += 1;
+        counts
+    });
+    for symbol in &mut pending {
+        if key_counts.get(&symbol.key).copied().unwrap_or_default() > 1 {
+            let token = &tokens[symbol.document_index][symbol.token_index];
+            symbol.key = format!(
+                "{}@{}:{}",
+                symbol.key, sources[symbol.document_index].path, token.start_byte
+            );
+        }
+    }
+
+    let mut symbols = Vec::with_capacity(pending.len());
+    let mut declaration_tokens = HashMap::<(usize, usize), SemanticSymbolId>::new();
+    let mut spellings = HashMap::<String, Vec<SemanticSymbolId>>::new();
+    for pending in pending {
+        let id = SemanticSymbolId(symbols.len() as u32);
+        let token = &tokens[pending.document_index][pending.token_index];
+        let range = indexes[pending.document_index].byte_range(token.start_byte, token.end_byte);
+        let spelling = identifier_text(&token.kind).expect("semantic definitions use identifiers");
+        declaration_tokens.insert((pending.document_index, pending.token_index), id);
+        spellings.entry(spelling.to_owned()).or_default().push(id);
+        symbols.push(SemanticSymbol {
+            id,
+            key: pending.key,
+            kind: pending.kind,
+            document: sources[pending.document_index].path.to_owned(),
+            range,
+        });
+    }
+
+    let mut occurrences = symbols
+        .iter()
+        .map(|symbol| SemanticOccurrence {
+            document: symbol.document.clone(),
+            range: symbol.range,
+            role: SemanticOccurrenceRole::Declaration,
+            symbols: vec![symbol.id],
+        })
+        .collect::<Vec<_>>();
+    for (document_index, document_tokens) in tokens.iter().enumerate() {
+        let local_names = local_or_parameter_names(document_tokens);
+        for (token_index, token) in document_tokens.iter().enumerate() {
+            let Some(spelling) = identifier_text(&token.kind) else {
+                continue;
+            };
+            if declaration_tokens.contains_key(&(document_index, token_index))
+                || is_contextual_word(spelling)
+                || looks_like_label_or_parameter(document_tokens, token_index)
+            {
+                continue;
+            }
+            let mut targets = if local_names.contains(spelling) {
+                Vec::new()
+            } else {
+                spellings.get(spelling).cloned().unwrap_or_default()
+            };
+            targets.retain(|target| {
+                let symbol = &symbols[target.0 as usize];
+                !(symbol.kind == SemanticSymbolKind::Alias
+                    && symbol.document == sources[document_index].path
+                    && usize::try_from(symbol.range.start.line).ok()
+                        == Some(token.line.saturating_sub(1))
+                    && symbol.range.start.byte < token.start_byte)
+            });
+            targets.sort_unstable();
+            targets.dedup();
+            occurrences.push(SemanticOccurrence {
+                document: sources[document_index].path.to_owned(),
+                range: indexes[document_index].byte_range(token.start_byte, token.end_byte),
+                role: SemanticOccurrenceRole::Reference,
+                symbols: targets,
+            });
+        }
+    }
+    occurrences.sort_by_key(|occurrence| {
+        let document = sources
+            .iter()
+            .position(|source| source.path == occurrence.document)
+            .unwrap_or(usize::MAX);
+        (
+            document,
+            occurrence.range.start.byte,
+            occurrence.role == SemanticOccurrenceRole::Reference,
+        )
+    });
+    SemanticIndex {
+        symbols,
+        occurrences,
+    }
+}
+
+fn item_identity(item: &Item) -> Option<(&str, &str)> {
+    let canonical = match item {
+        Item::Function(definition) => &definition.name,
+        Item::Global(definition) => &definition.name,
+        Item::Struct(definition) => &definition.name,
+        Item::Enum(definition) => &definition.name,
+        Item::Effect(definition) => &definition.name,
+        Item::Sort(definition) => &definition.name,
+        Item::TypeForm(definition) => &definition.name,
+        Item::TypeAlias(definition) => &definition.name,
+        Item::Trait(definition) => &definition.name,
+        Item::Extend(_) => return None,
+    };
+    Some((
+        canonical,
+        canonical.rsplit("::").next().unwrap_or(canonical),
+    ))
+}
+
+fn collect_item_children(
+    item: &Item,
+    owner: &str,
+    document_index: usize,
+    start: usize,
+    end: usize,
+    tokens: &[Token],
+    pending: &mut Vec<PendingSemanticSymbol>,
+) {
+    let body_start = match item {
+        Item::Struct(_) => find_body_start(tokens, start, end, |kind| kind == &TokenKind::Struct),
+        Item::Enum(_) => find_body_start(tokens, start, end, |kind| kind == &TokenKind::Enum),
+        Item::Trait(_) => find_body_start(tokens, start, end, |kind| kind == &TokenKind::Trait),
+        Item::Effect(_) => find_body_start(
+            tokens,
+            start,
+            end,
+            |kind| matches!(kind, TokenKind::Ident(word) if word == "effect"),
+        ),
+        _ => None,
+    };
+    let mut cursor = body_start.unwrap_or(start);
+    let mut add = |name: &str, kind: SemanticSymbolKind, suffix: &str| {
+        if let Some(token_index) = find_ident(tokens, cursor, end, name) {
+            pending.push(PendingSemanticSymbol {
+                key: format!("{owner}.{suffix}:{name}"),
+                kind,
+                document_index,
+                token_index,
+            });
+            cursor = token_index + 1;
+        }
+    };
+    match item {
+        Item::Struct(definition) => {
+            for field in &definition.fields {
+                add(&field.name, SemanticSymbolKind::Field, "field");
+            }
+        }
+        Item::Enum(definition) => collect_enum_children(definition, &mut add),
+        Item::Trait(definition) => {
+            for member in &definition.members {
+                let name = match member {
+                    TraitMember::Function(function) => &function.name,
+                    TraitMember::AssociatedType { name, .. } => name,
+                };
+                add(name, SemanticSymbolKind::TraitMember, "member");
+            }
+        }
+        Item::Effect(definition) => {
+            for operation in &definition.operations {
+                add(
+                    &operation.name,
+                    SemanticSymbolKind::TraitMember,
+                    "operation",
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_enum_children(
+    definition: &EnumDef,
+    add: &mut impl FnMut(&str, SemanticSymbolKind, &str),
+) {
+    for variant in &definition.variants {
+        add(&variant.name, SemanticSymbolKind::Variant, "variant");
+        if let VariantFields::Named(fields) = &variant.fields {
+            for field in fields {
+                add(&field.name, SemanticSymbolKind::Field, "field");
+            }
+        }
+    }
+}
+
+fn collect_extension_symbols(
+    extension: &ExtendDef,
+    document: &str,
+    document_index: usize,
+    start: usize,
+    end: usize,
+    tokens: &[Token],
+    pending: &mut Vec<PendingSemanticSymbol>,
+) {
+    let key = format!("implementation@{document}:{}", tokens[start].start_byte);
+    pending.push(PendingSemanticSymbol {
+        key: key.clone(),
+        kind: SemanticSymbolKind::Implementation,
+        document_index,
+        token_index: start,
+    });
+    let mut cursor = tokens[start..end]
+        .iter()
+        .position(|token| token.kind == TokenKind::LBrace)
+        .map(|offset| start + offset + 1)
+        .unwrap_or(start + 1);
+    for member in &extension.members {
+        let name = match member {
+            ExtendMember::Function(function) => &function.name,
+            ExtendMember::Const(binding) => &binding.name,
+        };
+        if let Some(token_index) = find_ident(tokens, cursor, end, name) {
+            pending.push(PendingSemanticSymbol {
+                key: format!("{key}.member:{name}"),
+                kind: SemanticSymbolKind::ExtensionMember,
+                document_index,
+                token_index,
+            });
+            cursor = token_index + 1;
+        }
+    }
+}
+
+fn collect_import_aliases(
+    sources: &[EditorSource<'_>],
+    tokens: &[Vec<Token>],
+    pending: &mut Vec<PendingSemanticSymbol>,
+) {
+    for (document_index, source) in sources.iter().enumerate() {
+        let Ok(program) = parser::parse(source.source) else {
+            continue;
+        };
+        for declaration in program.uses {
+            let Some(span) = declaration.source else {
+                continue;
+            };
+            let explicit_alias = declaration.alias.as_deref();
+            let Some(name) = explicit_alias.or_else(|| declaration.path.last().map(String::as_str))
+            else {
+                continue;
+            };
+            let candidates = tokens[document_index]
+                .iter()
+                .enumerate()
+                .filter(|(_, token)| {
+                    token.line >= span.line
+                        && token.end_line <= span.end_line
+                        && identifier_text(&token.kind) == Some(name)
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            let token_index = explicit_alias
+                .and_then(|_| {
+                    candidates.iter().copied().find(|candidate| {
+                        matches!(
+                            tokens[document_index]
+                                .get(candidate + 1)
+                                .map(|token| &token.kind),
+                            Some(TokenKind::Equal)
+                        ) || candidate.checked_sub(1).is_some_and(|previous| {
+                            matches!(
+                                &tokens[document_index][previous].kind,
+                                TokenKind::Ident(word) if word == "as"
+                            )
+                        })
+                    })
+                })
+                .or_else(|| candidates.last().copied());
+            let Some(token_index) = token_index else {
+                continue;
+            };
+            let module = source.module_path.join("::");
+            pending.push(PendingSemanticSymbol {
+                key: format!("{module}::alias:{name}"),
+                kind: SemanticSymbolKind::Alias,
+                document_index,
+                token_index,
+            });
+        }
+    }
+}
+
+fn find_ident(tokens: &[Token], start: usize, end: usize, name: &str) -> Option<usize> {
+    tokens[start..end]
+        .iter()
+        .position(|token| identifier_text(&token.kind) == Some(name))
+        .map(|offset| start + offset)
+}
+
+fn find_body_start(
+    tokens: &[Token],
+    start: usize,
+    end: usize,
+    marker: impl Fn(&TokenKind) -> bool,
+) -> Option<usize> {
+    let marker = tokens[start..end]
+        .iter()
+        .position(|token| marker(&token.kind))?
+        + start;
+    tokens[marker + 1..end]
+        .iter()
+        .position(|token| token.kind == TokenKind::LBrace)
+        .map(|offset| marker + 1 + offset + 1)
+}
+
+fn identifier_text(kind: &TokenKind) -> Option<&str> {
+    match kind {
+        TokenKind::Ident(name) | TokenKind::RegionName(name) => Some(name),
+        TokenKind::Extend => Some("extend"),
+        _ => None,
+    }
+}
+
+fn looks_like_label_or_parameter(tokens: &[Token], index: usize) -> bool {
+    matches!(
+        tokens.get(index + 1).map(|token| &token.kind),
+        Some(TokenKind::Colon)
+    ) && !matches!(
+        index
+            .checked_sub(1)
+            .and_then(|index| tokens.get(index))
+            .map(|token| &token.kind),
+        Some(TokenKind::Dot)
+    )
+}
+
+fn local_or_parameter_names(tokens: &[Token]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    let mut brace_depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Let if brace_depth > 0 => {
+                if let Some(Token {
+                    kind: TokenKind::Ident(name),
+                    ..
+                }) = tokens.get(index + 1)
+                {
+                    names.insert(name.clone());
+                }
+            }
+            TokenKind::Ident(ref name) if looks_like_label_or_parameter(tokens, index) => {
+                names.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn is_contextual_word(word: &str) -> bool {
+    matches!(
+        word,
+        "use"
+            | "as"
+            | "effect"
+            | "test"
+            | "requires"
+            | "foreign"
+            | "builtin"
+            | "sort"
+            | "self"
+            | "shared"
+            | "parameters"
+            | "effects"
+            | "access"
+            | "c"
+    )
 }
 
 fn resolver_diagnostic(
@@ -899,6 +1455,204 @@ mod tests {
         let range = diagnostic.range.expect("cross-file semantic range");
         assert_eq!((range.start.line, range.start.utf16_character), (1, 2));
         assert_eq!((range.end.line, range.end.utf16_character), (1, 9));
+    }
+
+    #[test]
+    fn semantic_index_covers_source_identities_references_and_ambiguity() {
+        let module = Vec::new();
+        let source = "let option = core.option\nlet read = trait {\n  let read(self: borrow(self))(): i32\n}\n\nlet cell = struct { value: i32 }\nlet event = enum { value( value: i32 ), empty }\n\nlet choose(value: i32): i32 = { value }\nlet choose(other: u64): u64 = { other }\n\nextend(cell, read) {\n  let read(self: borrow(self))(): i32 = { self.value }\n}\n\nlet answer(value: cell): i32 = {\n  choose(value: value.read())\n}\n";
+        let analysis = analyze_workspace(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        );
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
+        let index = &analysis.semantic_index;
+        for kind in [
+            SemanticSymbolKind::Declaration,
+            SemanticSymbolKind::Alias,
+            SemanticSymbolKind::Field,
+            SemanticSymbolKind::Variant,
+            SemanticSymbolKind::Overload,
+            SemanticSymbolKind::TraitMember,
+            SemanticSymbolKind::Implementation,
+            SemanticSymbolKind::ExtensionMember,
+        ] {
+            assert!(
+                index.symbols.iter().any(|symbol| symbol.kind == kind),
+                "missing {kind:?}: {:?}",
+                index.symbols
+            );
+        }
+        let extension_member = index
+            .symbols
+            .iter()
+            .find(|symbol| symbol.kind == SemanticSymbolKind::ExtensionMember)
+            .expect("extension member");
+        assert!(
+            extension_member.range.start.byte > source.find("extend(cell, read)").unwrap(),
+            "implementation identity must point at the member declaration, not the trait reference"
+        );
+        let alias = index
+            .symbols
+            .iter()
+            .find(|symbol| symbol.kind == SemanticSymbolKind::Alias)
+            .expect("source alias");
+        assert_eq!(
+            &source[alias.range.start.byte..alias.range.end.byte],
+            "option"
+        );
+        assert_eq!(alias.range.start.byte, 4);
+        assert_eq!(
+            index
+                .symbols
+                .iter()
+                .map(|symbol| symbol.id.0)
+                .collect::<Vec<_>>(),
+            (0..index.symbols.len() as u32).collect::<Vec<_>>()
+        );
+        let unique_keys = index
+            .symbols
+            .iter()
+            .map(|symbol| symbol.key.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique_keys.len(), index.symbols.len());
+        let choose_references = index
+            .occurrences
+            .iter()
+            .filter(|occurrence| {
+                occurrence.role == SemanticOccurrenceRole::Reference
+                    && &source[occurrence.range.start.byte..occurrence.range.end.byte] == "choose"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(choose_references.len(), 1);
+        assert_eq!(
+            choose_references[0].symbols.len(),
+            2,
+            "overload ambiguity must remain explicit"
+        );
+
+        let repeated = analyze_workspace(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        );
+        assert_eq!(index, &repeated.semantic_index);
+    }
+
+    #[test]
+    fn semantic_index_routes_cross_module_references_and_rejects_partial_facts() {
+        let root_module = Vec::new();
+        let part_module = ["part".to_owned()];
+        let root = "let main(): i32 = { part.answer() }\n";
+        let part = "pub(package) let answer(): i32 = { 42 }\n";
+        let sources = [
+            EditorSource {
+                path: "src/main.sc",
+                module_path: &root_module,
+                source: root,
+                is_root: true,
+            },
+            EditorSource {
+                path: "src/part.sc",
+                module_path: &part_module,
+                source: part,
+                is_root: false,
+            },
+        ];
+        let analysis = analyze_workspace(&sources, DocumentTarget::Binary);
+        assert!(analysis.diagnostics.is_empty());
+        let answer = analysis
+            .semantic_index
+            .symbols
+            .iter()
+            .find(|symbol| symbol.key == "part::answer")
+            .expect("cross-module declaration");
+        let reference = analysis
+            .semantic_index
+            .occurrences
+            .iter()
+            .find(|occurrence| {
+                occurrence.role == SemanticOccurrenceRole::Reference
+                    && occurrence.document == "src/main.sc"
+                    && &root[occurrence.range.start.byte..occurrence.range.end.byte] == "answer"
+            })
+            .expect("cross-module reference");
+        assert_eq!(reference.symbols, vec![answer.id]);
+
+        let invalid = analyze_workspace(
+            &[EditorSource {
+                path: "src/main.sc",
+                module_path: &root_module,
+                source: "let main(): i32 = { missing }\n",
+                is_root: true,
+            }],
+            DocumentTarget::Binary,
+        );
+        assert!(!invalid.diagnostics.is_empty());
+        assert_eq!(invalid.semantic_index, SemanticIndex::default());
+    }
+
+    #[test]
+    fn semantic_index_preserves_unicode_and_never_misbinds_shadowed_names() {
+        let module = Vec::new();
+        let source = "let 值(): i32 = { 40 }\nlet shadowed(): i32 = { 1 }\nlet use_value(): i32 = { 值() + 2 }\nlet use_shadow(shadowed: i32): i32 = { shadowed }\n";
+        let analysis = analyze_workspace(
+            &[EditorSource {
+                path: "src/unicode.sc",
+                module_path: &module,
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        );
+        assert!(analysis.diagnostics.is_empty());
+        let unicode = analysis
+            .semantic_index
+            .symbols
+            .iter()
+            .find(|symbol| symbol.key == "值")
+            .expect("Unicode declaration");
+        let unicode_reference = analysis
+            .semantic_index
+            .occurrences
+            .iter()
+            .find(|occurrence| {
+                occurrence.role == SemanticOccurrenceRole::Reference
+                    && occurrence.range.start.byte > unicode.range.start.byte
+                    && &source[occurrence.range.start.byte..occurrence.range.end.byte] == "值"
+            })
+            .expect("Unicode reference");
+        assert_eq!(unicode_reference.symbols, vec![unicode.id]);
+
+        let shadowed_references = analysis
+            .semantic_index
+            .occurrences
+            .iter()
+            .filter(|occurrence| {
+                occurrence.role == SemanticOccurrenceRole::Reference
+                    && &source[occurrence.range.start.byte..occurrence.range.end.byte] == "shadowed"
+            })
+            .collect::<Vec<_>>();
+        assert!(!shadowed_references.is_empty());
+        assert!(
+            shadowed_references
+                .iter()
+                .all(|occurrence| occurrence.symbols.is_empty()),
+            "a local parameter must never bind to the same-spelled top-level declaration"
+        );
     }
 
     #[test]

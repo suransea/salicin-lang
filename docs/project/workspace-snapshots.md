@@ -43,8 +43,9 @@ resolver, and semantic checker over the complete snapshot; this milestone
 does not claim incremental recomputation.
 
 `WorkspaceSnapshotAnalysis` returns the exact snapshot identity and ordered
-document-version vector alongside tokens and diagnostics. This is the version
-that a future LSP transport must attach to published diagnostics.
+document-version vector alongside tokens, diagnostics, and the semantic
+occurrence index. Symbol IDs are interpreted only within that identity. This
+is the version that an LSP transport must attach to published results.
 
 ## Supersession
 

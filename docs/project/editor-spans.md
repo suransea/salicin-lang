@@ -2,7 +2,8 @@
 
 Status: implemented frontend contract
 
-The compiler exposes token and diagnostic locations through `compiler::editor`.
+The compiler exposes token, diagnostic, and semantic-occurrence locations
+through `compiler::editor`.
 This is the stable input boundary for a future Language Server Protocol
 transport; it is not itself an LSP server.
 
@@ -56,5 +57,7 @@ Regression coverage verifies:
 - honest omission of ranges for failures that do not identify a source
   construct.
 
-Incremental parsing, document synchronization, completion, hover, rename, and
-the JSON-RPC transport remain later LSP work.
+The source-backed occurrence table is specified by the
+[semantic occurrence index contract](semantic-occurrence-index.md). Definition,
+reference, hover, rename, completion, and partial-program queries remain later
+LSP work.

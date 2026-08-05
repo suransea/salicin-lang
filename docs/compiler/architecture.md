@@ -22,8 +22,11 @@ The implementation lives under `compiler/src`:
 - `lexer.rs`, `parser.rs`, and `ast.rs` define the source frontend. `parser/post_parse.rs`
   performs extend-parameter inference plus compile-parameter scope normalization and validation
   after syntax parsing; `parser/tests.rs` keeps parser regressions out of the implementation file.
-- `editor.rs` exposes token ranges and phased frontend diagnostics in UTF-8
-  bytes and zero-based UTF-16 coordinates. Diagnostics preserve document
+- `editor.rs` exposes token ranges, phased frontend diagnostics, and a
+  source-backed semantic occurrence index in UTF-8 bytes and zero-based UTF-16
+  coordinates. Dense symbol IDs are scoped to one immutable snapshot;
+  ambiguous references retain ordered candidate sets and generated
+  specializations never enter the index. Diagnostics preserve document
   identity, phase, severity, stable code, and optional exact range.
   `modules.rs` produces structured resolver diagnostics and renders strings
   only for legacy CLI/compiler entry points; the editor never parses rendered

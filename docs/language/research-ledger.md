@@ -588,6 +588,32 @@ is needed for today's fixed boolean guards.
   therefore delays only an ordinary typed closure and introduces no general
   fragment substitution.
 
+### Snapshot-Local Semantic Identity Before Navigation
+
+Reviewed on 2026-08-05 for NAV-1. Salicin separates a semantic symbol's
+snapshot-local identity from its source range. A reference records an ordered
+candidate set, including an empty or multi-candidate set, instead of inventing
+an answer from text position or traversal order. Generated specialization
+names are absent from the source index.
+
+- [A Stable Lossless Syntax Tree for Real-Time Collaborative Programming
+  (ECOOP 2026)](https://doi.org/10.4230/LIPIcs.ECOOP.2026.5) separates a
+  byte-preserving syntax representation from an identity layer whose entities
+  remain addressable across accepted program states. Salicin currently makes
+  the narrower guarantee needed by its immutable analysis model: IDs are
+  deterministic within one snapshot, and ranges remain independent facts.
+- [Mechanically Translating Iterative Dataflow Analysis to Algebraic Program
+  Analysis (OOPSLA 2026)](https://2026.splashcon.org/details/oopsla-2026/17/Mechanically-Translating-Iterative-Dataflow-Analysis-to-Algebraic-Program-Analysis)
+  treats finite compositional facts as a basis for incremental and repeated
+  queries. Salicin's finite symbol/occurrence tables likewise precede query
+  APIs and make ambiguity explicit, without claiming incremental recomputation
+  yet.
+- [Live Feedback through Incremental Program Analysis (JOT
+  2026)](https://doi.org/10.5381/jot.2026.25.1.a6) separates analysis
+  specifications from their incremental runtime. NAV-1 therefore defines the
+  complete source fact contract independently of future caching or partial
+  syntax recovery.
+
 ## Review Gate
 
 Before extending the static language:

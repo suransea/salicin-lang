@@ -52,6 +52,12 @@ current capability inventory. It does not record release history; see the
 - full semantic-token requests backed by ordered compiler tokens, a stable
   keyword/variable/type-parameter/string/number/operator legend, UTF-16 delta
   encoding for Unicode and non-BMP text, and snapshot-revision result IDs;
+- a snapshot-local semantic occurrence index with dense deterministic source
+  symbol IDs for declarations, aliases, fields, variants, overloads,
+  trait/effect members, implementations, and extension members; exact UTF-8
+  and UTF-16 declaration/reference ranges; explicit zero/one/many reference
+  candidates; cross-module identity; no partial index on invalid snapshots;
+  and no compiler-generated specialization names;
 - an editor-independent LSP acceptance boundary with concurrent protocol
   reading, a coalescing analysis worker, stale-completion suppression,
   `RequestCancelled`/`ContentModified` request completion, recorded JSONL

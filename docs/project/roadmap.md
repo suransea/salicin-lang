@@ -51,10 +51,11 @@ history remains in the changelog.
 ## Now: Semantic Navigation
 
 Navigation follows the LSP baseline because it needs long-lived analysis
-snapshots and stable source identities. The compiler will expose a semantic
-occurrence index that distinguishes declarations, references, overloads,
-aliases, fields, variants, traits, implementations, and generated
-specializations without exposing compiler-generated names.
+snapshots and stable source identities. The implemented semantic occurrence
+index distinguishes declarations, references, overloads, aliases, fields,
+variants, traits, and implementations while omitting generated
+specializations and their compiler-private names. Active work exposes typed
+definition, reference, and hover queries over those facts.
 
 Exit conditions:
 

@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.251.0 - 2026-08-05
+
+- Completed NAV-1 with a source-backed semantic occurrence index attached to
+  successful workspace analyses. Dense IDs are deterministic within one
+  immutable snapshot and cover declarations, aliases, fields, variants,
+  overloads, trait/effect members, implementations, and extension members.
+- Recorded exact UTF-8/UTF-16 declaration and reference ranges with explicit
+  zero/one/many candidate sets. Cross-module references retain canonical
+  identity, overload ambiguity is not guessed by traversal order, and invalid
+  snapshots publish no partial semantic facts.
+- Excluded compiler-generated specializations and native names from the source
+  index; documented the query, package-ownership, partial-program, and rename
+  boundaries for NAV-2/NAV-3. Updated the research ledger, roadmap, TODO,
+  architecture, and implementation status.
+
 ## 0.250.0 - 2026-07-30
 
 - Completed syntax-contract acceptance with token-preserving, idempotent
