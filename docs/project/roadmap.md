@@ -48,30 +48,7 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Semantic Navigation
-
-Navigation follows the LSP baseline because it needs long-lived analysis
-snapshots and stable source identities. The implemented semantic occurrence
-index distinguishes declarations, references, overloads, aliases, fields,
-variants, traits, and implementations while omitting generated
-specializations and their compiler-private names. Definition, reference, and
-hover queries now work across packages, preserve ambiguity, and expose
-dependency ownership. Active work uses those identities for safe rename edits
-or a precise refusal.
-
-Exit conditions:
-
-- source declarations and uses have stable identities within one snapshot;
-- go-to-definition, references, and hover work across modules and packages;
-- rename produces a complete, non-overlapping workspace edit or refuses the
-  operation when identity or visibility is ambiguous;
-- aliases, shadowing, overloads, Unicode identifiers, and dependency-owned
-  read-only source have explicit tests and rejection behavior.
-
-Completion remains a separate follow-up because candidate ranking and partial
-syntax recovery require their own contract.
-
-## Later: Registry Source Dependencies
+## Now: Registry Source Dependencies
 
 The implemented resolver already fixes package provider identity, lockfile
 semantics, and workspace/path resolution. The

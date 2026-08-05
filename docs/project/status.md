@@ -63,6 +63,12 @@ current capability inventory. It does not record release history; see the
   named-overload narrowing, explicit ambiguity, and dependency ownership;
   `salic lsp` advertises all three capabilities and rejects dependency document
   synchronization as read-only;
+- binding-preserving prepare-rename and rename over immutable snapshots, with
+  complete stable non-overlapping edits, NFC identifier validation, versioned
+  LSP `documentChanges`, whole-package post-edit reanalysis, and occurrence
+  relation verification; capture, collision, ambiguity, generated,
+  compiler-owned, foreign, dependency-owned, and unchanged targets are refused
+  without partial edits;
 - an editor-independent LSP acceptance boundary with concurrent protocol
   reading, a coalescing analysis worker, stale-completion suppression,
   `RequestCancelled`/`ContentModified` request completion, recorded JSONL
@@ -86,8 +92,8 @@ current capability inventory. It does not record release history; see the
   package providers and aliases, module paths, source bytes, corrupt entries,
   failed compilation, concurrent writers, and concurrent warm readers.
 
-The LSP transport does not provide incremental range edits, completion, or
-rename. Its diagnostics, tokens, semantic navigation, synchronization,
+The LSP transport does not provide incremental range edits or completion. Its
+diagnostics, tokens, semantic navigation and rename, synchronization,
 cancellation, and protocol acceptance baseline is complete.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
 performs complete source analysis. Per-package reuse, remote caching, native

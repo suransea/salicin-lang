@@ -8,6 +8,10 @@
 {"expect":{"id":3,"result":[{"uri":"$ROOT_URI"},{"uri":"$MODULE_URI"}]}}
 {"send":{"jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27}}}}
 {"expect":{"id":4,"result":{"contents":{"kind":"markdown"},"range":{"start":{"line":0,"character":27},"end":{"line":0,"character":32}}}}}
-{"send":{"jsonrpc":"2.0","id":5,"method":"shutdown"}}
-{"expect":{"id":5,"result":null}}
+{"send":{"jsonrpc":"2.0","id":5,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27}}}}
+{"expect":{"id":5,"result":{"placeholder":"value","range":{"start":{"line":0,"character":27},"end":{"line":0,"character":32}}}}}
+{"send":{"jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27},"newName":"compute"}}}
+{"expect":{"id":6,"result":{"documentChanges":[{"textDocument":{"uri":"$ROOT_URI","version":null},"edits":[{"newText":"compute"}]},{"textDocument":{"uri":"$MODULE_URI","version":null},"edits":[{"newText":"compute"}]}]}}}
+{"send":{"jsonrpc":"2.0","id":7,"method":"shutdown"}}
+{"expect":{"id":7,"result":null}}
 {"send":{"jsonrpc":"2.0","method":"exit"}}

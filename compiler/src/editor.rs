@@ -112,6 +112,14 @@ pub enum SemanticSymbolKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticRenamePolicy {
+    Allowed,
+    Foreign,
+    CompilerOwned,
+    NonIdentifier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SemanticOccurrenceRole {
     Declaration,
     Reference,
@@ -123,6 +131,7 @@ pub struct SemanticSymbol {
     /// Deterministic within one immutable snapshot. This is a source identity,
     /// never a generated specialization or native linker name.
     pub key: String,
+    pub name: String,
     pub kind: SemanticSymbolKind,
     pub document: String,
     pub range: EditorRange,
@@ -132,6 +141,7 @@ pub struct SemanticSymbol {
     /// Source-backed declaration header suitable for a concise hover. It
     /// never contains generated specialization or native-linker names.
     pub detail: String,
+    pub rename_policy: SemanticRenamePolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +196,42 @@ pub struct HoverResult {
     pub detail: String,
     pub range: EditorRange,
     pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrepareRenameResult {
+    pub symbol: SemanticSymbolId,
+    pub range: EditorRange,
+    pub placeholder: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTextEdit {
+    pub document: String,
+    pub range: EditorRange,
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameResult {
+    pub symbol: SemanticSymbolId,
+    pub edits: Vec<WorkspaceTextEdit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameError {
+    SnapshotMismatch,
+    NotFound,
+    Ambiguous(Vec<SemanticSymbolId>),
+    InvalidName(String),
+    UnchangedName,
+    ReadOnlyTarget(String),
+    ReadOnlyReference(String),
+    ForeignTarget,
+    CompilerOwnedTarget,
+    UnsupportedTarget,
+    OverlappingEdits,
+    BindingConflict,
 }
 
 impl SemanticIndex {
@@ -254,6 +300,28 @@ impl SemanticIndex {
         })
     }
 
+    pub fn prepare_rename(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+    ) -> Result<PrepareRenameResult, RenameError> {
+        let occurrence = self
+            .occurrence_at(document, position)
+            .ok_or(RenameError::NotFound)?;
+        let id = match occurrence.symbols.as_slice() {
+            [] => return Err(RenameError::NotFound),
+            [symbol] => *symbol,
+            symbols => return Err(RenameError::Ambiguous(symbols.to_vec())),
+        };
+        let symbol = &self.symbols[id.0 as usize];
+        validate_rename_target(symbol)?;
+        Ok(PrepareRenameResult {
+            symbol: id,
+            range: occurrence.range,
+            placeholder: symbol.name.clone(),
+        })
+    }
+
     fn select_symbol(
         &self,
         document: &str,
@@ -277,6 +345,18 @@ impl SemanticIndex {
         self.occurrences.iter().find(|occurrence| {
             occurrence.document == document && range_contains(occurrence.range, position)
         })
+    }
+}
+
+fn validate_rename_target(symbol: &SemanticSymbol) -> Result<(), RenameError> {
+    if !symbol.editable {
+        return Err(RenameError::ReadOnlyTarget(symbol.document.clone()));
+    }
+    match symbol.rename_policy {
+        SemanticRenamePolicy::Allowed => Ok(()),
+        SemanticRenamePolicy::Foreign => Err(RenameError::ForeignTarget),
+        SemanticRenamePolicy::CompilerOwned => Err(RenameError::CompilerOwnedTarget),
+        SemanticRenamePolicy::NonIdentifier => Err(RenameError::UnsupportedTarget),
     }
 }
 
@@ -697,6 +777,186 @@ impl WorkspaceSnapshot {
             analysis: analyze_workspace_packages(&packages, self.target),
         }
     }
+
+    pub fn rename(
+        &self,
+        analysis: &WorkspaceSnapshotAnalysis,
+        document: &str,
+        position: SemanticPosition,
+        new_name: &str,
+    ) -> Result<RenameResult, RenameError> {
+        if analysis.id != self.id {
+            return Err(RenameError::SnapshotMismatch);
+        }
+        validate_new_identifier(new_name)?;
+        let prepared = analysis
+            .analysis
+            .semantic_index
+            .prepare_rename(document, position)?;
+        let symbol = &analysis.analysis.semantic_index.symbols[prepared.symbol.0 as usize];
+        let declaration_source = self
+            .documents
+            .iter()
+            .find(|document| document.path == symbol.document)
+            .ok_or(RenameError::BindingConflict)?;
+        let old_name = declaration_source
+            .source
+            .get(symbol.range.start.byte..symbol.range.end.byte)
+            .ok_or(RenameError::BindingConflict)?;
+        if old_name == new_name {
+            return Err(RenameError::UnchangedName);
+        }
+
+        let mut selected = Vec::new();
+        for occurrence in &analysis.analysis.semantic_index.occurrences {
+            if !occurrence.symbols.contains(&prepared.symbol) {
+                continue;
+            }
+            if occurrence.symbols.as_slice() != [prepared.symbol] {
+                return Err(RenameError::Ambiguous(occurrence.symbols.clone()));
+            }
+            let source = self
+                .documents
+                .iter()
+                .find(|document| document.path == occurrence.document)
+                .ok_or(RenameError::BindingConflict)?;
+            if !source.editable {
+                return Err(RenameError::ReadOnlyReference(source.path.clone()));
+            }
+            selected.push((occurrence.clone(), source.path.clone()));
+        }
+        selected.sort_by_key(|(occurrence, _)| {
+            (
+                occurrence.document.clone(),
+                occurrence.range.start.byte,
+                occurrence.range.end.byte,
+            )
+        });
+        if selected.windows(2).any(|pair| {
+            pair[0].0.document == pair[1].0.document
+                && pair[0].0.range.end.byte > pair[1].0.range.start.byte
+        }) {
+            return Err(RenameError::OverlappingEdits);
+        }
+
+        let edits = selected
+            .iter()
+            .map(|(occurrence, document)| WorkspaceTextEdit {
+                document: document.clone(),
+                range: occurrence.range,
+                new_text: new_name.to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let mut rewritten = self.clone();
+        let mut expected = Vec::with_capacity(selected.len());
+        for document in &mut rewritten.documents {
+            let document_occurrences = selected
+                .iter()
+                .filter(|(occurrence, _)| occurrence.document == document.path)
+                .map(|(occurrence, _)| occurrence)
+                .collect::<Vec<_>>();
+            if document_occurrences.is_empty() {
+                continue;
+            }
+            let mut output = String::with_capacity(document.source.len());
+            let mut cursor = 0usize;
+            let mut ranges = Vec::with_capacity(document_occurrences.len());
+            for occurrence in document_occurrences {
+                let start = occurrence.range.start.byte;
+                let end = occurrence.range.end.byte;
+                let prefix = document
+                    .source
+                    .get(cursor..start)
+                    .ok_or(RenameError::OverlappingEdits)?;
+                output.push_str(prefix);
+                let rewritten_start = output.len();
+                output.push_str(new_name);
+                ranges.push((rewritten_start, output.len(), occurrence.role));
+                cursor = end;
+            }
+            output.push_str(
+                document
+                    .source
+                    .get(cursor..)
+                    .ok_or(RenameError::OverlappingEdits)?,
+            );
+            document.source = output;
+            let index = SourceIndex::new(&document.source);
+            expected.extend(ranges.into_iter().map(|(start, end, role)| {
+                (document.path.clone(), index.byte_range(start, end), role)
+            }));
+        }
+
+        let verified = rewritten.analyze();
+        if !verified.analysis.diagnostics.is_empty() {
+            return Err(RenameError::BindingConflict);
+        }
+        let declaration = expected
+            .iter()
+            .find(|(_, _, role)| *role == SemanticOccurrenceRole::Declaration)
+            .ok_or(RenameError::BindingConflict)?;
+        let renamed_id = verified
+            .analysis
+            .semantic_index
+            .occurrences
+            .iter()
+            .find(|occurrence| {
+                occurrence.document == declaration.0
+                    && occurrence.range == declaration.1
+                    && occurrence.role == SemanticOccurrenceRole::Declaration
+            })
+            .and_then(|occurrence| match occurrence.symbols.as_slice() {
+                [symbol] => Some(*symbol),
+                _ => None,
+            })
+            .ok_or(RenameError::BindingConflict)?;
+        let binding_preserved = expected.iter().all(|(document, range, role)| {
+            verified
+                .analysis
+                .semantic_index
+                .occurrences
+                .iter()
+                .any(|occurrence| {
+                    occurrence.document == *document
+                        && occurrence.range == *range
+                        && occurrence.role == *role
+                        && occurrence.symbols.as_slice() == [renamed_id]
+                })
+        });
+        let renamed_occurrences = verified
+            .analysis
+            .semantic_index
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.symbols.contains(&renamed_id))
+            .count();
+        if !binding_preserved || renamed_occurrences != expected.len() {
+            return Err(RenameError::BindingConflict);
+        }
+        Ok(RenameResult {
+            symbol: prepared.symbol,
+            edits,
+        })
+    }
+}
+
+fn validate_new_identifier(name: &str) -> Result<(), RenameError> {
+    if name.is_empty() || name == "_" {
+        return Err(RenameError::InvalidName(name.to_owned()));
+    }
+    let tokens = lex(name).map_err(|_| RenameError::InvalidName(name.to_owned()))?;
+    match tokens.as_slice() {
+        [Token {
+            kind: TokenKind::Ident(normalized),
+            start_byte: 0,
+            end_byte,
+            ..
+        }, Token {
+            kind: TokenKind::Eof,
+            ..
+        }] if *end_byte == name.len() && normalized == name => Ok(()),
+        _ => Err(RenameError::InvalidName(name.to_owned())),
+    }
 }
 
 /// Lex, parse, resolve, and type-check one editor document without generating
@@ -971,6 +1231,7 @@ struct PendingSemanticSymbol {
     kind: SemanticSymbolKind,
     document_index: usize,
     token_index: usize,
+    rename_policy: SemanticRenamePolicy,
 }
 
 fn build_semantic_index(
@@ -1058,6 +1319,7 @@ fn build_semantic_index(
                     kind,
                     document_index,
                     token_index: name_token,
+                    rename_policy: item_rename_policy(item),
                 });
                 collect_item_children(
                     item,
@@ -1110,6 +1372,7 @@ fn build_semantic_index(
         symbols.push(SemanticSymbol {
             id,
             key: pending.key,
+            name: spelling.to_owned(),
             kind: pending.kind,
             document: sources[pending.document_index].path.to_owned(),
             range,
@@ -1123,6 +1386,7 @@ fn build_semantic_index(
                 })
             }),
             detail: hover_detail(sources[pending.document_index].source, token),
+            rename_policy: pending.rename_policy,
         });
     }
 
@@ -1247,6 +1511,14 @@ fn item_identity(item: &Item) -> Option<(&str, &str)> {
     ))
 }
 
+fn item_rename_policy(item: &Item) -> SemanticRenamePolicy {
+    match item {
+        Item::Function(function) if function.foreign.is_some() => SemanticRenamePolicy::Foreign,
+        Item::Function(function) if function.builtin => SemanticRenamePolicy::CompilerOwned,
+        _ => SemanticRenamePolicy::Allowed,
+    }
+}
+
 fn collect_item_children(
     item: &Item,
     owner: &str,
@@ -1276,6 +1548,7 @@ fn collect_item_children(
                 kind,
                 document_index,
                 token_index,
+                rename_policy: SemanticRenamePolicy::Allowed,
             });
             cursor = token_index + 1;
         }
@@ -1338,6 +1611,7 @@ fn collect_extension_symbols(
         kind: SemanticSymbolKind::Implementation,
         document_index,
         token_index: start,
+        rename_policy: SemanticRenamePolicy::NonIdentifier,
     });
     let mut cursor = tokens[start..end]
         .iter()
@@ -1355,6 +1629,15 @@ fn collect_extension_symbols(
                 kind: SemanticSymbolKind::ExtensionMember,
                 document_index,
                 token_index,
+                rename_policy: match member {
+                    ExtendMember::Function(function) if function.foreign.is_some() => {
+                        SemanticRenamePolicy::Foreign
+                    }
+                    ExtendMember::Function(function) if function.builtin => {
+                        SemanticRenamePolicy::CompilerOwned
+                    }
+                    _ => SemanticRenamePolicy::Allowed,
+                },
             });
             cursor = token_index + 1;
         }
@@ -1415,6 +1698,7 @@ fn collect_import_aliases(
                 kind: SemanticSymbolKind::Alias,
                 document_index,
                 token_index,
+                rename_policy: SemanticRenamePolicy::Allowed,
             });
         }
     }
@@ -2136,6 +2420,16 @@ mod tests {
         assert!(
             matches!(ambiguous_result, SemanticQueryResult::Ambiguous(ref ids) if ids.len() == 2)
         );
+        assert!(matches!(
+            ambiguous.prepare_rename(
+                "src/lib.sc",
+                SemanticPosition {
+                    line: 2,
+                    utf16_character: occurrence_character,
+                }
+            ),
+            Err(RenameError::Ambiguous(ref ids)) if ids.len() == 2
+        ));
         assert_eq!(
             analysis.semantic_index.hover(
                 "src/lib.sc",
@@ -2146,6 +2440,251 @@ mod tests {
             ),
             SemanticQueryResult::NotFound
         );
+    }
+
+    #[test]
+    fn rename_produces_complete_cross_module_unicode_edits_and_preserves_bindings() {
+        let root_module = Vec::new();
+        let part_module = vec!["part".to_owned()];
+        let root = "let main(): i32 = { part.answer() }\n";
+        let part = "pub(package) let answer(): i32 = { 42 }\n";
+        let session = WorkspaceSession::new(
+            &[
+                EditorSource {
+                    path: "src/main.sc",
+                    module_path: &root_module,
+                    source: root,
+                    is_root: true,
+                },
+                EditorSource {
+                    path: "src/part.sc",
+                    module_path: &part_module,
+                    source: part,
+                    is_root: false,
+                },
+            ],
+            DocumentTarget::Binary,
+        )
+        .unwrap();
+        let snapshot = session.snapshot();
+        let analysis = snapshot.analyze();
+        let answer = root.find("answer").unwrap();
+        let renamed = snapshot
+            .rename(
+                &analysis,
+                "src/main.sc",
+                SemanticPosition {
+                    line: 0,
+                    utf16_character: u32::try_from(answer).unwrap(),
+                },
+                "答案",
+            )
+            .unwrap();
+        assert_eq!(renamed.edits.len(), 2);
+        assert!(renamed.edits.windows(2).all(|edits| {
+            edits[0].document < edits[1].document
+                || edits[0].range.end.byte <= edits[1].range.start.byte
+        }));
+        assert!(renamed.edits.iter().all(|edit| edit.new_text == "答案"));
+    }
+
+    #[test]
+    fn rename_handles_aliases_and_selected_overloads_without_textual_overreach() {
+        let module = Vec::new();
+        let alias_source =
+            "let option = core.option\nlet make(): option(i32) = { option.some(1) }\n";
+        let alias_session = WorkspaceSession::new(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source: alias_source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        )
+        .unwrap();
+        let snapshot = alias_session.snapshot();
+        let analysis = snapshot.analyze();
+        let alias = snapshot
+            .rename(
+                &analysis,
+                "src/lib.sc",
+                SemanticPosition {
+                    line: 0,
+                    utf16_character: 4,
+                },
+                "maybe",
+            )
+            .unwrap();
+        assert_eq!(alias.edits.len(), 3);
+
+        let overload_source = "let choose(value: i32): i32 = { value }\nlet choose(other: u64): u64 = { other }\nlet use_choose(): i32 = { choose(value: 1) }\n";
+        let overload_session = WorkspaceSession::new(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source: overload_source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        )
+        .unwrap();
+        let snapshot = overload_session.snapshot();
+        let analysis = snapshot.analyze();
+        let call = overload_source.rfind("choose").unwrap();
+        let selected = snapshot
+            .rename(
+                &analysis,
+                "src/lib.sc",
+                SemanticPosition {
+                    line: 2,
+                    utf16_character: u32::try_from(
+                        call - overload_source[..call].rfind('\n').unwrap() - 1,
+                    )
+                    .unwrap(),
+                },
+                "select",
+            )
+            .unwrap();
+        assert_eq!(selected.edits.len(), 2);
+        assert_eq!(
+            selected
+                .edits
+                .iter()
+                .filter(|edit| edit.range.start.line < 2)
+                .count(),
+            1,
+            "the unrelated overload declaration must remain untouched"
+        );
+    }
+
+    #[test]
+    fn rename_refuses_invalid_names_capture_collision_foreign_and_dependency_targets() {
+        let module = Vec::new();
+        let source = "let answer(): i32 = { 1 }\nlet second(): i32 = { 2 }\nlet use(value: i32): i32 = { answer() + value }\n";
+        let session = WorkspaceSession::new(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        )
+        .unwrap();
+        let snapshot = session.snapshot();
+        let analysis = snapshot.analyze();
+        assert!(
+            analysis.analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.analysis.diagnostics
+        );
+        let position = SemanticPosition {
+            line: 0,
+            utf16_character: 4,
+        };
+        assert!(
+            analysis
+                .analysis
+                .semantic_index
+                .occurrences
+                .iter()
+                .any(|occurrence| occurrence.document == "src/lib.sc"
+                    && range_contains(occurrence.range, position)),
+            "{:?}",
+            analysis.analysis.semantic_index
+        );
+        for invalid in ["", "_", "let", "two names", "e\u{301}"] {
+            assert!(matches!(
+                snapshot.rename(&analysis, "src/lib.sc", position, invalid),
+                Err(RenameError::InvalidName(_))
+            ));
+        }
+        assert_eq!(
+            snapshot.rename(&analysis, "src/lib.sc", position, "answer"),
+            Err(RenameError::UnchangedName)
+        );
+        assert_eq!(
+            snapshot.rename(&analysis, "src/lib.sc", position, "second"),
+            Err(RenameError::BindingConflict)
+        );
+        assert_eq!(
+            snapshot.rename(&analysis, "src/lib.sc", position, "value"),
+            Err(RenameError::BindingConflict)
+        );
+
+        let foreign = "let c_value(): i32 = foreign(c)\n";
+        let foreign_session = WorkspaceSession::new(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &module,
+                source: foreign,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        )
+        .unwrap();
+        let foreign_snapshot = foreign_session.snapshot();
+        let foreign_analysis = foreign_snapshot.analyze();
+        assert_eq!(
+            foreign_snapshot.rename(
+                &foreign_analysis,
+                "src/lib.sc",
+                SemanticPosition {
+                    line: 0,
+                    utf16_character: 4,
+                },
+                "renamed"
+            ),
+            Err(RenameError::ForeignTarget)
+        );
+
+        let dependency_call = "let main(): i32 = { dep.answer() }\n";
+        let dependency_position = u32::try_from(dependency_call.find("answer").unwrap()).unwrap();
+        let root = SourcePackage {
+            id: PackageId(0),
+            name: "app".into(),
+            version: "0.1.0".into(),
+            identity: "workspace:app@0.1.0".into(),
+            is_primary: true,
+            dependencies: [("dep".into(), PackageId(1))].into(),
+            sources: vec![SourceUnit {
+                path: "src/main.sc".into(),
+                module_path: Vec::new(),
+                source: dependency_call.into(),
+                is_root: true,
+            }],
+        };
+        let dependency = SourcePackage {
+            id: PackageId(1),
+            name: "dep".into(),
+            version: "1.0.0".into(),
+            identity: "path:dep@1.0.0".into(),
+            is_primary: false,
+            dependencies: Default::default(),
+            sources: vec![SourceUnit {
+                path: "deps/dep/src/lib.sc".into(),
+                module_path: Vec::new(),
+                source: "pub let answer(): i32 = { 42 }\n".into(),
+                is_root: true,
+            }],
+        };
+        let dependency_session =
+            WorkspaceSession::new_packages(&[root, dependency], DocumentTarget::Binary).unwrap();
+        let dependency_snapshot = dependency_session.snapshot();
+        let dependency_analysis = dependency_snapshot.analyze();
+        assert!(matches!(
+            dependency_snapshot.rename(
+                &dependency_analysis,
+                "src/main.sc",
+                SemanticPosition {
+                    line: 0,
+                    utf16_character: dependency_position,
+                },
+                "renamed"
+            ),
+            Err(RenameError::ReadOnlyTarget(_))
+        ));
     }
 
     #[test]

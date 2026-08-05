@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.253.0 - 2026-08-05
+
+- Completed NAV-3 with binding-preserving prepare-rename and rename over one
+  immutable snapshot. The planner emits complete stable non-overlapping edits,
+  applies them to an in-memory clone, reanalyzes the full package graph, and
+  verifies that the occurrence relation is unchanged.
+- Added explicit refusal for invalid/non-NFC or unchanged names, ambiguity,
+  capture, collision, generated or non-identifier targets, foreign and
+  compiler-owned declarations, and dependency-owned targets or references.
+- Added LSP prepare/rename capabilities and versioned `documentChanges`, plus
+  alias, overload, Unicode, cross-module, shadowing, ownership, and real-process
+  acceptance. Promoted Registry Source Dependencies to the active milestone
+  and updated the research ledger, roadmap, TODO, architecture, and status.
+
 ## 0.252.0 - 2026-08-05
 
 - Completed NAV-2 with transport-independent definition, reference, and hover

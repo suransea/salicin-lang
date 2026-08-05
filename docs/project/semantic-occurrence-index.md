@@ -38,7 +38,8 @@ One declaration occurrence names exactly one symbol. A reference may name:
 
 The index preserves multiple candidates instead of selecting by declaration
 or hash-table traversal order. The semantic navigation query layer owns typed
-candidate selection; NAV-3 owns editability and rename refusal.
+candidate selection. The [safe rename contract](safe-rename.md) owns
+editability, binding preservation, and refusal.
 
 ## Failure and ownership boundaries
 

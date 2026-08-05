@@ -27,8 +27,11 @@ The implementation lives under `compiler/src`:
   coordinates. Dense symbol IDs are scoped to one immutable snapshot;
   ambiguous references retain ordered candidate sets and generated
   specializations never enter the index. Typed definition, reference, and
-  hover queries select only unique identities and carry dependency editability;
-  resolved package graphs remain intact in snapshots. Diagnostics preserve document
+  hover queries select only unique identities and carry dependency editability.
+  Rename derives one complete occurrence equivalence class, applies edits to a
+  cloned snapshot, rechecks the package graph, and compares the resulting
+  binding relation before exposing edits. Resolved package graphs remain intact
+  in snapshots. Diagnostics preserve document
   identity, phase, severity, stable code, and optional exact range.
   `modules.rs` produces structured resolver diagnostics and renders strings
   only for legacy CLI/compiler entry points; the editor never parses rendered
@@ -47,7 +50,9 @@ The implementation lives under `compiler/src`:
   responsive during checking, every immutable snapshot crosses the
   session/revision acceptance gate, cancelled or superseded requests complete
   exactly once, and only current results publish diagnostics or answer full
-  UTF-16 semantic-token, definition, reference, and hover requests.
+  UTF-16 semantic-token, definition, reference, hover, prepare-rename, and
+  rename requests. Rename responses use versioned `documentChanges`; the
+  transport never applies them.
 - `incremental.rs` defines the versioned path-independent source-to-LLVM input
   fingerprint and artifact-schema key mapping. `incremental_cache.rs` resolves
   the private user-cache root and implements strict local lookup, validation,

@@ -6,7 +6,7 @@ use std::thread;
 use serde_json::{json, Value};
 
 use crate::editor::{
-    DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, SemanticPosition,
+    DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, RenameError, SemanticPosition,
     SemanticQueryResult, SemanticSymbolKind, WorkspaceAnalysis, WorkspaceSession,
     WorkspaceSessionError, WorkspaceSnapshot, WorkspaceSnapshotAnalysis, WorkspaceSnapshotId,
 };
@@ -83,6 +83,8 @@ enum QueryKind {
     Definition,
     References,
     Hover,
+    PrepareRename,
+    Rename,
 }
 
 enum ServerEvent {
@@ -245,7 +247,8 @@ impl Server {
                                 },
                                 "definitionProvider": true,
                                 "referencesProvider": true,
-                                "hoverProvider": true
+                                "hoverProvider": true,
+                                "renameProvider": { "prepareProvider": true }
                             },
                             "serverInfo": {
                                 "name": "salic",
@@ -295,17 +298,28 @@ impl Server {
                     self.schedule_analysis(analysis_sender);
                 }
             }
-            "textDocument/definition" | "textDocument/references" | "textDocument/hover"
+            "textDocument/definition"
+            | "textDocument/references"
+            | "textDocument/hover"
+            | "textDocument/prepareRename"
+            | "textDocument/rename"
                 if self.lifecycle == Lifecycle::Running =>
             {
                 let kind = match method {
                     "textDocument/definition" => QueryKind::Definition,
                     "textDocument/references" => QueryKind::References,
                     "textDocument/hover" => QueryKind::Hover,
+                    "textDocument/prepareRename" => QueryKind::PrepareRename,
+                    "textDocument/rename" => QueryKind::Rename,
                     _ => unreachable!(),
                 };
                 if let Err(message) = self.validate_navigation_position(params) {
                     write_message(writer, &json_rpc_error(id, -32602, &message))?;
+                } else if matches!(kind, QueryKind::Rename) && rename_name(params).is_err() {
+                    write_message(
+                        writer,
+                        &json_rpc_error(id, -32602, "rename requires string newName"),
+                    )?;
                 } else if self
                     .latest_analysis
                     .as_ref()
@@ -504,6 +518,8 @@ impl Server {
             QueryKind::Definition => self.definition(params),
             QueryKind::References => self.references(params),
             QueryKind::Hover => self.hover(params),
+            QueryKind::PrepareRename => self.prepare_rename(params),
+            QueryKind::Rename => self.rename(params),
         };
         match result {
             Ok(result) => write_message(
@@ -665,6 +681,65 @@ impl Server {
                 }))
             }
         }
+    }
+
+    fn prepare_rename(&self, params: &Value) -> Result<Value, String> {
+        let (path, position) = navigation_position(params)?;
+        let analysis = self.current_analysis()?;
+        let prepared = analysis
+            .semantic_index
+            .prepare_rename(&path, position)
+            .map_err(rename_error)?;
+        Ok(json!({
+            "range": lsp_range(prepared.range),
+            "placeholder": prepared.placeholder
+        }))
+    }
+
+    fn rename(&self, params: &Value) -> Result<Value, String> {
+        let (path, position) = navigation_position(params)?;
+        let new_name = rename_name(params)?;
+        let analysis = self.current_analysis()?;
+        let snapshot = self.session.snapshot();
+        let snapshot_analysis = WorkspaceSnapshotAnalysis {
+            id: snapshot.id,
+            document_versions: snapshot
+                .documents
+                .iter()
+                .map(|document| (document.path.clone(), document.version))
+                .collect(),
+            analysis: analysis.clone(),
+        };
+        let rename = snapshot
+            .rename(&snapshot_analysis, &path, position, new_name)
+            .map_err(rename_error)?;
+        let document_changes = snapshot
+            .documents
+            .iter()
+            .filter_map(|document| {
+                let edits = rename
+                    .edits
+                    .iter()
+                    .filter(|edit| edit.document == document.path)
+                    .map(|edit| {
+                        json!({
+                            "range": lsp_range(edit.range),
+                            "newText": edit.new_text
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                (!edits.is_empty()).then(|| {
+                    json!({
+                        "textDocument": {
+                            "uri": path_to_file_uri(&document.path),
+                            "version": document.version
+                        },
+                        "edits": edits
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({ "documentChanges": document_changes }))
     }
 
     fn current_analysis(&self) -> Result<&WorkspaceAnalysis, String> {
@@ -911,6 +986,45 @@ fn navigation_position(params: &Value) -> Result<(String, SemanticPosition), Str
             utf16_character: required_u32(position, "character")?,
         },
     ))
+}
+
+fn rename_name(params: &Value) -> Result<&str, String> {
+    params
+        .get("newName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "rename requires string newName".to_owned())
+}
+
+fn rename_error(error: RenameError) -> String {
+    match error {
+        RenameError::SnapshotMismatch => "rename analysis is stale".to_owned(),
+        RenameError::NotFound => "position has no renameable semantic target".to_owned(),
+        RenameError::Ambiguous(symbols) => format!(
+            "rename target is ambiguous across {} source declarations",
+            symbols.len()
+        ),
+        RenameError::InvalidName(name) => {
+            format!("`{name}` is not one NFC Salicin identifier")
+        }
+        RenameError::UnchangedName => "new name is unchanged".to_owned(),
+        RenameError::ReadOnlyTarget(document) => {
+            format!("rename target `{document}` is dependency-owned and read-only")
+        }
+        RenameError::ReadOnlyReference(document) => {
+            format!("rename would require editing dependency-owned source `{document}`")
+        }
+        RenameError::ForeignTarget => "foreign declarations cannot be renamed".to_owned(),
+        RenameError::CompilerOwnedTarget => {
+            "compiler-owned declarations cannot be renamed".to_owned()
+        }
+        RenameError::UnsupportedTarget => {
+            "this source construct has no renameable identifier".to_owned()
+        }
+        RenameError::OverlappingEdits => "rename produced overlapping source edits".to_owned(),
+        RenameError::BindingConflict => {
+            "rename would capture, collide with, lose, or add a binding".to_owned()
+        }
+    }
 }
 
 fn required_u32(value: &serde_json::Map<String, Value>, field: &str) -> Result<u32, String> {
@@ -1428,6 +1542,7 @@ mod tests {
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["referencesProvider"], true);
         assert_eq!(capabilities["hoverProvider"], true);
+        assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         client.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
         client.receive_until(|message| {
             message["method"] == "textDocument/publishDiagnostics"
@@ -1458,7 +1573,7 @@ mod tests {
         assert_eq!(references["result"].as_array().unwrap().len(), 2);
 
         client.send(json!({
-            "jsonrpc":"2.0", "id":4, "method":"textDocument/hover", "params":params
+            "jsonrpc":"2.0", "id":4, "method":"textDocument/hover", "params":params.clone()
         }));
         let hover = client
             .receive_until(|message| message["id"] == 4)
@@ -1468,6 +1583,19 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("dependency source (read-only)"));
+
+        client.send(json!({
+            "jsonrpc":"2.0", "id":40, "method":"textDocument/prepareRename", "params":params
+        }));
+        let refused = client
+            .receive_until(|message| message["id"] == 40)
+            .pop()
+            .unwrap();
+        assert_eq!(refused["error"]["code"], -32803);
+        assert!(refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("read-only"));
 
         client.send(json!({
             "jsonrpc":"2.0", "method":"textDocument/didOpen", "params": {
@@ -1487,6 +1615,105 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("read-only"));
+
+        client.send(json!({"jsonrpc":"2.0","id":5,"method":"shutdown"}));
+        client.receive_until(|message| message["id"] == 5);
+        client.send(json!({"jsonrpc":"2.0","method":"exit"}));
+        let (_, result) = handle.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn prepare_rename_and_rename_return_complete_versioned_edits() {
+        let path = "/tmp/rename.sc";
+        let uri = path_to_file_uri(path);
+        let source = "let answer(): i32 = { 42 }\nlet main(): i32 = { answer() }\n";
+        let reference = source.rfind("answer").unwrap();
+        let line_start = source[..reference].rfind('\n').unwrap() + 1;
+        let workspace = WorkspaceSession::new(
+            &[EditorSource {
+                path,
+                module_path: &[],
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Binary,
+        )
+        .unwrap();
+        let (mut client, handle) = interactive(Server::new(workspace));
+        client.send(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+        }));
+        client.receive_until(|message| message["id"] == 1);
+        client.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+        });
+        client.send(json!({
+            "jsonrpc":"2.0", "method":"textDocument/didOpen", "params": {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "salicin",
+                    "version": 7,
+                    "text": source
+                }
+            }
+        }));
+        client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && message["params"]["version"] == 7
+        });
+        let position = json!({
+            "textDocument": { "uri": uri },
+            "position": {
+                "line": 1,
+                "character": reference - line_start
+            }
+        });
+        client.send(json!({
+            "jsonrpc":"2.0", "id":2, "method":"textDocument/prepareRename",
+            "params":position.clone()
+        }));
+        let prepared = client
+            .receive_until(|message| message["id"] == 2)
+            .pop()
+            .unwrap();
+        assert_eq!(prepared["result"]["placeholder"], "answer");
+        assert_eq!(prepared["result"]["range"]["start"]["line"], 1);
+
+        let mut rename_params = position.clone();
+        rename_params["newName"] = Value::String("result_value".into());
+        client.send(json!({
+            "jsonrpc":"2.0", "id":3, "method":"textDocument/rename",
+            "params":rename_params
+        }));
+        let renamed = client
+            .receive_until(|message| message["id"] == 3)
+            .pop()
+            .unwrap();
+        let changes = renamed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["textDocument"]["version"], 7);
+        let edits = changes[0]["edits"].as_array().unwrap();
+        assert_eq!(edits.len(), 2);
+        assert!(edits.iter().all(|edit| edit["newText"] == "result_value"));
+
+        let mut invalid = position;
+        invalid["newName"] = Value::String("let".into());
+        client.send(json!({
+            "jsonrpc":"2.0", "id":4, "method":"textDocument/rename", "params":invalid
+        }));
+        let rejected = client
+            .receive_until(|message| message["id"] == 4)
+            .pop()
+            .unwrap();
+        assert_eq!(rejected["error"]["code"], -32803);
+        assert!(rejected["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not one NFC Salicin identifier"));
 
         client.send(json!({"jsonrpc":"2.0","id":5,"method":"shutdown"}));
         client.receive_until(|message| message["id"] == 5);

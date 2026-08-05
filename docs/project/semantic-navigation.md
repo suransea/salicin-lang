@@ -29,8 +29,9 @@ of flattening dependencies into the primary package. Navigation may cross
 package boundaries. Primary-package symbols are editable; dependency symbols
 are read-only. Dependency documents participate in analysis and navigation,
 but open, change, save, close, and baseline-update operations fail with
-`ReadOnlyDocument` without advancing the revision. NAV-3 must consume this
-ownership fact; NAV-2 performs no source writes.
+`ReadOnlyDocument` without advancing the revision. The
+[safe rename contract](safe-rename.md) consumes this ownership fact and
+performs no source writes.
 
 ## LSP surface
 
@@ -40,8 +41,9 @@ tokens: they wait for their requested revision, cancellation yields
 `RequestCancelled`, and a document change yields `ContentModified`. Responses
 use file URIs and half-open UTF-16 ranges from the editor layer.
 
-Partial-program recovery, completion, persistent symbol IDs, and rename are
-not part of this contract.
+Partial-program recovery, completion, and persistent symbol IDs are not part
+of this contract. Rename is specified separately by the
+[safe rename contract](safe-rename.md).
 
 ## Verification
 

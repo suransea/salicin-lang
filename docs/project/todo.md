@@ -20,13 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Semantic Navigation
-
-- [ ] **NAV-3 — Safe rename.** Produce complete non-overlapping workspace edits
-  with explicit refusal for ambiguous, generated, foreign-symbol, or
-  dependency-owned targets.
-
-## P1: Registry Source Dependencies
+## P0: Registry Source Dependencies
 
 - [ ] **PKG-1 — Registry input contract.** Finalize manifest spelling, registry
   identity/configuration, immutable index snapshot format, archive layout,
@@ -44,7 +38,7 @@ status and changelog instead of remaining as a checked archive.
   change selection and `--frozen` performs no network access, including
   yanked locks, missing entries, corrupt archives, conflicts, and cycles.
 
-## P2: Compile-Time Metaprogramming Foundations
+## P1: Compile-Time Metaprogramming Foundations
 
 - [ ] **META-1 — Extensible static sort model.** Design additional sorts for
   compile-time reflection and metaprogramming only after defining scope

@@ -619,8 +619,8 @@ names are absent from the source index.
 Reviewed on 2026-08-05 for NAV-2. Definition, references, and hover are views
 over the accepted semantic occurrence table, not separate textual searches.
 Package ownership travels with each target, and a query either selects one
-identity or exposes/refuses ambiguity. NAV-3 will consume the same boundary
-instead of reconstructing rename bindings from spellings.
+identity or exposes/refuses ambiguity. Safe rename consumes the same boundary
+instead of reconstructing bindings from spellings.
 
 - [Language-Parametric Reference Synthesis (OOPSLA
   2025)](https://doi.org/10.1145/3720481) shows that sound refactoring requires
@@ -639,6 +639,38 @@ instead of reconstructing rename bindings from spellings.
   system artifacts across generated editor services. Salicin does not
   generate its server, but keeps semantic queries transport-neutral so CLI/LSP
   presentation cannot fork language semantics.
+
+### Recompute the Binding Relation After Rename
+
+Reviewed on 2026-08-05 for NAV-3. Salicin treats rename as a verified semantic
+transformation rather than a textual replacement or naming suggestion. It
+constructs the exact occurrence equivalence class, rewrites an in-memory
+snapshot, reruns resolution and typing, and requires the transformed class to
+have the same cardinality and roles around one new declaration. The first
+version aborts on capture instead of inventing qualifiers.
+
+- [Multi-Agent Coordinated Rename Refactoring
+  (2026)](https://arxiv.org/abs/2601.00482) reports that heuristic approaches
+  yield many false positives while context-limited model suggestions are often
+  incomplete. Salicin keeps suggested conceptual co-renames out of the
+  compiler contract and returns only resolver-proven occurrences.
+- [Towards a Theory of Type-Safe Renaming and Refactoring
+  (2025)](https://trendsfp.github.io/2025/abstracts/paper-034.pdf) models
+  non-lexical module bindings and avoids capture through minimal qualifier
+  synthesis. Salicin adopts its binding-preservation obligation but chooses
+  the documented conservative alternative: reject when the post-edit binding
+  relation differs.
+- [Renaming For Everyone
+  (2025)](https://repository.tudelft.nl/file/File_7c820160-619e-4e69-974b-b305d99b41c6)
+  validates multi-file, layout-preserving rename by recalculating the
+  resolution relation after transformation and detecting capture. Salicin's
+  snapshot reanalysis and exact occurrence-role comparison follows that
+  operational shape while also enforcing package edit ownership.
+- [Language-Parametric Reference Synthesis (OOPSLA
+  2025)](https://doi.org/10.1145/3720481) separates binding preservation from
+  producing concrete references. Because Salicin does not yet synthesize
+  alternate qualified spellings, a binding conflict is a refusal rather than
+  an unsound partial edit.
 
 ## Review Gate
 
