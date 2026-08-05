@@ -67,8 +67,10 @@ The implementation lives under `compiler/src`:
   preserve resolved provider identities, and resolve names.
 - top-level `registry.rs` validates registry endpoint configuration,
   unresolved manifest requests, immutable checksum-addressed index snapshots,
-  archive identities, cache roots, and deterministic local-fixture reads;
-  provider selection and source materialization remain later package phases.
+  archive identities, cache roots, and deterministic local-fixture reads. It
+  also collects registry roots and resolves a stable, globally compatible,
+  transitively closed provider graph with exact immutable identities; source
+  verification and materialization remain the next package phase.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library
   sources. `standard.rs` admits ordinary unprivileged `std` definitions,
   rejects mirror aliases so each declaration retains one canonical module

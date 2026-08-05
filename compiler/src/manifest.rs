@@ -81,8 +81,8 @@ pub struct Dependency {
 
 /// One unresolved registry dependency request from `[dependencies]`.
 ///
-/// PKG-1 validates and preserves this input. Provider selection is deliberately
-/// left to PKG-2, so no archive or package manifest is read here.
+/// Manifest loading validates and preserves this input without reading an
+/// archive or registry package manifest. The registry solver selects it later.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistryDependency {
     /// Source-level name used as the dependency's package module.
@@ -722,16 +722,31 @@ impl DependencyGraph {
 
 /// Recursively load all local path dependencies and reject canonical-path cycles.
 pub fn load_dependency_graph(path: impl AsRef<Path>) -> Result<DependencyGraph, ManifestError> {
-    let root = load_manifest(path)?;
-    if let Some(dependency) = root.registry_dependencies.first() {
+    let graph = load_dependency_graph_inputs(path)?;
+    if let Some((manifest, dependency)) = graph.packages.iter().find_map(|manifest| {
+        manifest
+            .registry_dependencies
+            .first()
+            .map(|dependency| (manifest, dependency))
+    }) {
         return Err(ManifestError::invalid(
-            &root.manifest_path,
+            &manifest.manifest_path,
             format!(
-                "registry dependency `{}` requires registry resolution (PKG-2); PKG-1 only validates registry inputs",
+                "registry dependency `{}` requires verified registry source materialization, which is not implemented yet",
                 dependency.alias
             ),
         ));
     }
+    Ok(graph)
+}
+
+/// Load the complete local provider graph while retaining unresolved registry
+/// requests for the registry solver. This does not make registry packages
+/// available to source compilation.
+pub fn load_dependency_graph_inputs(
+    path: impl AsRef<Path>,
+) -> Result<DependencyGraph, ManifestError> {
+    let root = load_manifest(path)?;
     let root_manifest_path = root.manifest_path.clone();
     let mut builder = GraphBuilder {
         states: HashMap::new(),
@@ -760,15 +775,6 @@ struct GraphBuilder {
 impl GraphBuilder {
     fn visit(&mut self, manifest: Manifest) -> Result<(), ManifestError> {
         let path = manifest.manifest_path.clone();
-        if let Some(dependency) = manifest.registry_dependencies.first() {
-            return Err(ManifestError::invalid(
-                &path,
-                format!(
-                    "registry dependency `{}` requires registry resolution (PKG-2); PKG-1 only validates registry inputs",
-                    dependency.alias
-                ),
-            ));
-        }
         match self.states.get(&path) {
             Some(VisitState::Complete) => return Ok(()),
             Some(VisitState::Visiting) => {

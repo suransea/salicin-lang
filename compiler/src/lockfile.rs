@@ -1,6 +1,6 @@
-//! Deterministic `salicin.lock` generation for local path dependencies.
+//! Deterministic `salicin.lock` generation for local and registry providers.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as IoWrite};
@@ -12,14 +12,19 @@ use semver::Version;
 use serde::Deserialize;
 
 use crate::manifest::{DependencyGraph, Edition};
+use crate::registry::{
+    validate_alias, validate_package_name, validate_registry_name, RegistryResolution, Sha256Digest,
+};
 
 pub const LOCKFILE_NAME: &str = "salicin.lock";
-pub const LOCKFILE_FORMAT_VERSION: u32 = 2;
+pub const LOCKFILE_FORMAT_VERSION: u32 = 3;
 
 /// Deterministic lock data derived from a complete dependency graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lockfile {
     pub format: u32,
+    pub registry_snapshots: Vec<LockedRegistrySnapshot>,
+    pub registry_packages: Vec<LockedRegistryPackage>,
     pub packages: Vec<LockedPackage>,
 }
 
@@ -69,6 +74,7 @@ impl Lockfile {
                     path: portable_relative_path(root, &manifest.package_root),
                     source: package_source(root, &manifest.package_root, workspace_members),
                     dependencies,
+                    registry_dependencies: Vec::new(),
                 }
             })
             .collect();
@@ -80,8 +86,85 @@ impl Lockfile {
         });
         Self {
             format: LOCKFILE_FORMAT_VERSION,
+            registry_snapshots: Vec::new(),
+            registry_packages: Vec::new(),
             packages,
         }
+    }
+
+    /// Attach a previously solved registry graph without reading package
+    /// archives. Every root edge is tied back to its owning local manifest and
+    /// every transitive edge records the complete immutable provider identity.
+    pub fn from_graph_root_with_registry(
+        graph: &DependencyGraph,
+        root: &Path,
+        workspace_members: &HashSet<PathBuf>,
+        resolution: &RegistryResolution,
+    ) -> Result<Self, String> {
+        let mut lockfile =
+            Self::from_graph_root_with_workspace_members(graph, root, workspace_members);
+        for root_dependency in &resolution.roots {
+            let manifest = graph
+                .package(&root_dependency.owner_manifest_path)
+                .ok_or_else(|| {
+                    format!(
+                        "registry resolution references unknown local manifest `{}`",
+                        root_dependency.owner_manifest_path.display()
+                    )
+                })?;
+            let path = portable_relative_path(root, &manifest.package_root);
+            let package = lockfile
+                .packages
+                .iter_mut()
+                .find(|package| {
+                    package.name == manifest.package.name
+                        && package.version == manifest.package.version
+                        && package.path == path
+                })
+                .expect("a lockfile contains every graph package");
+            package
+                .registry_dependencies
+                .push(LockedRegistryDependency::from_resolved(
+                    &root_dependency.dependency,
+                ));
+        }
+        for package in &mut lockfile.packages {
+            package
+                .registry_dependencies
+                .sort_by(LockedRegistryDependency::compare);
+        }
+        lockfile.registry_snapshots = resolution
+            .snapshots
+            .iter()
+            .map(|(registry, checksum)| LockedRegistrySnapshot {
+                registry: registry.clone(),
+                checksum: checksum.clone(),
+            })
+            .collect();
+        lockfile.registry_packages = resolution
+            .packages
+            .iter()
+            .map(|package| LockedRegistryPackage {
+                registry: package.provider.registry.clone(),
+                name: package.provider.name.clone(),
+                version: package.provider.version.clone(),
+                snapshot: package.provider.snapshot.clone(),
+                checksum: package.provider.archive_sha256.clone(),
+                dependencies: package
+                    .dependencies
+                    .iter()
+                    .map(LockedRegistryDependency::from_resolved)
+                    .collect(),
+            })
+            .collect();
+        lockfile.registry_packages.sort_by(|left, right| {
+            left.registry
+                .cmp(&right.registry)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.version.cmp(&right.version))
+                .then_with(|| left.checksum.cmp(&right.checksum))
+        });
+        Ok(lockfile)
     }
 
     /// Render canonical UTF-8 TOML with stable ordering and whitespace.
@@ -91,6 +174,26 @@ impl Lockfile {
              # Do not edit it by hand.\n",
         );
         writeln!(output, "format = {}", self.format).expect("writing to a string cannot fail");
+
+        for snapshot in &self.registry_snapshots {
+            output.push_str("\n[[registry-snapshot]]\n");
+            write_toml_field(&mut output, "registry", &snapshot.registry);
+            write_toml_field(&mut output, "checksum", snapshot.checksum.as_str());
+        }
+
+        for package in &self.registry_packages {
+            output.push_str("\n[[registry-package]]\n");
+            write_toml_field(&mut output, "registry", &package.registry);
+            write_toml_field(&mut output, "name", &package.name);
+            write_toml_field(&mut output, "version", &package.version.to_string());
+            write_toml_field(&mut output, "snapshot", package.snapshot.as_str());
+            write_toml_field(&mut output, "checksum", package.checksum.as_str());
+
+            for dependency in &package.dependencies {
+                output.push_str("\n[[registry-package.dependencies]]\n");
+                dependency.write_to(&mut output);
+            }
+        }
 
         for package in &self.packages {
             output.push_str("\n[[package]]\n");
@@ -108,6 +211,10 @@ impl Lockfile {
                 write_toml_field(&mut output, "source", &dependency.source);
                 write_toml_field(&mut output, "path", &dependency.path);
             }
+            for dependency in &package.registry_dependencies {
+                output.push_str("\n[[package.registry-dependencies]]\n");
+                dependency.write_to(&mut output);
+            }
         }
         output
     }
@@ -122,6 +229,64 @@ pub struct LockedPackage {
     pub source: String,
     pub path: String,
     pub dependencies: Vec<LockedDependency>,
+    pub registry_dependencies: Vec<LockedRegistryDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockedRegistrySnapshot {
+    pub registry: String,
+    pub checksum: Sha256Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockedRegistryPackage {
+    pub registry: String,
+    pub name: String,
+    pub version: Version,
+    pub snapshot: Sha256Digest,
+    pub checksum: Sha256Digest,
+    pub dependencies: Vec<LockedRegistryDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockedRegistryDependency {
+    pub alias: String,
+    pub registry: String,
+    pub name: String,
+    pub version: Version,
+    pub snapshot: Sha256Digest,
+    pub checksum: Sha256Digest,
+}
+
+impl LockedRegistryDependency {
+    fn from_resolved(dependency: &crate::registry::ResolvedRegistryDependency) -> Self {
+        Self {
+            alias: dependency.alias.clone(),
+            registry: dependency.provider.registry.clone(),
+            name: dependency.provider.name.clone(),
+            version: dependency.provider.version.clone(),
+            snapshot: dependency.provider.snapshot.clone(),
+            checksum: dependency.provider.archive_sha256.clone(),
+        }
+    }
+
+    fn compare(left: &Self, right: &Self) -> std::cmp::Ordering {
+        left.alias
+            .cmp(&right.alias)
+            .then_with(|| left.registry.cmp(&right.registry))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.version.cmp(&right.version))
+            .then_with(|| left.checksum.cmp(&right.checksum))
+    }
+
+    fn write_to(&self, output: &mut String) {
+        write_toml_field(output, "alias", &self.alias);
+        write_toml_field(output, "registry", &self.registry);
+        write_toml_field(output, "name", &self.name);
+        write_toml_field(output, "version", &self.version.to_string());
+        write_toml_field(output, "snapshot", self.snapshot.as_str());
+        write_toml_field(output, "checksum", self.checksum.as_str());
+    }
 }
 
 /// One named dependency edge from a locked package.
@@ -144,6 +309,23 @@ pub fn parse_lockfile(source: &str) -> Result<Lockfile, String> {
             raw.format, LOCKFILE_FORMAT_VERSION
         ));
     }
+    let registry_snapshots = raw
+        .registry_snapshot
+        .into_iter()
+        .map(|snapshot| {
+            validate_registry_name(&snapshot.registry).map_err(|error| error.to_string())?;
+            Ok(LockedRegistrySnapshot {
+                registry: snapshot.registry,
+                checksum: Sha256Digest::parse(&snapshot.checksum)
+                    .map_err(|error| error.to_string())?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let registry_packages = raw
+        .registry_package
+        .into_iter()
+        .map(parse_locked_registry_package)
+        .collect::<Result<Vec<_>, String>>()?;
     let mut packages = Vec::with_capacity(raw.package.len());
     for package in raw.package {
         let version = Version::parse(&package.version).map_err(|error| {
@@ -171,6 +353,11 @@ pub fn parse_lockfile(source: &str) -> Result<Lockfile, String> {
                 path: dependency.path,
             });
         }
+        let registry_dependencies = package
+            .registry_dependencies
+            .into_iter()
+            .map(parse_locked_registry_dependency)
+            .collect::<Result<Vec<_>, String>>()?;
         packages.push(LockedPackage {
             name: package.name,
             version,
@@ -178,12 +365,153 @@ pub fn parse_lockfile(source: &str) -> Result<Lockfile, String> {
             source: package.source,
             path: package.path,
             dependencies,
+            registry_dependencies,
         });
     }
-    Ok(Lockfile {
+    let lockfile = Lockfile {
         format: raw.format,
+        registry_snapshots,
+        registry_packages,
         packages,
+    };
+    validate_registry_lock_graph(&lockfile)?;
+    Ok(lockfile)
+}
+
+fn parse_locked_registry_package(
+    raw: RawLockedRegistryPackage,
+) -> Result<LockedRegistryPackage, String> {
+    validate_registry_name(&raw.registry).map_err(|error| error.to_string())?;
+    validate_package_name(&raw.name).map_err(|error| error.to_string())?;
+    let version = Version::parse(&raw.version).map_err(|error| {
+        format!(
+            "registry package `{}` has invalid locked version `{}`: {error}",
+            raw.name, raw.version
+        )
+    })?;
+    if !version.build.is_empty() {
+        return Err(format!(
+            "registry package `{}` locked version `{}` must not contain build metadata",
+            raw.name, raw.version
+        ));
+    }
+    Ok(LockedRegistryPackage {
+        registry: raw.registry,
+        name: raw.name,
+        version,
+        snapshot: Sha256Digest::parse(&raw.snapshot).map_err(|error| error.to_string())?,
+        checksum: Sha256Digest::parse(&raw.checksum).map_err(|error| error.to_string())?,
+        dependencies: raw
+            .dependencies
+            .into_iter()
+            .map(parse_locked_registry_dependency)
+            .collect::<Result<Vec<_>, String>>()?,
     })
+}
+
+fn parse_locked_registry_dependency(
+    raw: RawLockedRegistryDependency,
+) -> Result<LockedRegistryDependency, String> {
+    validate_alias(&raw.alias).map_err(|error| error.to_string())?;
+    validate_registry_name(&raw.registry).map_err(|error| error.to_string())?;
+    validate_package_name(&raw.name).map_err(|error| error.to_string())?;
+    let version = Version::parse(&raw.version).map_err(|error| {
+        format!(
+            "registry dependency `{}` has invalid locked version `{}`: {error}",
+            raw.alias, raw.version
+        )
+    })?;
+    if !version.build.is_empty() {
+        return Err(format!(
+            "registry dependency `{}` locked version `{}` must not contain build metadata",
+            raw.alias, raw.version
+        ));
+    }
+    Ok(LockedRegistryDependency {
+        alias: raw.alias,
+        registry: raw.registry,
+        name: raw.name,
+        version,
+        snapshot: Sha256Digest::parse(&raw.snapshot).map_err(|error| error.to_string())?,
+        checksum: Sha256Digest::parse(&raw.checksum).map_err(|error| error.to_string())?,
+    })
+}
+
+fn validate_registry_lock_graph(lockfile: &Lockfile) -> Result<(), String> {
+    let snapshots = lockfile
+        .registry_snapshots
+        .iter()
+        .map(|snapshot| (snapshot.registry.as_str(), &snapshot.checksum))
+        .collect::<BTreeMap<_, _>>();
+    if snapshots.len() != lockfile.registry_snapshots.len() {
+        return Err("lockfile repeats a registry snapshot identity".into());
+    }
+    let providers = lockfile
+        .registry_packages
+        .iter()
+        .map(|package| {
+            (
+                (
+                    package.registry.as_str(),
+                    package.name.as_str(),
+                    &package.version,
+                    &package.snapshot,
+                    &package.checksum,
+                ),
+                package,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if providers.len() != lockfile.registry_packages.len() {
+        return Err("lockfile repeats an exact registry provider identity".into());
+    }
+    let package_keys = lockfile
+        .registry_packages
+        .iter()
+        .map(|package| (package.registry.as_str(), package.name.as_str()))
+        .collect::<HashSet<_>>();
+    if package_keys.len() != lockfile.registry_packages.len() {
+        return Err("lockfile selects more than one version of a registry package identity".into());
+    }
+    for package in &lockfile.registry_packages {
+        if snapshots.get(package.registry.as_str()) != Some(&&package.snapshot) {
+            return Err(format!(
+                "registry package `{}/{}` references an unknown snapshot",
+                package.registry, package.name
+            ));
+        }
+        for dependency in &package.dependencies {
+            validate_locked_registry_edge(dependency, &providers)?;
+        }
+    }
+    for package in &lockfile.packages {
+        for dependency in &package.registry_dependencies {
+            validate_locked_registry_edge(dependency, &providers)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_locked_registry_edge(
+    dependency: &LockedRegistryDependency,
+    providers: &BTreeMap<
+        (&str, &str, &Version, &Sha256Digest, &Sha256Digest),
+        &LockedRegistryPackage,
+    >,
+) -> Result<(), String> {
+    if !providers.contains_key(&(
+        dependency.registry.as_str(),
+        dependency.name.as_str(),
+        &dependency.version,
+        &dependency.snapshot,
+        &dependency.checksum,
+    )) {
+        return Err(format!(
+            "registry dependency `{}` references missing exact provider `{}/{}@{}`",
+            dependency.alias, dependency.registry, dependency.name, dependency.version
+        ));
+    }
+    Ok(())
 }
 
 fn parse_locked_edition(edition: &str) -> Result<Edition, String> {
@@ -224,6 +552,10 @@ fn validate_locked_source(source: &str, path: &str) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 struct RawLockfile {
     format: u32,
+    #[serde(default, rename = "registry-snapshot")]
+    registry_snapshot: Vec<RawLockedRegistrySnapshot>,
+    #[serde(default, rename = "registry-package")]
+    registry_package: Vec<RawLockedRegistryPackage>,
     #[serde(default)]
     package: Vec<RawLockedPackage>,
 }
@@ -238,6 +570,38 @@ struct RawLockedPackage {
     path: String,
     #[serde(default)]
     dependencies: Vec<RawLockedDependency>,
+    #[serde(default, rename = "registry-dependencies")]
+    registry_dependencies: Vec<RawLockedRegistryDependency>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockedRegistrySnapshot {
+    registry: String,
+    checksum: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockedRegistryPackage {
+    registry: String,
+    name: String,
+    version: String,
+    snapshot: String,
+    checksum: String,
+    #[serde(default)]
+    dependencies: Vec<RawLockedRegistryDependency>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLockedRegistryDependency {
+    alias: String,
+    registry: String,
+    name: String,
+    version: String,
+    snapshot: String,
+    checksum: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -500,7 +864,7 @@ mod tests {
         assert!(first.contains("source = \"path:../shared\""));
         assert!(!first.contains(&temp.0.display().to_string()));
         let parsed: toml::Value = toml::from_str(&first).unwrap();
-        assert_eq!(parsed["format"].as_integer(), Some(2));
+        assert_eq!(parsed["format"].as_integer(), Some(3));
     }
 
     #[test]
@@ -536,21 +900,73 @@ mod tests {
         for (source, expected) in [
             ("format = 1\n", "unsupported lockfile format"),
             (
-                "format = 2\nunknown = true\n",
+                "format = 3\nunknown = true\n",
                 "unknown field `unknown`",
             ),
             (
-                "format = 2\n[[package]]\nname = \"p\"\nversion = \"bad\"\nedition = \"2026\"\nsource = \"path:.\"\npath = \".\"\n",
+                "format = 3\n[[package]]\nname = \"p\"\nversion = \"bad\"\nedition = \"2026\"\nsource = \"path:.\"\npath = \".\"\n",
                 "invalid locked version",
             ),
             (
-                "format = 2\n[[package]]\nname = \"p\"\nversion = \"1.0.0\"\nedition = \"2026\"\nsource = \"path:other\"\npath = \".\"\n",
+                "format = 3\n[[package]]\nname = \"p\"\nversion = \"1.0.0\"\nedition = \"2026\"\nsource = \"path:other\"\npath = \".\"\n",
                 "does not match package path",
             ),
         ] {
             let error = parse_lockfile(source).unwrap_err();
             assert!(error.contains(expected), "{error}");
         }
+    }
+
+    #[test]
+    fn registry_resolution_renders_and_parses_complete_exact_identities() {
+        use crate::registry::{
+            RegistryProviderIdentity, ResolvedRegistryDependency, ResolvedRegistryPackage,
+            ResolvedRootRegistryDependency,
+        };
+
+        let temp = TempDir::new();
+        temp.package("root", "root", "");
+        let graph = load_dependency_graph(temp.0.join("root")).unwrap();
+        let snapshot = Sha256Digest::parse(&"a".repeat(64)).unwrap();
+        let checksum = Sha256Digest::parse(&"b".repeat(64)).unwrap();
+        let provider = RegistryProviderIdentity {
+            registry: "community".into(),
+            snapshot: snapshot.clone(),
+            name: "answer-kit".into(),
+            version: Version::new(1, 2, 3),
+            archive_sha256: checksum.clone(),
+        };
+        let dependency = ResolvedRegistryDependency {
+            alias: "answer".into(),
+            provider: provider.clone(),
+        };
+        let resolution = RegistryResolution {
+            snapshots: vec![("community".into(), snapshot)],
+            packages: vec![ResolvedRegistryPackage {
+                provider,
+                dependencies: vec![],
+            }],
+            roots: vec![ResolvedRootRegistryDependency {
+                owner_manifest_path: graph.root_manifest_path.clone(),
+                dependency,
+            }],
+        };
+        let lockfile = Lockfile::from_graph_root_with_registry(
+            &graph,
+            &graph.root().package_root,
+            &HashSet::new(),
+            &resolution,
+        )
+        .unwrap();
+        let text = lockfile.to_text();
+        assert!(text.contains("[[registry-snapshot]]"), "{text}");
+        assert!(text.contains("[[registry-package]]"), "{text}");
+        assert!(text.contains("[[package.registry-dependencies]]"), "{text}");
+        assert_eq!(parse_lockfile(&text).unwrap(), lockfile);
+
+        let broken = text.replacen("name = \"answer-kit\"", "name = \"missing-kit\"", 1);
+        let error = parse_lockfile(&broken).unwrap_err();
+        assert!(error.contains("missing exact provider"), "{error}");
     }
 
     #[test]

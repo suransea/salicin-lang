@@ -33,7 +33,14 @@ current capability inventory. It does not record release history; see the
   requirement, and registry identity; versioned endpoint configuration;
   digest-before-parse immutable index snapshots; fixed archive/checksum/cache
   identities; and checksum-addressed relocatable fixture loading. Registry
-  requests are deliberately refused before graph resolution until PKG-2;
+  requests can be collected across complete local package graphs;
+- registry provider resolution with deterministic global backtracking,
+  root inclusion, transitive closure, one version per registry/package
+  identity, descending highest-compatible selection, exact-lock-only yanked
+  eligibility, conflict backtracking, cycle rejection, stable ordering, and
+  complete registry/snapshot/version/archive identities in strict lockfile
+  format 3. CLI compilation still refuses registry requests until verified
+  source materialization is implemented;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, structured document identity, phase, severity, stable
   code, optional exact ranges, and multi-document routing; resolver origins
@@ -486,7 +493,7 @@ Implemented package features include:
 - entity aliases and explicit re-exports;
 - `salicin.toml` projects with library and binary roots;
 - rooted and virtual workspaces with explicit non-nested members;
-- local path dependencies and workspace-root `salicin.lock` format 2;
+- local path dependencies and workspace-root `salicin.lock` format 3;
 - resolved provider identities separating workspace, path, registry, and
   compiler-owned sources from package name and exact version;
 - strict typed lockfile parsing plus `--locked` and `--frozen` graph

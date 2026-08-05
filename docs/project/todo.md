@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Registry Source Dependencies
 
-- [ ] **PKG-2 — Registry resolution.** Extend the provider graph with
-  highest-compatible non-yanked selection while preserving exact lockfile
-  identities and deterministic graph ordering.
-
 - [ ] **PKG-3 — Verified source cache.** Download or load archives into an
   atomic checksum-addressed cache, reject traversal and identity mismatch, and
   expose sources only after verification.

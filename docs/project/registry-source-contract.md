@@ -1,6 +1,7 @@
 # Registry Source Input Contract
 
-Status: PKG-1 implemented; resolution, fetching, and extraction remain PKG-2 through PKG-4
+Status: PKG-1 input and PKG-2 resolution implemented; verified fetching and
+extraction remain PKG-3/PKG-4
 
 This contract fixes the source-visible and on-disk inputs for registry packages
 without defining a public registry service. Registry inputs are strict and
@@ -24,10 +25,11 @@ complete `package`/`version`/`registry` group. Git dependencies, implicit
 default registries, URL-valued manifest sources, and mixed path/registry
 fallbacks are rejected.
 
-PKG-1 preserves an unresolved typed request in `Manifest`. Graph loading
-refuses it with an explicit PKG-2 diagnostic before writing a lockfile or build
-output. Accepting the spelling therefore does not pretend that a provider was
-selected.
+The manifest loader preserves an unresolved typed request. The implemented
+registry solver can collect those requests across the complete local graph and
+produce exact providers, but ordinary compilation still refuses registry
+requests before writing a lockfile or build output until PKG-3 materializes
+verified sources.
 
 ## Registry Identity and Configuration
 
@@ -158,7 +160,7 @@ leaves signatures, transparency, and hosted policy outside this milestone.
 
 ## Non-goals
 
-PKG-1 does not select versions, refresh an index, access a network, parse an
-archive, publish a cache entry, alter lockfile format 2, distribute trust roots,
-or standardize a public service. Those boundaries remain explicit work for
-PKG-2 through PKG-4 rather than partially enabled behavior.
+The current registry subsystem does not refresh an index, access a network,
+parse an archive, publish a cache entry, distribute trust roots, or standardize
+a public service. Those boundaries remain explicit work for PKG-3/PKG-4 rather
+than partially enabled behavior.

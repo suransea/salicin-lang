@@ -6,6 +6,26 @@ subset.
 
 ## Unreleased
 
+## 0.255.0 - 2026-08-05
+
+- Completed PKG-2 with deterministic global registry resolution over one
+  immutable snapshot per registry. The solver unifies every constraint for a
+  registry/package identity, tries descending SemVer candidates, backtracks
+  across transitive conflicts, and requires root inclusion, dependency
+  closure, version uniqueness, and an acyclic graph.
+- Added exact-prior-lock-only eligibility for yanked releases, stable conflict,
+  missing snapshot/package, duplicate snapshot, and cycle diagnostics, plus
+  root/snapshot input-order independence and cross-registry provider identity.
+- Upgraded `salicin.lock` to strict format 3 with exact registry snapshot,
+  package version, archive checksum, local-root edge, and transitive edge
+  identities; dangling or duplicate providers are rejected. Source archives
+  remain unavailable to compilation until PKG-3 verifies and materializes
+  them.
+- Updated the dependency and registry contracts, architecture, status,
+  research ledger, roadmap, and TODO using the 2026 Package Calculus,
+  HyperRes, formal constraint-solving, Cargo yanking, and current lockfile
+  research.
+
 ## 0.254.0 - 2026-08-05
 
 - Completed PKG-1 with strict registry dependency manifest requests carrying

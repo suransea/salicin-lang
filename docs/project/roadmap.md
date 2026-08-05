@@ -57,9 +57,11 @@ registry selection algorithm. The implemented
 [registry source input contract](registry-source-contract.md) now fixes strict
 manifest requests, registry configuration, immutable content-addressed index
 snapshots, archive identities, cache roots, and relocatable fixture loading.
-Active work extends that typed input into deterministic provider selection,
-then verified source caching and locked/frozen acceptance. This milestone does
-not create or standardize a public registry service.
+Provider selection is now implemented as a globally backtracking,
+version-unique graph with exact format-3 lock identities. Active work verifies
+and materializes the selected source archives, followed by locked/frozen
+acceptance. This milestone does not create or standardize a public registry
+service.
 
 Exit conditions:
 

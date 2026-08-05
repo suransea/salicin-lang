@@ -8,7 +8,7 @@ implementation, and measurement.
 
 ## Current Decisions
 
-### Registry Inputs Separate Identity, Selection, and Verified Bytes
+### Registry Resolution Separates Constraints, Providers, and Verified Bytes
 
 Reviewed on 2026-08-05. Registry identity is an explicit namespace on every
 manifest and transitive requirement, while an endpoint is replaceable local
@@ -16,6 +16,18 @@ configuration. Resolution consumes one exact digest-identified snapshot;
 archive checksums belong to release entries and are verified before manifest
 or source consumption. Index, archive, and extracted-source caches are
 content-addressed rather than URL-addressed.
+
+The 2026 *Package Managers à la Carte* calculus isolates three core validity
+conditions: root inclusion, dependency closure, and version uniqueness, while
+showing that expressive resolution is NP-complete. Salicin implements exactly
+that bounded current surface for one version per `(registry, package)`:
+constraints are accumulated globally, candidates are tried in descending
+SemVer order, and transitive conflicts backtrack deterministically. Registry
+identity remains part of the package key, following HyperRes's explicit
+ecosystem namespaces. Optional dependencies, features, virtual providers,
+platform predicates, and concurrent versions are not silently approximated.
+The NP-complete search is capped at 100,000 candidate attempts by a
+compiler-owned, source-independent limit and reports exhaustion explicitly.
 
 The 2025 lockfile survey shows that exact selection, integrity, and
 reproducibility are distinct lockfile responsibilities. HyperRes likewise
@@ -29,17 +41,22 @@ work on attestations motivates a future provenance layer, deliberately not an
 implicit part of PKG-1's SHA-256 integrity contract.
 
 - [The Design Space of Lockfiles Across Package Managers (2025)](https://arxiv.org/abs/2505.04834)
+- [Package Managers à la Carte: A Formal Model of Dependency Resolution (2026)](https://arxiv.org/abs/2602.18602)
 - [Solving Package Management via Hypergraph Dependency Resolution (2025)](https://arxiv.org/abs/2506.10803)
+- [Breaking the Dependency Chaos: A Constraint-Driven Python Dependency Resolution Strategy (2026)](https://arxiv.org/abs/2605.11772)
+- [Cargo Dependency Resolution](https://doc.rust-lang.org/stable/cargo/reference/resolver.html)
 - [Does Functional Package Management Enable Reproducible Builds at Scale? Yes (2025)](https://arxiv.org/abs/2501.15919)
 - [Go Modules Reference](https://go.dev/ref/mod)
 - [TUF roles and metadata](https://theupdateframework.io/docs/metadata/)
 - [Securing Packages in npm, Homebrew, PyPI, Maven Central, and RubyGems (USENIX Security 2025)](https://www.usenix.org/conference/usenixsecurity25/presentation/steindler)
 
-The immediate implementation consequence is a strict format-1 registry config
-and snapshot parser, explicit registry manifest fields, digest-before-parse
-fixture loading, and a refusal boundary before PKG-2 resolution. Signatures,
-transparency, publishing, credentials, and public-service policy remain
-separate possible layers rather than fields with no verifier.
+The implementation now includes strict format-1 inputs, deterministic global
+backtracking, exact prior-lock yanked eligibility, cycle rejection, and
+format-3 lock identities containing registry, snapshot, package, version, and
+archive checksum. Archive verification remains a separate PKG-3 boundary:
+selection never makes unverified source compilable. Signatures, transparency,
+publishing, credentials, and public-service policy remain separate possible
+layers rather than fields with no verifier.
 
 ### Two Levels, One Function Syntax
 

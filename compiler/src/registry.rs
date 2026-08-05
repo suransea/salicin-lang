@@ -1,10 +1,9 @@
 //! Validated input protocol for immutable source-package registries.
 //!
-//! This module owns PKG-1 only: configuration, snapshot metadata, archive
-//! identity, and deterministic local-fixture loading. It performs no version
-//! selection, network access, archive extraction, or cache publication.
+//! This module owns registry input validation and PKG-2 provider selection.
+//! It performs no network access, archive extraction, or cache publication.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -14,9 +13,13 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::manifest::DependencyGraph;
+use crate::manifest::RegistryDependency;
+
 pub const REGISTRY_CONFIG_FILE_NAME: &str = "salicin-registries.toml";
 pub const REGISTRY_CONFIG_FORMAT: u32 = 1;
 pub const REGISTRY_SNAPSHOT_FORMAT: u32 = 1;
+pub const REGISTRY_RESOLUTION_ATTEMPT_LIMIT: usize = 100_000;
 
 /// Validated registry configuration. Registry names are stable provider
 /// identities; changing an endpoint never changes a locked identity.
@@ -100,6 +103,434 @@ pub struct RegistryRequirement {
     pub package: String,
     pub registry: String,
     pub requirement: VersionReq,
+}
+
+/// One registry request owned by a local package manifest. Keeping the owner
+/// path structural lets lockfile generation attach the selected provider to
+/// the correct local package without using traversal order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RootRegistryRequirement {
+    pub owner_manifest_path: PathBuf,
+    pub dependency: RegistryDependency,
+}
+
+pub fn registry_requirements_from_graph(graph: &DependencyGraph) -> Vec<RootRegistryRequirement> {
+    let mut requirements = graph
+        .packages
+        .iter()
+        .flat_map(|manifest| {
+            manifest
+                .registry_dependencies
+                .iter()
+                .cloned()
+                .map(|dependency| RootRegistryRequirement {
+                    owner_manifest_path: manifest.manifest_path.clone(),
+                    dependency,
+                })
+        })
+        .collect::<Vec<_>>();
+    requirements.sort_by(|left, right| {
+        left.owner_manifest_path
+            .cmp(&right.owner_manifest_path)
+            .then_with(|| left.dependency.alias.cmp(&right.dependency.alias))
+    });
+    requirements
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RegistryPackageKey {
+    pub registry: String,
+    pub name: String,
+}
+
+/// Exact immutable provider identity recorded in a lockfile.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RegistryProviderIdentity {
+    pub registry: String,
+    pub snapshot: Sha256Digest,
+    pub name: String,
+    pub version: Version,
+    pub archive_sha256: Sha256Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedRegistryDependency {
+    pub alias: String,
+    pub provider: RegistryProviderIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedRegistryPackage {
+    pub provider: RegistryProviderIdentity,
+    pub dependencies: Vec<ResolvedRegistryDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedRootRegistryDependency {
+    pub owner_manifest_path: PathBuf,
+    pub dependency: ResolvedRegistryDependency,
+}
+
+/// One deterministic, transitively complete registry provider graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryResolution {
+    pub snapshots: Vec<(String, Sha256Digest)>,
+    pub packages: Vec<ResolvedRegistryPackage>,
+    pub roots: Vec<ResolvedRootRegistryDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RegistryResolutionError {
+    DuplicateSnapshot(String),
+    MissingSnapshot(String),
+    MissingPackage(RegistryPackageKey),
+    NoCompatibleVersion {
+        package: RegistryPackageKey,
+        requirements: Vec<String>,
+    },
+    DependencyCycle(Vec<RegistryPackageKey>),
+    SearchLimitExceeded(usize),
+}
+
+impl fmt::Display for RegistryResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateSnapshot(registry) => write!(
+                formatter,
+                "registry `{registry}` was supplied more than one index snapshot"
+            ),
+            Self::MissingSnapshot(registry) => {
+                write!(
+                    formatter,
+                    "registry `{registry}` has no immutable index snapshot"
+                )
+            }
+            Self::MissingPackage(package) => write!(
+                formatter,
+                "registry `{}` snapshot does not contain package `{}`",
+                package.registry, package.name
+            ),
+            Self::NoCompatibleVersion {
+                package,
+                requirements,
+            } => write!(
+                formatter,
+                "registry package `{}/{}` has no non-yanked version satisfying {}",
+                package.registry,
+                package.name,
+                requirements.join(", ")
+            ),
+            Self::DependencyCycle(cycle) => {
+                let cycle = cycle
+                    .iter()
+                    .map(|package| format!("{}/{}", package.registry, package.name))
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                write!(formatter, "registry dependency cycle detected: {cycle}")
+            }
+            Self::SearchLimitExceeded(limit) => write!(
+                formatter,
+                "registry resolution exceeded its deterministic limit of {limit} candidate attempts"
+            ),
+        }
+    }
+}
+
+impl Error for RegistryResolutionError {}
+
+#[derive(Clone, Debug)]
+struct Constraint {
+    requirement: VersionReq,
+    origin: String,
+}
+
+/// Resolve all roots against exactly one already-validated snapshot per
+/// registry. The result is independent of root/snapshot input order.
+///
+/// A yanked release participates only when `previously_locked` contains its
+/// complete provider identity. It is not preferred over a higher compatible
+/// non-yanked release; the exception only keeps an otherwise unavailable
+/// exact provider eligible.
+pub fn resolve_registry_dependencies(
+    roots: &[RootRegistryRequirement],
+    snapshots: &[RegistrySnapshot],
+    previously_locked: &BTreeSet<RegistryProviderIdentity>,
+) -> Result<RegistryResolution, RegistryResolutionError> {
+    let mut snapshots_by_registry = BTreeMap::new();
+    for snapshot in snapshots {
+        if snapshots_by_registry
+            .insert(snapshot.registry.clone(), snapshot)
+            .is_some()
+        {
+            return Err(RegistryResolutionError::DuplicateSnapshot(
+                snapshot.registry.clone(),
+            ));
+        }
+    }
+    let snapshots = snapshots_by_registry;
+    let mut constraints: BTreeMap<RegistryPackageKey, Vec<Constraint>> = BTreeMap::new();
+    let mut ordered_roots = roots.to_vec();
+    ordered_roots.sort_by(|left, right| {
+        left.owner_manifest_path
+            .cmp(&right.owner_manifest_path)
+            .then_with(|| left.dependency.alias.cmp(&right.dependency.alias))
+            .then_with(|| left.dependency.registry.cmp(&right.dependency.registry))
+            .then_with(|| left.dependency.package.cmp(&right.dependency.package))
+    });
+    for root in &ordered_roots {
+        if !snapshots.contains_key(&root.dependency.registry) {
+            return Err(RegistryResolutionError::MissingSnapshot(
+                root.dependency.registry.clone(),
+            ));
+        }
+        constraints
+            .entry(RegistryPackageKey {
+                registry: root.dependency.registry.clone(),
+                name: root.dependency.package.clone(),
+            })
+            .or_default()
+            .push(Constraint {
+                requirement: root.dependency.requirement.clone(),
+                origin: format!(
+                    "{} dependency `{}` requires `{}`",
+                    root.owner_manifest_path.display(),
+                    root.dependency.alias,
+                    root.dependency.requirement
+                ),
+            });
+    }
+
+    let mut attempts = 0;
+    let selected = solve_registry_constraints(
+        &constraints,
+        &BTreeMap::new(),
+        &snapshots,
+        previously_locked,
+        &mut attempts,
+    )?;
+
+    let identities = selected
+        .iter()
+        .map(|(key, release)| {
+            let snapshot = snapshots[&key.registry];
+            (
+                key.clone(),
+                provider_identity(key, release, &snapshot.digest),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let packages = selected
+        .iter()
+        .map(|(key, release)| ResolvedRegistryPackage {
+            provider: identities[key].clone(),
+            dependencies: release
+                .dependencies
+                .iter()
+                .map(|dependency| ResolvedRegistryDependency {
+                    alias: dependency.alias.clone(),
+                    provider: identities[&RegistryPackageKey {
+                        registry: dependency.registry.clone(),
+                        name: dependency.package.clone(),
+                    }]
+                        .clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    let roots = ordered_roots
+        .into_iter()
+        .map(|root| ResolvedRootRegistryDependency {
+            owner_manifest_path: root.owner_manifest_path,
+            dependency: ResolvedRegistryDependency {
+                alias: root.dependency.alias,
+                provider: identities[&RegistryPackageKey {
+                    registry: root.dependency.registry,
+                    name: root.dependency.package,
+                }]
+                    .clone(),
+            },
+        })
+        .collect();
+    let used_registries = identities
+        .keys()
+        .map(|key| key.registry.as_str())
+        .collect::<BTreeSet<_>>();
+    let snapshot_identities = snapshots
+        .into_iter()
+        .filter(|(registry, _)| used_registries.contains(registry.as_str()))
+        .map(|(registry, snapshot)| (registry, snapshot.digest.clone()))
+        .collect();
+    Ok(RegistryResolution {
+        snapshots: snapshot_identities,
+        packages,
+        roots,
+    })
+}
+
+fn solve_registry_constraints<'a>(
+    constraints: &BTreeMap<RegistryPackageKey, Vec<Constraint>>,
+    selected: &BTreeMap<RegistryPackageKey, &'a RegistryRelease>,
+    snapshots: &BTreeMap<String, &'a RegistrySnapshot>,
+    previously_locked: &BTreeSet<RegistryProviderIdentity>,
+    attempts: &mut usize,
+) -> Result<BTreeMap<RegistryPackageKey, &'a RegistryRelease>, RegistryResolutionError> {
+    for (key, release) in selected {
+        if !constraints[key]
+            .iter()
+            .all(|constraint| constraint.requirement.matches(&release.version))
+        {
+            return Err(no_compatible_error(key, &constraints[key]));
+        }
+    }
+
+    let Some(key) = constraints.keys().find(|key| !selected.contains_key(*key)) else {
+        reject_registry_cycles(selected)?;
+        return Ok(selected.clone());
+    };
+    let snapshot = snapshots
+        .get(&key.registry)
+        .ok_or_else(|| RegistryResolutionError::MissingSnapshot(key.registry.clone()))?;
+    let package = snapshot
+        .packages
+        .iter()
+        .find(|package| package.name == key.name)
+        .ok_or_else(|| RegistryResolutionError::MissingPackage(key.clone()))?;
+    let requirements = &constraints[key];
+    let mut final_error = None;
+    for release in package.releases.iter().rev() {
+        if !requirements
+            .iter()
+            .all(|constraint| constraint.requirement.matches(&release.version))
+        {
+            continue;
+        }
+        let identity = provider_identity(key, release, &snapshot.digest);
+        if release.yanked && !previously_locked.contains(&identity) {
+            continue;
+        }
+        *attempts += 1;
+        if *attempts > REGISTRY_RESOLUTION_ATTEMPT_LIMIT {
+            return Err(RegistryResolutionError::SearchLimitExceeded(
+                REGISTRY_RESOLUTION_ATTEMPT_LIMIT,
+            ));
+        }
+        let mut next_selected = selected.clone();
+        next_selected.insert(key.clone(), release);
+        let mut next_constraints = constraints.clone();
+        let mut missing_snapshot = None;
+        for dependency in &release.dependencies {
+            if !snapshots.contains_key(&dependency.registry) {
+                missing_snapshot = Some(RegistryResolutionError::MissingSnapshot(
+                    dependency.registry.clone(),
+                ));
+                break;
+            }
+            next_constraints
+                .entry(RegistryPackageKey {
+                    registry: dependency.registry.clone(),
+                    name: dependency.package.clone(),
+                })
+                .or_default()
+                .push(Constraint {
+                    requirement: dependency.requirement.clone(),
+                    origin: format!(
+                        "{}/{}@{} dependency `{}` requires `{}`",
+                        key.registry,
+                        key.name,
+                        release.version,
+                        dependency.alias,
+                        dependency.requirement
+                    ),
+                });
+        }
+        if let Some(error) = missing_snapshot {
+            final_error = Some(error);
+            continue;
+        }
+        match solve_registry_constraints(
+            &next_constraints,
+            &next_selected,
+            snapshots,
+            previously_locked,
+            attempts,
+        ) {
+            Ok(solution) => return Ok(solution),
+            Err(error @ RegistryResolutionError::SearchLimitExceeded(_)) => return Err(error),
+            Err(error) => final_error = Some(error),
+        }
+    }
+    Err(final_error.unwrap_or_else(|| no_compatible_error(key, requirements)))
+}
+
+fn provider_identity(
+    key: &RegistryPackageKey,
+    release: &RegistryRelease,
+    snapshot: &Sha256Digest,
+) -> RegistryProviderIdentity {
+    RegistryProviderIdentity {
+        registry: key.registry.clone(),
+        snapshot: snapshot.clone(),
+        name: key.name.clone(),
+        version: release.version.clone(),
+        archive_sha256: release.archive_sha256.clone(),
+    }
+}
+
+fn no_compatible_error(
+    key: &RegistryPackageKey,
+    constraints: &[Constraint],
+) -> RegistryResolutionError {
+    let mut requirements = constraints
+        .iter()
+        .map(|constraint| constraint.origin.clone())
+        .collect::<Vec<_>>();
+    requirements.sort();
+    requirements.dedup();
+    RegistryResolutionError::NoCompatibleVersion {
+        package: key.clone(),
+        requirements,
+    }
+}
+
+fn reject_registry_cycles(
+    selected: &BTreeMap<RegistryPackageKey, &RegistryRelease>,
+) -> Result<(), RegistryResolutionError> {
+    fn visit(
+        key: &RegistryPackageKey,
+        selected: &BTreeMap<RegistryPackageKey, &RegistryRelease>,
+        complete: &mut BTreeSet<RegistryPackageKey>,
+        stack: &mut Vec<RegistryPackageKey>,
+    ) -> Result<(), RegistryResolutionError> {
+        if let Some(start) = stack.iter().position(|entry| entry == key) {
+            let mut cycle = stack[start..].to_vec();
+            cycle.push(key.clone());
+            return Err(RegistryResolutionError::DependencyCycle(cycle));
+        }
+        if complete.contains(key) {
+            return Ok(());
+        }
+        stack.push(key.clone());
+        for dependency in &selected[key].dependencies {
+            visit(
+                &RegistryPackageKey {
+                    registry: dependency.registry.clone(),
+                    name: dependency.package.clone(),
+                },
+                selected,
+                complete,
+                stack,
+            )?;
+        }
+        stack.pop();
+        complete.insert(key.clone());
+        Ok(())
+    }
+
+    let mut complete = BTreeSet::new();
+    for key in selected.keys() {
+        visit(key, selected, &mut complete, &mut Vec::new())?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -475,7 +906,7 @@ fn parse_exact_version(package: &str, value: &str) -> Result<Version, RegistryEr
     Ok(version)
 }
 
-fn validate_registry_name(name: &str) -> Result<(), RegistryError> {
+pub(crate) fn validate_registry_name(name: &str) -> Result<(), RegistryError> {
     if !is_kebab_name(name) || name.len() > 64 {
         return Err(RegistryError::Invalid(format!(
             "registry identity `{name}` must be normalized ASCII kebab-case with at most 64 bytes"
@@ -484,7 +915,7 @@ fn validate_registry_name(name: &str) -> Result<(), RegistryError> {
     Ok(())
 }
 
-fn validate_package_name(name: &str) -> Result<(), RegistryError> {
+pub(crate) fn validate_package_name(name: &str) -> Result<(), RegistryError> {
     if !is_kebab_name(name) {
         return Err(RegistryError::Invalid(format!(
             "registry package name `{name}` must be ASCII kebab-case"
@@ -493,7 +924,7 @@ fn validate_package_name(name: &str) -> Result<(), RegistryError> {
     Ok(())
 }
 
-fn validate_alias(alias: &str) -> Result<(), RegistryError> {
+pub(crate) fn validate_alias(alias: &str) -> Result<(), RegistryError> {
     let mut bytes = alias.bytes();
     let Some(first) = bytes.next() else {
         return Err(RegistryError::Invalid(
@@ -552,6 +983,216 @@ mod tests {
 
     fn snapshot_bytes() -> Vec<u8> {
         br#"{"format":1,"registry":"local-test","packages":[{"name":"answer-kit","releases":[{"version":"1.2.3","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","archive":"archives/answer-kit/1.2.3/answer-kit-1.2.3.tar.gz","dependencies":[{"alias":"base","package":"base-kit","registry":"local-test","version":"^1.0"}]}]}]}"#.to_vec()
+    }
+
+    fn digest(character: char) -> Sha256Digest {
+        Sha256Digest::parse(&character.to_string().repeat(64)).unwrap()
+    }
+
+    fn requirement(alias: &str, package: &str, version: &str) -> RegistryRequirement {
+        RegistryRequirement {
+            alias: alias.into(),
+            package: package.into(),
+            registry: "community".into(),
+            requirement: VersionReq::parse(version).unwrap(),
+        }
+    }
+
+    fn release(
+        version: &str,
+        yanked: bool,
+        dependencies: Vec<RegistryRequirement>,
+    ) -> RegistryRelease {
+        RegistryRelease {
+            version: Version::parse(version).unwrap(),
+            yanked,
+            archive_sha256: digest(if version.starts_with('1') { '1' } else { '2' }),
+            archive: format!("unused/{version}.tar.gz"),
+            dependencies,
+        }
+    }
+
+    fn root(alias: &str, package: &str, version: &str) -> RootRegistryRequirement {
+        RootRegistryRequirement {
+            owner_manifest_path: PathBuf::from("/workspace/salicin.toml"),
+            dependency: RegistryDependency {
+                alias: alias.into(),
+                package: package.into(),
+                registry: "community".into(),
+                requirement: VersionReq::parse(version).unwrap(),
+            },
+        }
+    }
+
+    #[test]
+    fn resolver_backtracks_to_the_highest_globally_compatible_graph() {
+        let snapshot = RegistrySnapshot {
+            digest: digest('a'),
+            registry: "community".into(),
+            packages: vec![
+                RegistryPackage {
+                    name: "app-kit".into(),
+                    releases: vec![
+                        release(
+                            "1.0.0",
+                            false,
+                            vec![requirement("shared", "shared-kit", "^1")],
+                        ),
+                        release(
+                            "2.0.0",
+                            false,
+                            vec![requirement("shared", "shared-kit", "^2")],
+                        ),
+                    ],
+                },
+                RegistryPackage {
+                    name: "shared-kit".into(),
+                    releases: vec![
+                        release("1.5.0", false, vec![]),
+                        release("2.5.0", false, vec![]),
+                    ],
+                },
+            ],
+        };
+        let roots = vec![
+            root("shared", "shared-kit", "<2"),
+            root("app", "app-kit", ">=1"),
+        ];
+        let resolved = resolve_registry_dependencies(
+            &roots,
+            std::slice::from_ref(&snapshot),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved
+                .packages
+                .iter()
+                .map(|package| (&package.provider.name, &package.provider.version))
+                .collect::<Vec<_>>(),
+            [
+                (&"app-kit".to_owned(), &Version::new(1, 0, 0)),
+                (&"shared-kit".to_owned(), &Version::new(1, 5, 0)),
+            ]
+        );
+
+        let mut reversed_roots = roots;
+        reversed_roots.reverse();
+        assert_eq!(
+            resolve_registry_dependencies(&reversed_roots, &[snapshot], &BTreeSet::new()).unwrap(),
+            resolved
+        );
+    }
+
+    #[test]
+    fn resolver_admits_a_yanked_release_only_by_complete_locked_identity() {
+        let snapshot = RegistrySnapshot {
+            digest: digest('a'),
+            registry: "community".into(),
+            packages: vec![RegistryPackage {
+                name: "answer-kit".into(),
+                releases: vec![
+                    release("1.0.0", false, vec![]),
+                    release("2.0.0", true, vec![]),
+                ],
+            }],
+        };
+        let roots = [root("answer", "answer-kit", "=2.0.0")];
+        let error = resolve_registry_dependencies(
+            &roots,
+            std::slice::from_ref(&snapshot),
+            &BTreeSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RegistryResolutionError::NoCompatibleVersion { .. }
+        ));
+
+        let locked = RegistryProviderIdentity {
+            registry: "community".into(),
+            snapshot: snapshot.digest.clone(),
+            name: "answer-kit".into(),
+            version: Version::new(2, 0, 0),
+            archive_sha256: digest('2'),
+        };
+        let resolved =
+            resolve_registry_dependencies(&roots, &[snapshot], &BTreeSet::from([locked.clone()]))
+                .unwrap();
+        assert_eq!(resolved.packages[0].provider, locked);
+    }
+
+    #[test]
+    fn resolver_reports_stable_conflicts_missing_snapshots_and_cycles() {
+        let conflict = RegistrySnapshot {
+            digest: digest('a'),
+            registry: "community".into(),
+            packages: vec![RegistryPackage {
+                name: "answer-kit".into(),
+                releases: vec![release("1.0.0", false, vec![])],
+            }],
+        };
+        let roots = [
+            root("old", "answer-kit", "<1"),
+            root("new", "answer-kit", ">=2"),
+        ];
+        let error = resolve_registry_dependencies(&roots, &[conflict], &BTreeSet::new())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("answer-kit"), "{error}");
+        assert!(error.contains("dependency `new`"), "{error}");
+        assert!(error.contains("dependency `old`"), "{error}");
+
+        let mut cross_registry = requirement("external", "external-kit", "^1");
+        cross_registry.registry = "missing".into();
+        let missing = RegistrySnapshot {
+            digest: digest('a'),
+            registry: "community".into(),
+            packages: vec![RegistryPackage {
+                name: "answer-kit".into(),
+                releases: vec![release("1.0.0", false, vec![cross_registry])],
+            }],
+        };
+        assert_eq!(
+            resolve_registry_dependencies(
+                &[root("answer", "answer-kit", "^1")],
+                &[missing],
+                &BTreeSet::new(),
+            )
+            .unwrap_err(),
+            RegistryResolutionError::MissingSnapshot("missing".into())
+        );
+
+        let cycle = RegistrySnapshot {
+            digest: digest('a'),
+            registry: "community".into(),
+            packages: vec![
+                RegistryPackage {
+                    name: "left-kit".into(),
+                    releases: vec![release(
+                        "1.0.0",
+                        false,
+                        vec![requirement("right", "right-kit", "^1")],
+                    )],
+                },
+                RegistryPackage {
+                    name: "right-kit".into(),
+                    releases: vec![release(
+                        "1.0.0",
+                        false,
+                        vec![requirement("left", "left-kit", "^1")],
+                    )],
+                },
+            ],
+        };
+        assert!(matches!(
+            resolve_registry_dependencies(
+                &[root("left", "left-kit", "^1")],
+                &[cycle],
+                &BTreeSet::new(),
+            ),
+            Err(RegistryResolutionError::DependencyCycle(_))
+        ));
     }
 
     #[test]

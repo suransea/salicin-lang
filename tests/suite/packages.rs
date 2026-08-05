@@ -24,7 +24,66 @@ answer = { package = "answer-kit", version = "^1.2", registry = "local-test" }
     assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("registry dependency `answer`"), "{stderr}");
-    assert!(stderr.contains("PKG-2"), "{stderr}");
+    assert!(
+        stderr.contains("verified registry source materialization"),
+        "{stderr}"
+    );
+    assert!(!project.join("salicin.lock").exists());
+}
+
+#[test]
+fn registry_resolution_selects_and_locks_an_exact_provider_graph() {
+    use salicin_lang::lockfile::{parse_lockfile, Lockfile};
+    use salicin_lang::manifest::load_dependency_graph_inputs;
+    use salicin_lang::registry::{
+        parse_registry_snapshot, registry_requirements_from_graph, resolve_registry_dependencies,
+        Sha256Digest,
+    };
+
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "registry-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1.0", registry = "local-test" }
+"#,
+    );
+    project.write("src/main.sc", "let main(): i32 = { 0 }\n");
+    let graph = load_dependency_graph_inputs(&project.0).unwrap();
+    let roots = registry_requirements_from_graph(&graph);
+
+    let snapshot_bytes = br#"{"format":1,"registry":"local-test","packages":[{"name":"answer-kit","releases":[{"version":"1.0.0","archive_sha256":"1111111111111111111111111111111111111111111111111111111111111111","archive":"archives/answer-kit/1.0.0/answer-kit-1.0.0.tar.gz"},{"version":"1.2.0","archive_sha256":"2222222222222222222222222222222222222222222222222222222222222222","archive":"archives/answer-kit/1.2.0/answer-kit-1.2.0.tar.gz"}]}]}"#;
+    let snapshot_digest = Sha256Digest::of(snapshot_bytes);
+    let snapshot = parse_registry_snapshot(snapshot_bytes, &snapshot_digest, "local-test").unwrap();
+    let resolution = resolve_registry_dependencies(
+        &roots,
+        std::slice::from_ref(&snapshot),
+        &std::collections::BTreeSet::new(),
+    )
+    .unwrap();
+    assert_eq!(resolution.packages[0].provider.version.to_string(), "1.2.0");
+    assert_eq!(
+        resolve_registry_dependencies(&roots, &[snapshot], &std::collections::BTreeSet::new(),)
+            .unwrap(),
+        resolution
+    );
+
+    let lockfile = Lockfile::from_graph_root_with_registry(
+        &graph,
+        &project.0,
+        &std::collections::HashSet::new(),
+        &resolution,
+    )
+    .unwrap();
+    let text = lockfile.to_text();
+    assert!(text.contains("version = \"1.2.0\""), "{text}");
+    assert!(text.contains(snapshot_digest.as_str()), "{text}");
+    assert!(text.contains(&"2".repeat(64)), "{text}");
+    assert_eq!(parse_lockfile(&text).unwrap(), lockfile);
     assert!(!project.join("salicin.lock").exists());
 }
 
