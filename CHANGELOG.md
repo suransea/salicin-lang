@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+## 0.257.0 - 2026-08-05
+
+- Completed PKG-4 by wiring immutable registry snapshots, global provider
+  resolution, verified archive materialization, and registry libraries into
+  ordinary CLI package compilation. Registry package identities remain stable
+  across cache relocation.
+- Defined snapshot-pinned configuration with no implicit `latest`. Default
+  mode selects from that exact snapshot; `--locked` validates and adopts the
+  exact lockfile graph without reselecting newer compatible versions; and
+  `--frozen` reads only checksum-addressed snapshot/archive/source cache data.
+- Added native registry execution plus exact older and yanked lock, offline
+  restart, source rebuild, corrupt-cache, conflict, cycle, and lockfile
+  non-mutation coverage. Promoted META-1 to the active milestone and updated
+  contracts, architecture, status, roadmap, TODO, and the research ledger from
+  current lockfile, package-calculus, and reproducible-build research.
+
 ## 0.256.0 - 2026-08-05
 
 - Completed PKG-3 with a transport-independent verified registry source store.

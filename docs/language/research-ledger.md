@@ -8,6 +8,31 @@ implementation, and measurement.
 
 ## Current Decisions
 
+### Frozen Means Cache-Closed, Locked Means Selection-Closed
+
+Reviewed on 2026-08-05. Salicin separates three properties that lockfile tools
+often conflate. Default mode selects the highest compatible graph from one
+explicitly configured immutable snapshot per registry. `--locked` validates
+and adopts the exact provider graph already recorded in `salicin.lock`; it
+does not rerun highest-version selection, so a newly available compatible
+version cannot move the build. `--frozen` additionally closes the input world
+to checksum-addressed snapshot and archive caches and never consults an
+endpoint, including a local fixture.
+
+This split follows the 2026 empirical lockfile study's distinction between
+exact selection, integrity, and temporal reproducibility, and the Package
+Calculus separation of roots, closure, and version uniqueness. Large-scale
+Nix results show that immutable functional inputs yield near-universal
+rebuildability, but also warn against claiming bit-identical outputs from
+dependency pinning alone. Salicin therefore claims deterministic provider and
+source inputs here, while independent artifact reproducibility remains a
+separate compiler/build property.
+
+- [The Design Space of Lockfiles Across Package Managers (Empirical Software Engineering 2026)](https://doi.org/10.1007/s10664-025-10789-w)
+- [Package Managers à la Carte: A Formal Model of Dependency Resolution (2026)](https://arxiv.org/abs/2602.18602)
+- [Does Functional Package Management Enable Reproducible Builds at Scale? Yes (2025)](https://arxiv.org/abs/2501.15919)
+- [Reproducible Builds and Insights from an Independent Verifier for Arch Linux (2025)](https://arxiv.org/abs/2505.21642)
+
 ### Registry Archives Are Data, Not Filesystem Instructions
 
 Reviewed on 2026-08-05. A selected archive is authenticated as exact compressed

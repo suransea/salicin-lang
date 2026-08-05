@@ -26,6 +26,7 @@ pub const REGISTRY_RESOLUTION_ATTEMPT_LIMIT: usize = 100_000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistryConfig {
     pub registries: BTreeMap<String, RegistryEndpoint>,
+    pub snapshots: BTreeMap<String, Sha256Digest>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -594,8 +595,10 @@ pub fn load_registry_config(path: impl AsRef<Path>) -> Result<RegistryConfig, Re
     }
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     let mut registries = BTreeMap::new();
+    let mut snapshots = BTreeMap::new();
     for (name, entry) in raw.registries {
         validate_registry_name(&name)?;
+        let snapshot = Sha256Digest::parse(&entry.snapshot)?;
         let endpoint = match (entry.url, entry.fixture) {
             (Some(url), None) => {
                 validate_https_root(&url)?;
@@ -611,9 +614,13 @@ pub fn load_registry_config(path: impl AsRef<Path>) -> Result<RegistryConfig, Re
                 )))
             }
         };
+        snapshots.insert(name.clone(), snapshot);
         registries.insert(name, endpoint);
     }
-    Ok(RegistryConfig { registries })
+    Ok(RegistryConfig {
+        registries,
+        snapshots,
+    })
 }
 
 /// Parse and validate one exact snapshot. The expected digest is checked before
@@ -811,6 +818,7 @@ struct RawConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawRegistryEntry {
+    snapshot: String,
     #[serde(default)]
     url: Option<String>,
     #[serde(default)]
@@ -1205,7 +1213,7 @@ mod tests {
         let path = root.join(REGISTRY_CONFIG_FILE_NAME);
         fs::write(
             &path,
-            "format = 1\n[registries.primary]\nurl = \"https://packages.example.test/v1\"\n[registries.local-test]\nfixture = \"fixtures/registry\"\n",
+            format!("format = 1\n[registries.primary]\nsnapshot = \"{}\"\nurl = \"https://packages.example.test/v1\"\n[registries.local-test]\nsnapshot = \"{}\"\nfixture = \"fixtures/registry\"\n", "a".repeat(64), "b".repeat(64)),
         )
         .unwrap();
         let config = load_registry_config(&path).unwrap();
@@ -1217,6 +1225,8 @@ mod tests {
             config.registries["local-test"],
             RegistryEndpoint::LocalFixture(root.join("fixtures/registry"))
         );
+        assert_eq!(config.snapshots["primary"].as_str(), "a".repeat(64));
+        assert_eq!(config.snapshots["local-test"].as_str(), "b".repeat(64));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1278,7 +1288,10 @@ mod tests {
         let path = root.join(REGISTRY_CONFIG_FILE_NAME);
         fs::write(
             &path,
-            "format = 1\n[registries.bad]\nurl = \"http://example.test\"\nfixture = \"../escape\"\n",
+            format!(
+                "format = 1\n[registries.bad]\nsnapshot = \"{}\"\nurl = \"http://example.test\"\nfixture = \"../escape\"\n",
+                "a".repeat(64)
+            ),
         )
         .unwrap();
         assert!(load_registry_config(&path)

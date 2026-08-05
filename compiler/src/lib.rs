@@ -18,6 +18,7 @@ pub mod modules;
 pub mod parser;
 pub mod registry;
 pub mod registry_cache;
+pub mod registry_project;
 pub mod standard;
 pub mod static_semantics;
 

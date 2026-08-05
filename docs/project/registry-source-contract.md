@@ -1,7 +1,7 @@
 # Registry Source Input Contract
 
-Status: PKG-1 input, PKG-2 resolution, and PKG-3 verified source cache
-implemented; transport and locked/frozen CLI acceptance remain PKG-4
+Status: implemented for manifest input, resolution, verified source caching,
+local-fixture CLI compilation, and locked/frozen operation
 
 This contract fixes the source-visible and on-disk inputs for registry packages
 without defining a public registry service. Registry inputs are strict and
@@ -28,25 +28,29 @@ fallbacks are rejected.
 The manifest loader preserves an unresolved typed request. The implemented
 registry solver can collect those requests across the complete local graph and
 produce exact providers. The source-store API materializes selected bytes and
-returns a source root only after verification; ordinary CLI compilation still
-refuses registry requests until PKG-4 wires transport and lock modes to it.
+returns a source root only after verification; CLI package commands compile
+those roots as ordinary dependency libraries.
 
 ## Registry Identity and Configuration
 
 Endpoints are deployment configuration, not package identity. The strict
-`salicin-registries.toml` format 1 maps a stable registry identity to exactly
-one endpoint:
+`salicin-registries.toml` format 1 maps a stable registry identity to one exact
+immutable snapshot and exactly one endpoint:
 
 ```toml
 format = 1
 
 [registries.community]
+snapshot = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 url = "https://packages.example.org/v1"
 
 [registries.local-test]
+snapshot = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 fixture = "fixtures/registry"
 ```
 
+The snapshot is 64 lowercase SHA-256 hexadecimal digits and is the only input
+used by default-mode selection; there is no mutable `latest` lookup.
 Production endpoints must be HTTPS roots without query, fragment, or trailing
 slash. `fixture` is a relocatable child path anchored at the configuration
 file; it cannot be absolute or contain `.`/`..`. Credentials, mirrors,
@@ -143,6 +147,14 @@ The implemented fixture loader reads only the requested digest path and then
 rechecks its bytes. It does not scan a mutable directory or choose a “latest”
 file, which makes offline, corruption, and restart tests deterministic.
 
+Default CLI mode reads the configured snapshot and may populate index,
+archive, and source caches from a fixture. `--locked` ignores a changed
+configured snapshot, validates and uses the exact snapshot/provider graph in
+`salicin.lock`, and never reselects a newer compatible release. `--frozen`
+does not inspect endpoint data: it succeeds only when all locked snapshot and
+archive bytes are already present and valid in the checksum cache. Cache
+damage is an error, not permission to fall back to an endpoint.
+
 The source store verifies the compressed SHA-256 before parsing, validates the
 entire archive into a bounded in-memory tree, then writes a private staging
 directory. It rejects absolute or non-NFC paths, traversal, backslashes,
@@ -180,7 +192,8 @@ leaves signatures, transparency, and hosted policy outside this milestone.
 
 ## Non-goals
 
-The current registry subsystem does not refresh an index, access a network,
-wire registry packages into CLI compilation, distribute trust roots, or
-standardize a public service. Those boundaries remain explicit PKG-4 or later
-work rather than partially enabled behavior.
+The current registry subsystem does not discover or refresh a mutable index,
+access an HTTPS endpoint, distribute trust roots, or standardize a public
+service. Fixture and prepopulated-cache transport are sufficient to define and
+test the language/compiler boundary without inventing an unstable hosted
+protocol.

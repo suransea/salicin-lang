@@ -74,6 +74,10 @@ The implementation lives under `compiler/src`:
   validates a bounded link-free portable source tree and its manifest/index
   identity, then atomically publishes private archive and source cache entries.
   Lookup recomputes the tree digest and never exposes corrupt entries.
+- `registry_project.rs` owns CLI registry orchestration: snapshot-pinned
+  default resolution, exact locked-graph validation, cache-only frozen input,
+  verified materialization, and conversion into ordinary resolved source
+  packages without exposing cache paths as package identity.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library
   sources. `standard.rs` admits ordinary unprivileged `std` definitions,
   rejects mirror aliases so each declaration retains one canonical module

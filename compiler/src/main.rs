@@ -14,13 +14,17 @@ use std::os::fd::FromRawFd;
 use salicin_lang::editor::{DocumentTarget, WorkspaceSession};
 use salicin_lang::lockfile::{
     generate_lockfile_at, generate_workspace_lockfile, parse_lockfile, portable_relative_path,
-    write_lockfile_if_changed, LOCKFILE_NAME,
+    write_lockfile_if_changed, Lockfile, LOCKFILE_NAME,
 };
 use salicin_lang::manifest::{
-    load_dependency_graph, load_project, DependencyGraph, Edition, Manifest, ProjectManifest,
-    Target, TargetKind, MANIFEST_FILE_NAME, SOURCE_FILE_EXTENSION,
+    load_dependency_graph_inputs, load_project, DependencyGraph, Edition, Manifest,
+    ProjectManifest, Target, TargetKind, MANIFEST_FILE_NAME, SOURCE_FILE_EXTENSION,
 };
 use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
+use salicin_lang::registry::{
+    registry_cache_root, registry_requirements_from_graph, source_cache_path,
+};
+use salicin_lang::registry_project::{prepare_registry_graph, RegistryAccessMode};
 use salicin_lang::{
     check_library_source, check_library_source_packages, check_source, check_source_packages,
     compile_library_source, compile_library_source_packages, compile_source,
@@ -944,11 +948,9 @@ fn resolve_input(
     }
     let selected_package = package.or(implicit_package.as_deref());
     let (package_manifest, project_root) = select_project_package(&project, selected_package)?;
-    let graph = load_dependency_graph(&package_manifest.manifest_path)
+    let graph = load_dependency_graph_inputs(&package_manifest.manifest_path)
         .map_err(|error| error.to_string())?;
     let lock_graph = workspace_lock_graph(&project, &graph)?;
-    let selected = select_manifest_target(graph.root(), selection, binary_only)?;
-    let packages = resolve_project_packages(&graph, &selected, &project, &project_root)?;
     let lockfile_path = project_root.join(LOCKFILE_NAME);
     let workspace_members = match &project {
         ProjectManifest::Package(_) => HashSet::new(),
@@ -957,7 +959,64 @@ fn resolve_input(
             .map(|member| member.package_root.clone())
             .collect(),
     };
-    let lockfile = if workspace_members.is_empty() {
+    let has_registry_dependencies = !registry_requirements_from_graph(&lock_graph).is_empty();
+    let registry_root = if has_registry_dependencies {
+        registry_cache_root().map_err(|error| error.to_string())?
+    } else {
+        project_root.join(".unused-registry-cache")
+    };
+    let prepared = prepare_registry_graph(
+        &lock_graph,
+        &graph,
+        &project_root,
+        registry_root.clone(),
+        match lock_mode {
+            LockMode::Update => RegistryAccessMode::Update,
+            LockMode::Locked => RegistryAccessMode::Locked,
+            LockMode::Frozen => RegistryAccessMode::Frozen,
+        },
+    )?;
+    let compile_graph = prepared
+        .as_ref()
+        .map_or_else(|| graph.clone(), |prepared| prepared.graph.clone());
+    let selected = select_manifest_target(compile_graph.root(), selection, binary_only)?;
+    let registry_identities = prepared
+        .as_ref()
+        .map(|prepared| {
+            prepared
+                .resolution
+                .packages
+                .iter()
+                .map(|package| {
+                    (
+                        source_cache_path(&registry_root, &package.provider.archive_sha256),
+                        format!(
+                            "registry:{}/{}@{}#{}",
+                            package.provider.registry,
+                            package.provider.name,
+                            package.provider.version,
+                            package.provider.archive_sha256
+                        ),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let packages = resolve_project_packages(
+        &compile_graph,
+        &selected,
+        &project,
+        &project_root,
+        &registry_identities,
+    )?;
+    let lockfile = if let Some(prepared) = &prepared {
+        Lockfile::from_graph_root_with_registry(
+            &lock_graph,
+            &project_root,
+            &workspace_members,
+            &prepared.resolution,
+        )?
+    } else if workspace_members.is_empty() {
         generate_lockfile_at(&lock_graph, &project_root)
     } else {
         generate_workspace_lockfile(&lock_graph, &project_root, &workspace_members)
@@ -1064,8 +1123,8 @@ fn workspace_lock_graph(
     };
     let mut packages = BTreeMap::new();
     for member in workspace.packages() {
-        let graph =
-            load_dependency_graph(&member.manifest_path).map_err(|error| error.to_string())?;
+        let graph = load_dependency_graph_inputs(&member.manifest_path)
+            .map_err(|error| error.to_string())?;
         for manifest in graph.packages {
             packages.insert(manifest.manifest_path.clone(), manifest);
         }
@@ -1081,6 +1140,7 @@ fn resolve_project_packages(
     selected: &Target,
     project: &ProjectManifest,
     project_root: &Path,
+    registry_identities: &HashMap<PathBuf, String>,
 ) -> Result<Vec<ResolvedPackage>, String> {
     let ids: HashMap<PathBuf, PackageId> = graph
         .packages
@@ -1123,7 +1183,12 @@ fn resolve_project_packages(
             id: ids[&manifest.manifest_path],
             name: manifest.package.name.clone(),
             version: manifest.package.version.to_string(),
-            identity: resolved_package_identity(project, project_root, manifest),
+            identity: resolved_package_identity(
+                project,
+                project_root,
+                manifest,
+                registry_identities,
+            ),
             is_primary,
             dependencies,
             source: root_source,
@@ -1137,7 +1202,11 @@ fn resolved_package_identity(
     project: &ProjectManifest,
     project_root: &Path,
     manifest: &Manifest,
+    registry_identities: &HashMap<PathBuf, String>,
 ) -> String {
+    if let Some(identity) = registry_identities.get(&manifest.package_root) {
+        return identity.clone();
+    }
     let workspace_member = match project {
         ProjectManifest::Package(_) => false,
         ProjectManifest::Workspace(workspace) => workspace

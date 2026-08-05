@@ -20,13 +20,7 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Registry Source Dependencies
-
-- [ ] **PKG-4 — Locked and frozen acceptance.** Prove that `--locked` cannot
-  change selection and `--frozen` performs no network access, including
-  yanked locks, missing entries, corrupt archives, conflicts, and cycles.
-
-## P1: Compile-Time Metaprogramming Foundations
+## P0: Compile-Time Metaprogramming Foundations
 
 - [ ] **META-1 — Extensible static sort model.** Design additional sorts for
   compile-time reflection and metaprogramming only after defining scope

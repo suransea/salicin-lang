@@ -1,7 +1,75 @@
 use crate::support::*;
 
+fn write_registry_fixture(project: &TestDirectory) -> (Vec<u8>, String) {
+    write_registry_fixture_with_yanked(project, false)
+}
+
+fn write_registry_fixture_with_yanked(project: &TestDirectory, yanked: bool) -> (Vec<u8>, String) {
+    use std::io::Cursor;
+
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use salicin_lang::registry::Sha256Digest;
+    use tar::{Builder, EntryType, Header};
+
+    let manifest = b"[package]\nname = \"answer-kit\"\nversion = \"1.2.3\"\nedition = \"2026\"\n\n[lib]\npath = \"src/lib.sc\"\n";
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut builder = Builder::new(encoder);
+    for (path, contents) in [
+        ("answer-kit-1.2.3/salicin.toml", manifest.as_slice()),
+        (
+            "answer-kit-1.2.3/src/lib.sc",
+            b"pub let answer(): i32 = { 42 }".as_slice(),
+        ),
+    ] {
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_size(contents.len() as u64);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, Cursor::new(contents))
+            .unwrap();
+    }
+    let archive = builder.into_inner().unwrap().finish().unwrap();
+    let archive_digest = Sha256Digest::of(&archive);
+    let snapshot = format!(
+        "{{\"format\":1,\"registry\":\"local-test\",\"packages\":[{{\"name\":\"answer-kit\",\"releases\":[{{\"version\":\"1.2.3\",\"yanked\":{yanked},\"archive_sha256\":\"{archive_digest}\",\"archive\":\"archives/answer-kit/1.2.3/answer-kit-1.2.3.tar.gz\"}}]}}]}}"
+    );
+    let snapshot_digest = Sha256Digest::of(snapshot.as_bytes()).to_string();
+    let archive_path = project.join("registry/archives/answer-kit/1.2.3/answer-kit-1.2.3.tar.gz");
+    fs::create_dir_all(archive_path.parent().unwrap()).unwrap();
+    fs::write(archive_path, &archive).unwrap();
+    let snapshot_path = project.join(&format!("registry/snapshots/sha256/{snapshot_digest}.json"));
+    fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+    fs::write(snapshot_path, snapshot).unwrap();
+    project.write(
+        "salicin-registries.toml",
+        &format!(
+            "format = 1\n[registries.local-test]\nsnapshot = \"{snapshot_digest}\"\nfixture = \"registry\"\n"
+        ),
+    );
+    (archive, snapshot_digest)
+}
+
+fn write_registry_snapshot(project: &TestDirectory, snapshot: &str) -> String {
+    use salicin_lang::registry::Sha256Digest;
+
+    let digest = Sha256Digest::of(snapshot.as_bytes()).to_string();
+    let path = project.join(&format!("registry/snapshots/sha256/{digest}.json"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, snapshot).unwrap();
+    project.write(
+        "salicin-registries.toml",
+        &format!(
+            "format = 1\n[registries.local-test]\nsnapshot = \"{digest}\"\nfixture = \"registry\"\n"
+        ),
+    );
+    digest
+}
+
 #[test]
-fn registry_manifest_requests_are_validated_before_resolution() {
+fn registry_sources_run_natively_and_frozen_uses_only_verified_cache() {
     let project = TestDirectory::new();
     project.write(
         "salicin.toml",
@@ -14,21 +82,116 @@ edition = "2026"
 answer = { package = "answer-kit", version = "^1.2", registry = "local-test" }
 "#,
     );
-    project.write("src/main.sc", "let main(): i32 = { 0 }\n");
+    project.write("src/main.sc", "let main(): i32 = { answer.answer() }\n");
+    let (archive, snapshot_digest) = write_registry_fixture(&project);
+    let cache = project.create_dir("cache");
 
     let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .env("SALICIN_CACHE_HOME", &cache)
+        .output()
+        .expect("run verified registry package");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    let lock = fs::read_to_string(project.join("salicin.lock")).unwrap();
+    assert!(lock.contains(&snapshot_digest), "{lock}");
+
+    fs::remove_dir_all(project.join("registry")).unwrap();
+    project.write(
+        "salicin-registries.toml",
+        &format!(
+            "format = 1\n[registries.local-test]\nsnapshot = \"{}\"\nfixture = \"registry\"\n",
+            "f".repeat(64)
+        ),
+    );
+    let frozen = salic()
+        .arg("run")
+        .arg(&project.0)
+        .arg("--frozen")
+        .env("SALICIN_CACHE_HOME", &cache)
+        .output()
+        .expect("run frozen from verified cache");
+    assert_eq!(frozen.status.code(), Some(42), "{}", output_text(&frozen));
+    assert_eq!(
+        fs::read_to_string(project.join("salicin.lock")).unwrap(),
+        lock
+    );
+
+    let source_root = cache.join("registry-v1/sources/sha256");
+    fs::remove_dir_all(source_root).unwrap();
+    let rebuilt = salic()
+        .arg("run")
+        .arg(&project.0)
+        .arg("--frozen")
+        .env("SALICIN_CACHE_HOME", &cache)
+        .output()
+        .expect("rebuild frozen source from archive cache");
+    assert_eq!(rebuilt.status.code(), Some(42), "{}", output_text(&rebuilt));
+
+    fs::remove_dir_all(cache.join("registry-v1/sources/sha256")).unwrap();
+    let archive_cache = cache.join("registry-v1/archives/sha256");
+    let cached_archive = fs::read_dir(&archive_cache)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::write(&cached_archive, b"corrupt").unwrap();
+    let corrupt = salic()
         .arg("check")
         .arg(&project.0)
+        .arg("--frozen")
+        .env("SALICIN_CACHE_HOME", &cache)
         .output()
-        .expect("validate registry manifest input");
-    assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("registry dependency `answer`"), "{stderr}");
+        .expect("reject corrupt frozen archive");
+    assert_eq!(corrupt.status.code(), Some(2), "{}", output_text(&corrupt));
     assert!(
-        stderr.contains("verified registry source materialization"),
-        "{stderr}"
+        String::from_utf8_lossy(&corrupt.stderr).contains("missing or corrupt"),
+        "{}",
+        output_text(&corrupt)
     );
-    assert!(!project.join("salicin.lock").exists());
+    assert_eq!(
+        fs::read_to_string(project.join("salicin.lock")).unwrap(),
+        lock
+    );
+    assert!(!archive.is_empty());
+}
+
+#[test]
+fn workspace_registry_compilation_prunes_unselected_member_sources() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "salicin.toml",
+        "[workspace]\nmembers = [\"app\", \"unused\"]\n",
+    );
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "registry-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1", registry = "local-test" }
+"#,
+    );
+    workspace.write("app/src/main.sc", "let main(): i32 = { answer.answer() }\n");
+    workspace.write(
+        "unused/salicin.toml",
+        "[package]\nname = \"unused\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write("unused/src/main.sc", "not valid Salicin\n");
+    write_registry_fixture(&workspace);
+
+    let output = salic()
+        .arg("run")
+        .arg(&workspace.0)
+        .arg("--package")
+        .arg("registry-app")
+        .env("SALICIN_CACHE_HOME", workspace.create_dir("cache"))
+        .output()
+        .expect("compile selected workspace member with registry source");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
 #[test]
@@ -85,6 +248,216 @@ answer = { package = "answer-kit", version = "^1.0", registry = "local-test" }
     assert!(text.contains(&"2".repeat(64)), "{text}");
     assert_eq!(parse_lockfile(&text).unwrap(), lockfile);
     assert!(!project.join("salicin.lock").exists());
+}
+
+#[test]
+fn locked_mode_accepts_only_the_exact_previously_locked_yanked_provider() {
+    use salicin_lang::lockfile::Lockfile;
+    use salicin_lang::manifest::load_dependency_graph_inputs;
+    use salicin_lang::registry::{
+        load_fixture_snapshot, registry_requirements_from_graph, resolve_registry_dependencies,
+        RegistryProviderIdentity, Sha256Digest,
+    };
+
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "yanked-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1.2", registry = "local-test" }
+"#,
+    );
+    project.write("src/main.sc", "let main(): i32 = { answer.answer() }\n");
+    let (_, snapshot_text) = write_registry_fixture_with_yanked(&project, true);
+    let snapshot_digest = Sha256Digest::parse(&snapshot_text).unwrap();
+    let snapshot =
+        load_fixture_snapshot(&project.join("registry"), &snapshot_digest, "local-test").unwrap();
+    let release = &snapshot.packages[0].releases[0];
+    let provider = RegistryProviderIdentity {
+        registry: "local-test".into(),
+        snapshot: snapshot_digest,
+        name: "answer-kit".into(),
+        version: release.version.clone(),
+        archive_sha256: release.archive_sha256.clone(),
+    };
+    let graph = load_dependency_graph_inputs(&project.0).unwrap();
+    let resolution = resolve_registry_dependencies(
+        &registry_requirements_from_graph(&graph),
+        &[snapshot],
+        &std::collections::BTreeSet::from([provider]),
+    )
+    .unwrap();
+    let lock = Lockfile::from_graph_root_with_registry(
+        &graph,
+        &graph.root().package_root,
+        &std::collections::HashSet::new(),
+        &resolution,
+    )
+    .unwrap();
+    fs::write(project.join("salicin.lock"), lock.to_text()).unwrap();
+    let cache = project.create_dir("cache");
+
+    let locked = salic()
+        .arg("run")
+        .arg(&project.0)
+        .arg("--locked")
+        .env("SALICIN_CACHE_HOME", cache)
+        .output()
+        .expect("run exact locked yanked provider");
+    assert_eq!(locked.status.code(), Some(42), "{}", output_text(&locked));
+}
+
+#[test]
+fn locked_mode_does_not_reselect_a_newer_compatible_provider() {
+    use salicin_lang::lockfile::Lockfile;
+    use salicin_lang::manifest::load_dependency_graph_inputs;
+    use salicin_lang::registry::{
+        RegistryProviderIdentity, RegistryResolution, ResolvedRegistryDependency,
+        ResolvedRegistryPackage, ResolvedRootRegistryDependency, Sha256Digest,
+    };
+
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "pinned-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1.2", registry = "local-test" }
+"#,
+    );
+    project.write("src/main.sc", "let main(): i32 = { answer.answer() }\n");
+    let (archive, _) = write_registry_fixture(&project);
+    let archive_digest = Sha256Digest::of(&archive);
+    let snapshot = format!(
+        "{{\"format\":1,\"registry\":\"local-test\",\"packages\":[{{\"name\":\"answer-kit\",\"releases\":[{{\"version\":\"1.2.3\",\"archive_sha256\":\"{archive_digest}\",\"archive\":\"archives/answer-kit/1.2.3/answer-kit-1.2.3.tar.gz\"}},{{\"version\":\"1.3.0\",\"archive_sha256\":\"{archive_digest}\",\"archive\":\"archives/answer-kit/1.3.0/answer-kit-1.3.0.tar.gz\"}}]}}]}}"
+    );
+    let snapshot_text = write_registry_snapshot(&project, &snapshot);
+    let snapshot_digest = Sha256Digest::parse(&snapshot_text).unwrap();
+    let provider = RegistryProviderIdentity {
+        registry: "local-test".into(),
+        snapshot: snapshot_digest.clone(),
+        name: "answer-kit".into(),
+        version: semver::Version::parse("1.2.3").unwrap(),
+        archive_sha256: archive_digest,
+    };
+    let graph = load_dependency_graph_inputs(&project.0).unwrap();
+    let dependency = ResolvedRegistryDependency {
+        alias: "answer".into(),
+        provider: provider.clone(),
+    };
+    let resolution = RegistryResolution {
+        snapshots: vec![("local-test".into(), snapshot_digest)],
+        packages: vec![ResolvedRegistryPackage {
+            provider,
+            dependencies: vec![],
+        }],
+        roots: vec![ResolvedRootRegistryDependency {
+            owner_manifest_path: graph.root_manifest_path.clone(),
+            dependency,
+        }],
+    };
+    let lock = Lockfile::from_graph_root_with_registry(
+        &graph,
+        &graph.root().package_root,
+        &std::collections::HashSet::new(),
+        &resolution,
+    )
+    .unwrap();
+    fs::write(project.join("salicin.lock"), lock.to_text()).unwrap();
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .arg("--locked")
+        .env("SALICIN_CACHE_HOME", project.create_dir("cache"))
+        .output()
+        .expect("keep exact older locked provider");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    assert!(fs::read_to_string(project.join("salicin.lock"))
+        .unwrap()
+        .contains("version = \"1.2.3\""));
+}
+
+#[test]
+fn registry_cli_rejects_conflicts_and_cycles_before_lockfile_mutation() {
+    let conflict = TestDirectory::new();
+    conflict.write(
+        "salicin.toml",
+        r#"[package]
+name = "conflict-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+old = { package = "answer-kit", version = "^1", registry = "local-test" }
+new = { package = "answer-kit", version = "^2", registry = "local-test" }
+"#,
+    );
+    conflict.write("src/main.sc", "let main(): i32 = { 0 }\n");
+    write_registry_snapshot(
+        &conflict,
+        &format!(
+            "{{\"format\":1,\"registry\":\"local-test\",\"packages\":[{{\"name\":\"answer-kit\",\"releases\":[{{\"version\":\"1.0.0\",\"archive_sha256\":\"{}\",\"archive\":\"archives/answer-kit/1.0.0/answer-kit-1.0.0.tar.gz\"}},{{\"version\":\"2.0.0\",\"archive_sha256\":\"{}\",\"archive\":\"archives/answer-kit/2.0.0/answer-kit-2.0.0.tar.gz\"}}]}}]}}",
+            "1".repeat(64),
+            "2".repeat(64)
+        ),
+    );
+    let conflict_output = salic()
+        .arg("check")
+        .arg(&conflict.0)
+        .env("SALICIN_CACHE_HOME", conflict.create_dir("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        conflict_output.status.code(),
+        Some(2),
+        "{}",
+        output_text(&conflict_output)
+    );
+    assert!(String::from_utf8_lossy(&conflict_output.stderr).contains("no non-yanked version"));
+    assert!(!conflict.join("salicin.lock").exists());
+
+    let cycle = TestDirectory::new();
+    cycle.write(
+        "salicin.toml",
+        r#"[package]
+name = "cycle-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1", registry = "local-test" }
+"#,
+    );
+    cycle.write("src/main.sc", "let main(): i32 = { 0 }\n");
+    write_registry_snapshot(
+        &cycle,
+        &format!(
+            "{{\"format\":1,\"registry\":\"local-test\",\"packages\":[{{\"name\":\"answer-kit\",\"releases\":[{{\"version\":\"1.0.0\",\"archive_sha256\":\"{}\",\"archive\":\"archives/answer-kit/1.0.0/answer-kit-1.0.0.tar.gz\",\"dependencies\":[{{\"alias\":\"again\",\"package\":\"answer-kit\",\"registry\":\"local-test\",\"version\":\"^1\"}}]}}]}}]}}",
+            "3".repeat(64)
+        ),
+    );
+    let cycle_output = salic()
+        .arg("check")
+        .arg(&cycle.0)
+        .env("SALICIN_CACHE_HOME", cycle.create_dir("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        cycle_output.status.code(),
+        Some(2),
+        "{}",
+        output_text(&cycle_output)
+    );
+    assert!(String::from_utf8_lossy(&cycle_output.stderr).contains("dependency cycle"));
+    assert!(!cycle.join("salicin.lock").exists());
 }
 
 #[test]

@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "salicin-lang"
-version = "0.256.0"
+version = "0.257.0"
 dependencies = [
  "flate2",
  "libc",

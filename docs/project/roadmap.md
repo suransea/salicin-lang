@@ -48,43 +48,10 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Registry Source Dependencies
+## Now: Compile-Time Metaprogramming Foundations
 
-The implemented resolver already fixes package provider identity, lockfile
-semantics, and workspace/path resolution. The
-[dependency resolution contract](dependency-resolution.md) also defines the
-registry selection algorithm. The implemented
-[registry source input contract](registry-source-contract.md) now fixes strict
-manifest requests, registry configuration, immutable content-addressed index
-snapshots, archive identities, cache roots, and relocatable fixture loading.
-Provider selection is implemented as a globally backtracking, version-unique
-graph with exact format-3 lock identities. Selected tar.gz bytes can now be
-verified, bounded, materialized into private staging, and atomically published
-under their archive digest; every cache hit revalidates the source tree and
-manifest/index identity. Active work connects that boundary to locked/frozen
-CLI acceptance. This milestone does not create or standardize a public
-registry service.
-
-Exit conditions:
-
-- manifests can declare registry source dependencies without weakening
-  workspace/path identity rules;
-- resolution selects the highest compatible non-yanked version from one
-  identified snapshot and records exact provider and checksum data;
-- archives are verified before manifest or source consumption and extracted
-  without path traversal or partial-cache visibility;
-- `--locked` cannot change the selected graph, and `--frozen` succeeds only
-  from verified local index and archive data;
-- local fixture registries cover version conflicts, yanking, checksum
-  mismatch, cache corruption, offline operation, and dependency cycles.
-
-Publishing, credentials, mirrors, a hosted service, precompiled interfaces,
-and a stable package protocol remain outside this milestone.
-
-## Later: Compile-Time Metaprogramming Foundations
-
-After the daily-development milestones, Salicin may add more static sorts for
-typed reflection and metaprogramming. META-1 must first define scope safety,
+With the daily-development milestones complete, Salicin may add more static
+sorts for typed reflection and metaprogramming. META-1 must first define scope safety,
 phase separation, equality and normalization, permitted fragment producers,
 resource limits, and source diagnostics. No unused `declaration` sort is
 reserved in advance.

@@ -1,8 +1,7 @@
 # Reproducible Dependency Resolution
 
 Status: implemented for workspace, path, immutable-snapshot registry provider
-selection, and verified registry source materialization; CLI lock-mode wiring
-remains PKG-4
+selection, verified source materialization, and CLI lock modes
 
 Dependency resolution produces one exact provider graph before source
 compilation. The graph is serialized in canonical `salicin.lock` format 3 and
@@ -34,13 +33,15 @@ Default commands compute the provider graph and atomically create or replace
 `salicin.lock` only when canonical bytes differ.
 
 `--locked` requires an existing format-3 lockfile. The compiler strictly
-parses it, rejects unknown fields and invalid versions, and compares the full
-typed graph with current manifest resolution. Missing, malformed, or stale
-lock data is an error and is never rewritten.
+parses it, validates every exact provider and edge against current manifests
+and the locked immutable snapshots, and uses that graph without performing a
+new highest-version selection. A newer compatible release therefore cannot
+move a locked build. Missing, malformed, stale, cyclic, dangling, or
+unreachable lock data is an error and is never rewritten.
 
-`--frozen` includes every `--locked` rule and additionally forbids dependency
-network access. Current workspace/path resolution performs no network access,
-so the two modes differ only in their forward contract.
+`--frozen` includes every `--locked` rule and reads registry snapshots and
+archives only from their checksum-addressed cache. Missing or corrupt cache
+entries fail without consulting even a configured local fixture endpoint.
 
 ## Registry Algorithm
 
@@ -73,13 +74,13 @@ verified source store authenticates exact compressed bytes, validates the
 bounded archive and manifest/index identity, and returns sources only after
 atomic publication.
 
-Default mode may refresh the index and cache. `--locked` may fetch only the
-already selected exact provider and may not change it. `--frozen` may read
-only verified local index and archive cache entries. Registry credentials,
-mirrors, transport, publishing, and the public service remain outside the
-language and are not yet implemented. CLI compilation still refuses registry
-requests until PKG-4 connects exact transport/cache availability and lock modes
-to the implemented transport-independent resolver and verified source store.
+Default mode resolves from the exact snapshot digest in registry
+configuration and populates the cache. `--locked` takes snapshot and provider
+identity from the lockfile and may load only those exact fixture bytes;
+`--frozen` uses only verified cache entries. Registry packages participate in
+ordinary cross-package compilation with a cache-path-independent identity.
+HTTPS transport, credentials, mirrors, publishing, and a public service remain
+outside the current protocol.
 
 ## Failure Atomicity
 
