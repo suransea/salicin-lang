@@ -6,7 +6,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde::Deserialize;
 
 /// The package manifest file name recognized by `salic`.
@@ -26,6 +26,8 @@ pub struct Manifest {
     pub bins: Vec<Target>,
     /// Validated local path dependencies, sorted by alias.
     pub dependencies: Vec<Dependency>,
+    /// Validated registry dependency requests, sorted by alias.
+    pub registry_dependencies: Vec<RegistryDependency>,
     /// Canonical absolute path to `salicin.toml`.
     pub manifest_path: PathBuf,
     /// Canonical absolute path to the directory containing the manifest.
@@ -75,6 +77,22 @@ pub struct Dependency {
     pub manifest_path: PathBuf,
     /// Identity read and validated from the dependency manifest.
     pub package: Package,
+}
+
+/// One unresolved registry dependency request from `[dependencies]`.
+///
+/// PKG-1 validates and preserves this input. Provider selection is deliberately
+/// left to PKG-2, so no archive or package manifest is read here.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryDependency {
+    /// Source-level name used as the dependency's package module.
+    pub alias: String,
+    /// Published package identity in the selected registry.
+    pub package: String,
+    /// Normalized registry identity configured outside the package manifest.
+    pub registry: String,
+    /// Semantic-version constraint to solve against one immutable snapshot.
+    pub requirement: VersionReq,
 }
 
 impl Manifest {
@@ -268,7 +286,8 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
     })?;
     let package = validate_package(package, &manifest_path)?;
 
-    let dependencies = validate_dependencies(raw.dependencies, &package_root, &manifest_path)?;
+    let (dependencies, registry_dependencies) =
+        validate_dependencies(raw.dependencies, &package_root, &manifest_path)?;
 
     let lib = match raw.lib {
         Some(raw_lib) => Some(Target {
@@ -348,6 +367,7 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         lib,
         bins,
         dependencies,
+        registry_dependencies,
         manifest_path,
         package_root,
     })
@@ -511,8 +531,9 @@ fn validate_dependencies(
     raw_dependencies: BTreeMap<String, RawDependency>,
     package_root: &Path,
     manifest_path: &Path,
-) -> Result<Vec<Dependency>, ManifestError> {
+) -> Result<(Vec<Dependency>, Vec<RegistryDependency>), ManifestError> {
     let mut dependencies = Vec::with_capacity(raw_dependencies.len());
+    let mut registry_dependencies = Vec::new();
     for (alias, raw) in raw_dependencies {
         if !is_ascii_snake_case_module_name(&alias) {
             return Err(ManifestError::invalid(
@@ -522,18 +543,68 @@ fn validate_dependencies(
                 ),
             ));
         }
-        if !is_portable_relative_dependency_path(&raw.path) {
+        let is_path = raw.path.is_some();
+        let is_registry = raw.version.is_some() || raw.registry.is_some() || raw.package.is_some();
+        if is_path == is_registry {
+            return Err(ManifestError::invalid(
+                manifest_path,
+                format!(
+                    "dependency `{alias}` must declare exactly one source: `path`, or all of `package`, `version`, and `registry`"
+                ),
+            ));
+        }
+
+        if is_registry {
+            let (Some(package), Some(version), Some(registry)) =
+                (raw.package, raw.version, raw.registry)
+            else {
+                return Err(ManifestError::invalid(
+                    manifest_path,
+                    format!(
+                        "registry dependency `{alias}` must declare all of `package`, `version`, and `registry`"
+                    ),
+                ));
+            };
+            if !is_ascii_kebab_case(&package) {
+                return Err(ManifestError::invalid(
+                    manifest_path,
+                    format!("registry dependency `{alias}` package `{package}` must be ASCII kebab-case"),
+                ));
+            }
+            if !is_registry_identity(&registry) {
+                return Err(ManifestError::invalid(
+                    manifest_path,
+                    format!("registry dependency `{alias}` registry `{registry}` must be normalized ASCII kebab-case"),
+                ));
+            }
+            let requirement = VersionReq::parse(&version).map_err(|error| {
+                ManifestError::invalid(
+                    manifest_path,
+                    format!("registry dependency `{alias}` version requirement `{version}` is invalid: {error}"),
+                )
+            })?;
+            registry_dependencies.push(RegistryDependency {
+                alias,
+                package,
+                registry,
+                requirement,
+            });
+            continue;
+        }
+
+        let path = raw.path.expect("a path source was selected above");
+        if !is_portable_relative_dependency_path(&path) {
             return Err(ManifestError::invalid(
                 manifest_path,
                 format!(
                     "dependency `{alias}` path `{}` must be a non-empty portable relative path using `/` separators",
-                    raw.path.display()
+                    path.display()
                 ),
             ));
         }
 
         let dependency_manifest =
-            resolve_dependency_manifest_path(package_root, manifest_path, &alias, &raw.path)?;
+            resolve_dependency_manifest_path(package_root, manifest_path, &alias, &path)?;
         let dependency_raw = read_raw_manifest(&dependency_manifest)?;
         let raw_package = dependency_raw.package.as_ref().ok_or_else(|| {
             ManifestError::invalid(
@@ -553,7 +624,11 @@ fn validate_dependencies(
             package,
         });
     }
-    Ok(dependencies)
+    Ok((dependencies, registry_dependencies))
+}
+
+fn is_registry_identity(name: &str) -> bool {
+    is_ascii_kebab_case(name) && name.len() <= 64
 }
 
 fn is_portable_relative_dependency_path(path: &Path) -> bool {
@@ -648,6 +723,15 @@ impl DependencyGraph {
 /// Recursively load all local path dependencies and reject canonical-path cycles.
 pub fn load_dependency_graph(path: impl AsRef<Path>) -> Result<DependencyGraph, ManifestError> {
     let root = load_manifest(path)?;
+    if let Some(dependency) = root.registry_dependencies.first() {
+        return Err(ManifestError::invalid(
+            &root.manifest_path,
+            format!(
+                "registry dependency `{}` requires registry resolution (PKG-2); PKG-1 only validates registry inputs",
+                dependency.alias
+            ),
+        ));
+    }
     let root_manifest_path = root.manifest_path.clone();
     let mut builder = GraphBuilder {
         states: HashMap::new(),
@@ -676,6 +760,15 @@ struct GraphBuilder {
 impl GraphBuilder {
     fn visit(&mut self, manifest: Manifest) -> Result<(), ManifestError> {
         let path = manifest.manifest_path.clone();
+        if let Some(dependency) = manifest.registry_dependencies.first() {
+            return Err(ManifestError::invalid(
+                &path,
+                format!(
+                    "registry dependency `{}` requires registry resolution (PKG-2); PKG-1 only validates registry inputs",
+                    dependency.alias
+                ),
+            ));
+        }
         match self.states.get(&path) {
             Some(VisitState::Complete) => return Ok(()),
             Some(VisitState::Visiting) => {
@@ -896,7 +989,14 @@ struct RawBin {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawDependency {
-    path: PathBuf,
+    #[serde(default)]
+    path: Option<PathBuf>,
+    #[serde(default)]
+    package: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    registry: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1048,11 +1148,27 @@ license = "MIT"
     }
 
     #[test]
-    fn rejects_non_path_dependency_sources_and_unknown_fields() {
+    fn validates_registry_dependency_requests_and_rejects_unsupported_sources() {
         let temp = TempDir::new();
         temp.write("src/main.sc", "let main() = { 0 }\n");
+        temp.write(
+            MANIFEST_FILE_NAME,
+            &basic_manifest(
+                "\n[dependencies]\nhttp = { package = \"http-kit\", version = \"^1.2\", registry = \"community\" }\n",
+            ),
+        );
+        let manifest = load_manifest(temp.path()).unwrap();
+        assert!(manifest.dependencies.is_empty());
+        assert_eq!(manifest.registry_dependencies.len(), 1);
+        assert_eq!(manifest.registry_dependencies[0].alias, "http");
+        assert_eq!(manifest.registry_dependencies[0].package, "http-kit");
+        assert_eq!(manifest.registry_dependencies[0].registry, "community");
+        assert_eq!(
+            manifest.registry_dependencies[0].requirement,
+            VersionReq::parse("^1.2").unwrap()
+        );
+
         for (field, value) in [
-            ("version", "\"1.2\""),
             ("git", "\"https://example.invalid/repo\""),
             ("branch", "\"main\""),
         ] {
@@ -1069,6 +1185,27 @@ license = "MIT"
                 "{error}"
             );
         }
+
+        temp.write(
+            MANIFEST_FILE_NAME,
+            &basic_manifest(
+                "\n[dependencies]\nhttp = { version = \"^1.2\", registry = \"community\" }\n",
+            ),
+        );
+        let incomplete = load_manifest(temp.path()).unwrap_err().to_string();
+        assert!(
+            incomplete.contains("all of `package`, `version`, and `registry`"),
+            "{incomplete}"
+        );
+
+        temp.write(
+            MANIFEST_FILE_NAME,
+            &basic_manifest(
+                "\n[dependencies]\nhttp = { path = \"vendor/http\", package = \"http-kit\", version = \"^1.2\", registry = \"community\" }\n",
+            ),
+        );
+        let ambiguous = load_manifest(temp.path()).unwrap_err().to_string();
+        assert!(ambiguous.contains("exactly one source"), "{ambiguous}");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 # Reproducible Dependency Resolution
 
-Status: implemented for workspace and path sources; registry algorithm specified
+Status: implemented for workspace and path sources; registry input contract
+implemented and selection algorithm specified
 
 Dependency resolution produces one exact provider graph before source
 compilation. The graph is serialized in canonical `salicin.lock` format 2 and
@@ -42,8 +43,11 @@ so the two modes differ only in their forward contract.
 
 ## Registry Algorithm
 
-Registry dependencies will name a normalized ASCII registry identity, package
-name, and semantic-version requirement. Resolution must:
+Registry dependencies now name a normalized ASCII registry identity, package
+name, and semantic-version requirement according to the strict
+[registry source input contract](registry-source-contract.md). PKG-1 validates
+immutable checksum-addressed snapshots without selecting or fetching a
+provider. Resolution must:
 
 1. read one immutable, revision-identified registry index snapshot;
 2. discard yanked releases unless an existing lock already selects one;

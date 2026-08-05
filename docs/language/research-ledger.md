@@ -1,12 +1,45 @@
 # Programming-Language Research Ledger
 
-Last reviewed: 2026-07-30
+Last reviewed: 2026-08-05
 
 This ledger records research that materially changes Salicin's language model. It is a repeatable
 review gate, not a claim that any language can remain “advanced” without continuing comparison,
 implementation, and measurement.
 
 ## Current Decisions
+
+### Registry Inputs Separate Identity, Selection, and Verified Bytes
+
+Reviewed on 2026-08-05. Registry identity is an explicit namespace on every
+manifest and transitive requirement, while an endpoint is replaceable local
+configuration. Resolution consumes one exact digest-identified snapshot;
+archive checksums belong to release entries and are verified before manifest
+or source consumption. Index, archive, and extracted-source caches are
+content-addressed rather than URL-addressed.
+
+The 2025 lockfile survey shows that exact selection, integrity, and
+reproducibility are distinct lockfile responsibilities. HyperRes likewise
+models ecosystem/repository namespaces separately from package/version
+vertices. The large-scale Nix study supports immutable functional inputs as a
+practical basis for rebuildability, but does not justify claiming that source
+checksums alone make compiler outputs reproducible. Go's current module
+protocol and TUF consistent snapshots supply the operational precedents for
+authenticate-before-extract and digest-named metadata. USENIX Security 2025
+work on attestations motivates a future provenance layer, deliberately not an
+implicit part of PKG-1's SHA-256 integrity contract.
+
+- [The Design Space of Lockfiles Across Package Managers (2025)](https://arxiv.org/abs/2505.04834)
+- [Solving Package Management via Hypergraph Dependency Resolution (2025)](https://arxiv.org/abs/2506.10803)
+- [Does Functional Package Management Enable Reproducible Builds at Scale? Yes (2025)](https://arxiv.org/abs/2501.15919)
+- [Go Modules Reference](https://go.dev/ref/mod)
+- [TUF roles and metadata](https://theupdateframework.io/docs/metadata/)
+- [Securing Packages in npm, Homebrew, PyPI, Maven Central, and RubyGems (USENIX Security 2025)](https://www.usenix.org/conference/usenixsecurity25/presentation/steindler)
+
+The immediate implementation consequence is a strict format-1 registry config
+and snapshot parser, explicit registry manifest fields, digest-before-parse
+fixture loading, and a refusal boundary before PKG-2 resolution. Signatures,
+transparency, publishing, credentials, and public-service policy remain
+separate possible layers rather than fields with no verifier.
 
 ### Two Levels, One Function Syntax
 

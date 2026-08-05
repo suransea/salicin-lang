@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+## 0.254.0 - 2026-08-05
+
+- Completed PKG-1 with strict registry dependency manifest requests carrying
+  explicit alias, package, SemVer requirement, and stable registry identity.
+  Mixed sources, incomplete requests, unsupported Git fields, and implicit
+  registry selection are rejected before graph or lockfile mutation.
+- Added versioned registry endpoint configuration, exact-byte SHA-256 snapshot
+  identity, strict sorted index metadata, fixed archive paths and checksum
+  ownership, platform cache roots, and checksum-addressed relocatable local
+  fixture loading. Snapshot bytes are authenticated before parsing.
+- Kept provider selection, network access, archive extraction, cache
+  publication, and lockfile changes behind PKG-2 through PKG-4. Updated the
+  dependency contract, architecture, status, research ledger, roadmap, and
+  TODO from current lockfile, HyperRes, functional-package, Go module, TUF,
+  and package-attestation research.
+
 ## 0.253.0 - 2026-08-05
 
 - Completed NAV-3 with binding-preserving prepare-rename and rename over one

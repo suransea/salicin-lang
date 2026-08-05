@@ -53,9 +53,13 @@ history remains in the changelog.
 The implemented resolver already fixes package provider identity, lockfile
 semantics, and workspace/path resolution. The
 [dependency resolution contract](dependency-resolution.md) also defines the
-registry selection algorithm. This milestone implements a registry client
-against immutable index snapshots and verified source archives; it does not
-create or standardize a public registry service.
+registry selection algorithm. The implemented
+[registry source input contract](registry-source-contract.md) now fixes strict
+manifest requests, registry configuration, immutable content-addressed index
+snapshots, archive identities, cache roots, and relocatable fixture loading.
+Active work extends that typed input into deterministic provider selection,
+then verified source caching and locked/frozen acceptance. This milestone does
+not create or standardize a public registry service.
 
 Exit conditions:
 

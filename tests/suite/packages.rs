@@ -1,6 +1,34 @@
 use crate::support::*;
 
 #[test]
+fn registry_manifest_requests_are_validated_before_resolution() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "registry-consumer"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+answer = { package = "answer-kit", version = "^1.2", registry = "local-test" }
+"#,
+    );
+    project.write("src/main.sc", "let main(): i32 = { 0 }\n");
+
+    let output = salic()
+        .arg("check")
+        .arg(&project.0)
+        .output()
+        .expect("validate registry manifest input");
+    assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("registry dependency `answer`"), "{stderr}");
+    assert!(stderr.contains("PKG-2"), "{stderr}");
+    assert!(!project.join("salicin.lock").exists());
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sc");

@@ -16,6 +16,7 @@ pub mod lsp;
 pub mod manifest;
 pub mod modules;
 pub mod parser;
+pub mod registry;
 pub mod standard;
 pub mod static_semantics;
 

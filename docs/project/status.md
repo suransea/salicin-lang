@@ -29,6 +29,11 @@ current capability inventory. It does not record release history; see the
 - package and virtual workspace manifests, explicit workspace members,
   `--package` selection, local path dependencies, shared build roots, and
   deterministic source-aware lockfiles;
+- strict registry dependency requests with explicit package, SemVer
+  requirement, and registry identity; versioned endpoint configuration;
+  digest-before-parse immutable index snapshots; fixed archive/checksum/cache
+  identities; and checksum-addressed relocatable fixture loading. Registry
+  requests are deliberately refused before graph resolution until PKG-2;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, structured document identity, phase, severity, stable
   code, optional exact ranges, and multi-document routing; resolver origins

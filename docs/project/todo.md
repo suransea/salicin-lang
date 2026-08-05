@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Registry Source Dependencies
 
-- [ ] **PKG-1 — Registry input contract.** Finalize manifest spelling, registry
-  identity/configuration, immutable index snapshot format, archive layout,
-  checksum ownership, cache roots, and local-fixture protocol.
-
 - [ ] **PKG-2 — Registry resolution.** Extend the provider graph with
   highest-compatible non-yanked selection while preserving exact lockfile
   identities and deterministic graph ordering.
