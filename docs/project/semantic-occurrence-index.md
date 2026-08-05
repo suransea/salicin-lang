@@ -37,8 +37,8 @@ One declaration occurrence names exactly one symbol. A reference may name:
   be resolved without partial-program recovery.
 
 The index preserves multiple candidates instead of selecting by declaration
-or hash-table traversal order. NAV-2 owns typed candidate selection and public
-navigation behavior; NAV-3 owns editability and rename refusal.
+or hash-table traversal order. The semantic navigation query layer owns typed
+candidate selection; NAV-3 owns editability and rename refusal.
 
 ## Failure and ownership boundaries
 
@@ -47,8 +47,9 @@ This avoids mixing trusted facts with a partially rewritten program; partial
 program navigation remains a separate design problem.
 
 The current workspace analysis owns the selected source graph. Package-aware
-query exposure and dependency-owned read-only sources belong to NAV-2. The
-index itself performs no file I/O and cannot mutate a source document.
+queries and dependency-owned read-only sources are implemented by the
+[semantic navigation contract](semantic-navigation.md). The index itself
+performs no file I/O and cannot mutate a source document.
 
 ## Verification
 

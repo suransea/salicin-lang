@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.252.0 - 2026-08-05
+
+- Completed NAV-2 with transport-independent definition, reference, and hover
+  queries over accepted semantic occurrence facts. Missing and ambiguous
+  targets remain explicit, named call labels narrow overload candidates, and
+  generated specialization/native names remain private.
+- Preserved resolved package graphs in editor snapshots so navigation crosses
+  package boundaries without flattening dependency identity. Dependency-owned
+  symbols are marked read-only, and attempted dependency synchronization is
+  rejected without advancing the revision.
+- Advertised and implemented all three LSP capabilities with current-snapshot,
+  cancellation, and supersession behavior shared with semantic tokens. Added
+  unit, cross-package, and real-process transcript acceptance and updated the
+  research ledger, roadmap, TODO, architecture, and status.
+
 ## 0.251.0 - 2026-08-05
 
 - Completed NAV-1 with a source-backed semantic occurrence index attached to

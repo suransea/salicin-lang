@@ -22,6 +22,9 @@ saved text or the current overlay as the new baseline, again without writing
 it. `close_document` removes the overlay and reveals that latest baseline.
 Unknown, duplicate, already-open, and not-open document operations are
 explicit errors. These operations never write the corresponding source path.
+Resolved package snapshots retain primary-package ownership. Dependency
+documents can be analyzed and navigated, but every synchronization or baseline
+mutation is rejected as read-only without advancing the revision.
 
 This layer accepts full document text. Incremental range edits, filesystem
 watching, and URI normalization belong to the protocol transport.

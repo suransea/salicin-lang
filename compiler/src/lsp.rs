@@ -6,9 +6,9 @@ use std::thread;
 use serde_json::{json, Value};
 
 use crate::editor::{
-    DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, WorkspaceAnalysis,
-    WorkspaceSession, WorkspaceSessionError, WorkspaceSnapshot, WorkspaceSnapshotAnalysis,
-    WorkspaceSnapshotId,
+    DiagnosticPhase, EditorDiagnostic, EditorRange, EditorToken, SemanticPosition,
+    SemanticQueryResult, SemanticSymbolKind, WorkspaceAnalysis, WorkspaceSession,
+    WorkspaceSessionError, WorkspaceSnapshot, WorkspaceSnapshotAnalysis, WorkspaceSnapshotId,
 };
 use crate::lexer::TokenKind;
 
@@ -65,15 +65,24 @@ pub struct Server {
     lifecycle: Lifecycle,
     latest_analysis: Option<(WorkspaceSnapshotId, WorkspaceAnalysis)>,
     requested_analysis: Option<WorkspaceSnapshotId>,
-    pending_semantic_tokens: Vec<PendingSemanticTokens>,
+    pending_queries: Vec<PendingQuery>,
     analysis_hook: Arc<dyn Fn(WorkspaceSnapshotId) + Send + Sync>,
 }
 
 #[derive(Debug)]
-struct PendingSemanticTokens {
+struct PendingQuery {
     id: Value,
     params: Value,
     snapshot: WorkspaceSnapshotId,
+    kind: QueryKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QueryKind {
+    SemanticTokens,
+    Definition,
+    References,
+    Hover,
 }
 
 enum ServerEvent {
@@ -88,7 +97,7 @@ impl Server {
             lifecycle: Lifecycle::WaitingForInitialize,
             latest_analysis: None,
             requested_analysis: None,
-            pending_semantic_tokens: Vec::new(),
+            pending_queries: Vec::new(),
             analysis_hook: Arc::new(|_| {}),
         }
     }
@@ -233,7 +242,10 @@ impl Server {
                                         "tokenModifiers": []
                                     },
                                     "full": true
-                                }
+                                },
+                                "definitionProvider": true,
+                                "referencesProvider": true,
+                                "hoverProvider": true
                             },
                             "serverInfo": {
                                 "name": "salic",
@@ -274,10 +286,39 @@ impl Server {
                     )?;
                 } else {
                     let snapshot = self.session.snapshot_id();
-                    self.pending_semantic_tokens.push(PendingSemanticTokens {
+                    self.pending_queries.push(PendingQuery {
                         id,
                         params: params.clone(),
                         snapshot,
+                        kind: QueryKind::SemanticTokens,
+                    });
+                    self.schedule_analysis(analysis_sender);
+                }
+            }
+            "textDocument/definition" | "textDocument/references" | "textDocument/hover"
+                if self.lifecycle == Lifecycle::Running =>
+            {
+                let kind = match method {
+                    "textDocument/definition" => QueryKind::Definition,
+                    "textDocument/references" => QueryKind::References,
+                    "textDocument/hover" => QueryKind::Hover,
+                    _ => unreachable!(),
+                };
+                if let Err(message) = self.validate_navigation_position(params) {
+                    write_message(writer, &json_rpc_error(id, -32602, &message))?;
+                } else if self
+                    .latest_analysis
+                    .as_ref()
+                    .is_some_and(|(snapshot, _)| *snapshot == self.session.snapshot_id())
+                {
+                    self.write_query_response(writer, id, kind, params)?;
+                } else {
+                    let snapshot = self.session.snapshot_id();
+                    self.pending_queries.push(PendingQuery {
+                        id,
+                        params: params.clone(),
+                        snapshot,
+                        kind,
                     });
                     self.schedule_analysis(analysis_sender);
                 }
@@ -419,7 +460,7 @@ impl Server {
         self.latest_analysis = Some((snapshot, analysis));
 
         let mut pending = Vec::new();
-        std::mem::swap(&mut pending, &mut self.pending_semantic_tokens);
+        std::mem::swap(&mut pending, &mut self.pending_queries);
         for request in pending {
             if request.snapshot != snapshot {
                 write_message(
@@ -428,15 +469,7 @@ impl Server {
                 )?;
                 continue;
             }
-            match self.semantic_tokens(&request.params) {
-                Ok(result) => write_message(
-                    writer,
-                    &json!({"jsonrpc": "2.0", "id": request.id, "result": result}),
-                )?,
-                Err(message) => {
-                    write_message(writer, &json_rpc_error(request.id, -32602, &message))?
-                }
-            }
+            self.write_query_response(writer, request.id, request.kind, &request.params)?;
         }
         Ok(())
     }
@@ -454,13 +487,51 @@ impl Server {
             .ok_or_else(|| format!("unknown workspace document `{path}`"))
     }
 
+    fn validate_navigation_position(&self, params: &Value) -> Result<(), String> {
+        self.validate_semantic_document(params)?;
+        navigation_position(params).map(|_| ())
+    }
+
+    fn write_query_response<W: Write>(
+        &self,
+        writer: &mut W,
+        id: Value,
+        kind: QueryKind,
+        params: &Value,
+    ) -> Result<(), TransportError> {
+        let result = match kind {
+            QueryKind::SemanticTokens => self.semantic_tokens(params),
+            QueryKind::Definition => self.definition(params),
+            QueryKind::References => self.references(params),
+            QueryKind::Hover => self.hover(params),
+        };
+        match result {
+            Ok(result) => write_message(
+                writer,
+                &json!({"jsonrpc": "2.0", "id": id, "result": result}),
+            ),
+            Err(message) => write_message(
+                writer,
+                &json_rpc_error(
+                    id,
+                    if matches!(kind, QueryKind::SemanticTokens) {
+                        -32602
+                    } else {
+                        -32803
+                    },
+                    &message,
+                ),
+            ),
+        }
+    }
+
     fn invalidate_superseded_requests<W: Write>(
         &mut self,
         writer: &mut W,
     ) -> Result<(), TransportError> {
         let current = self.session.snapshot_id();
         let mut retained = Vec::new();
-        for request in self.pending_semantic_tokens.drain(..) {
+        for request in self.pending_queries.drain(..) {
             if request.snapshot == current {
                 retained.push(request);
             } else {
@@ -470,7 +541,7 @@ impl Server {
                 )?;
             }
         }
-        self.pending_semantic_tokens = retained;
+        self.pending_queries = retained;
         Ok(())
     }
 
@@ -483,11 +554,11 @@ impl Server {
             return Ok(());
         };
         if let Some(index) = self
-            .pending_semantic_tokens
+            .pending_queries
             .iter()
             .position(|request| request.id == *id)
         {
-            let request = self.pending_semantic_tokens.remove(index);
+            let request = self.pending_queries.remove(index);
             write_message(
                 writer,
                 &json_rpc_error(request.id, -32800, "Request cancelled"),
@@ -502,7 +573,7 @@ impl Server {
         code: i64,
         message: &str,
     ) -> Result<(), TransportError> {
-        for request in self.pending_semantic_tokens.drain(..) {
+        for request in self.pending_queries.drain(..) {
             write_message(writer, &json_rpc_error(request.id, code, message))?;
         }
         Ok(())
@@ -524,6 +595,84 @@ impl Server {
             "resultId": format!("{}:{}", snapshot.session, snapshot.revision),
             "data": encode_semantic_tokens(&document.tokens)
         }))
+    }
+
+    fn definition(&self, params: &Value) -> Result<Value, String> {
+        let (path, position) = navigation_position(params)?;
+        let analysis = self.current_analysis()?;
+        match analysis.semantic_index.definition(&path, position) {
+            SemanticQueryResult::NotFound => Ok(Value::Null),
+            SemanticQueryResult::Ambiguous(symbols) => Err(ambiguous_target(&symbols)),
+            SemanticQueryResult::Found(definition) => Ok(json!({
+                "uri": path_to_file_uri(&definition.document),
+                "range": lsp_range(definition.range)
+            })),
+        }
+    }
+
+    fn references(&self, params: &Value) -> Result<Value, String> {
+        let (path, position) = navigation_position(params)?;
+        let include_declaration = params
+            .get("context")
+            .and_then(|context| context.get("includeDeclaration"))
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "references requires boolean context.includeDeclaration".to_owned())?;
+        let analysis = self.current_analysis()?;
+        match analysis
+            .semantic_index
+            .references(&path, position, include_declaration)
+        {
+            SemanticQueryResult::NotFound => Ok(Value::Array(Vec::new())),
+            SemanticQueryResult::Ambiguous(symbols) => Err(ambiguous_target(&symbols)),
+            SemanticQueryResult::Found(references) => Ok(Value::Array(
+                references
+                    .locations
+                    .into_iter()
+                    .map(|location| {
+                        json!({
+                            "uri": path_to_file_uri(&location.document),
+                            "range": lsp_range(location.range)
+                        })
+                    })
+                    .collect(),
+            )),
+        }
+    }
+
+    fn hover(&self, params: &Value) -> Result<Value, String> {
+        let (path, position) = navigation_position(params)?;
+        let analysis = self.current_analysis()?;
+        match analysis.semantic_index.hover(&path, position) {
+            SemanticQueryResult::NotFound => Ok(Value::Null),
+            SemanticQueryResult::Ambiguous(symbols) => Err(ambiguous_target(&symbols)),
+            SemanticQueryResult::Found(hover) => {
+                let ownership = if hover.editable {
+                    "workspace source"
+                } else {
+                    "dependency source (read-only)"
+                };
+                Ok(json!({
+                    "contents": {
+                        "kind": "markdown",
+                        "value": format!(
+                            "```salicin\n{}\n```\n\n{} · {}",
+                            hover.detail,
+                            semantic_kind_name(hover.kind),
+                            ownership
+                        )
+                    },
+                    "range": lsp_range(hover.range)
+                }))
+            }
+        }
+    }
+
+    fn current_analysis(&self) -> Result<&WorkspaceAnalysis, String> {
+        self.latest_analysis
+            .as_ref()
+            .filter(|(snapshot, _)| *snapshot == self.session.snapshot_id())
+            .map(|(_, analysis)| analysis)
+            .ok_or_else(|| "workspace analysis is not available".to_owned())
     }
 
     fn did_open(&mut self, params: &Value) -> Result<(), String> {
@@ -751,6 +900,47 @@ fn workspace_error(error: WorkspaceSessionError) -> String {
     format!("document synchronization rejected: {error}")
 }
 
+fn navigation_position(params: &Value) -> Result<(String, SemanticPosition), String> {
+    let document = required_object(params, "textDocument")?;
+    let uri = required_string(document, "uri")?;
+    let position = required_object(params, "position")?;
+    Ok((
+        file_uri_to_path(uri)?,
+        SemanticPosition {
+            line: required_u32(position, "line")?,
+            utf16_character: required_u32(position, "character")?,
+        },
+    ))
+}
+
+fn required_u32(value: &serde_json::Map<String, Value>, field: &str) -> Result<u32, String> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| format!("missing or invalid unsigned integer field `{field}`"))
+}
+
+fn ambiguous_target(symbols: &[crate::editor::SemanticSymbolId]) -> String {
+    format!(
+        "semantic target is ambiguous across {} source declarations",
+        symbols.len()
+    )
+}
+
+fn semantic_kind_name(kind: SemanticSymbolKind) -> &'static str {
+    match kind {
+        SemanticSymbolKind::Declaration => "declaration",
+        SemanticSymbolKind::Alias => "alias",
+        SemanticSymbolKind::Field => "field",
+        SemanticSymbolKind::Variant => "variant",
+        SemanticSymbolKind::Overload => "overload",
+        SemanticSymbolKind::TraitMember => "trait or effect member",
+        SemanticSymbolKind::Implementation => "implementation",
+        SemanticSymbolKind::ExtensionMember => "extension member",
+    }
+}
+
 fn required_object<'a>(
     value: &'a Value,
     field: &str,
@@ -882,6 +1072,7 @@ pub fn file_uri_to_path(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::io::{BufWriter, Cursor};
     use std::os::unix::net::UnixStream;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -889,6 +1080,7 @@ mod tests {
 
     use super::*;
     use crate::editor::{DocumentTarget, EditorSource};
+    use crate::modules::{PackageId, SourcePackage, SourceUnit};
 
     fn session(path: &str) -> WorkspaceSession {
         WorkspaceSession::new(
@@ -1182,6 +1374,125 @@ mod tests {
             .find(|message| message["id"] == 4)
             .expect("unknown semantic token response");
         assert_eq!(unknown["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn definition_references_and_hover_cross_read_only_package_sources() {
+        let root_path = "/tmp/app/src/main.sc";
+        let dependency_path = "/tmp/deps/math/src/lib.sc";
+        let root_source = "let main(): i32 = { math.answer() }\n";
+        let packages = [
+            SourcePackage {
+                id: PackageId(0),
+                name: "app".into(),
+                version: "0.1.0".into(),
+                identity: "workspace:app@0.1.0".into(),
+                is_primary: true,
+                dependencies: BTreeMap::from([("math".into(), PackageId(1))]),
+                sources: vec![SourceUnit {
+                    path: root_path.into(),
+                    module_path: Vec::new(),
+                    source: root_source.into(),
+                    is_root: true,
+                }],
+            },
+            SourcePackage {
+                id: PackageId(1),
+                name: "math".into(),
+                version: "1.0.0".into(),
+                identity: "path:math@1.0.0".into(),
+                is_primary: false,
+                dependencies: BTreeMap::new(),
+                sources: vec![SourceUnit {
+                    path: dependency_path.into(),
+                    module_path: Vec::new(),
+                    source: "pub let answer(): i32 = { 42 }\n".into(),
+                    is_root: true,
+                }],
+            },
+        ];
+        let workspace = WorkspaceSession::new_packages(&packages, DocumentTarget::Binary).unwrap();
+        let root_uri = path_to_file_uri(root_path);
+        let dependency_uri = path_to_file_uri(dependency_path);
+        let answer = root_source.find("answer").unwrap();
+        let params = json!({
+            "textDocument": { "uri": root_uri },
+            "position": { "line": 0, "character": answer }
+        });
+        let (mut client, handle) = interactive(Server::new(workspace));
+        client.send(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+        }));
+        let initialized = client.receive_until(|message| message["id"] == 1);
+        let capabilities = &initialized.last().unwrap()["result"]["capabilities"];
+        assert_eq!(capabilities["definitionProvider"], true);
+        assert_eq!(capabilities["referencesProvider"], true);
+        assert_eq!(capabilities["hoverProvider"], true);
+        client.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        client.receive_until(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == root_uri
+        });
+
+        client.send(json!({
+            "jsonrpc":"2.0", "id":2, "method":"textDocument/definition", "params":params.clone()
+        }));
+        let definition = client
+            .receive_until(|message| message["id"] == 2)
+            .pop()
+            .unwrap();
+        assert_eq!(definition["result"]["uri"], dependency_uri);
+
+        client.send(json!({
+            "jsonrpc":"2.0", "id":3, "method":"textDocument/references",
+            "params": {
+                "textDocument": { "uri": root_uri },
+                "position": { "line": 0, "character": answer },
+                "context": { "includeDeclaration": true }
+            }
+        }));
+        let references = client
+            .receive_until(|message| message["id"] == 3)
+            .pop()
+            .unwrap();
+        assert_eq!(references["result"].as_array().unwrap().len(), 2);
+
+        client.send(json!({
+            "jsonrpc":"2.0", "id":4, "method":"textDocument/hover", "params":params
+        }));
+        let hover = client
+            .receive_until(|message| message["id"] == 4)
+            .pop()
+            .unwrap();
+        assert!(hover["result"]["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("dependency source (read-only)"));
+
+        client.send(json!({
+            "jsonrpc":"2.0", "method":"textDocument/didOpen", "params": {
+                "textDocument": {
+                    "uri": dependency_uri,
+                    "languageId": "salicin",
+                    "version": 1,
+                    "text": "pub let answer(): i32 = { 0 }\n"
+                }
+            }
+        }));
+        let read_only = client
+            .receive_until(|message| message["method"] == "window/logMessage")
+            .pop()
+            .unwrap();
+        assert!(read_only["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("read-only"));
+
+        client.send(json!({"jsonrpc":"2.0","id":5,"method":"shutdown"}));
+        client.receive_until(|message| message["id"] == 5);
+        client.send(json!({"jsonrpc":"2.0","method":"exit"}));
+        let (_, result) = handle.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
     }
 
     #[test]

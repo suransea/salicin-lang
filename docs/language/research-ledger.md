@@ -614,6 +614,32 @@ names are absent from the source index.
   complete source fact contract independently of future caching or partial
   syntax recovery.
 
+### Binding-Preserving Semantic Navigation
+
+Reviewed on 2026-08-05 for NAV-2. Definition, references, and hover are views
+over the accepted semantic occurrence table, not separate textual searches.
+Package ownership travels with each target, and a query either selects one
+identity or exposes/refuses ambiguity. NAV-3 will consume the same boundary
+instead of reconstructing rename bindings from spellings.
+
+- [Language-Parametric Reference Synthesis (OOPSLA
+  2025)](https://doi.org/10.1145/3720481) shows that sound refactoring requires
+  preserving the declaration selected by name lookup and synthesizing a
+  reference that resolves back to it. Salicin consequently makes navigation
+  consume symbol IDs and preserves multi-candidate occurrences for refusal.
+- [AnyText: Incremental, left-recursive Parsing and Pretty-Printing from a
+  single Grammar Definition with first-class LSP support (SLE
+  2025)](https://doi.org/10.1145/3743097.3743121) integrates reference
+  resolution and LSP features over one language-workbench representation.
+  Salicin adopts the narrower consequence: its transport maps compiler query
+  results to LSP and contains no second resolver.
+- [Code Less to Code More: Streamlining Language Server Protocol and Type
+  System Development for Language Families
+  (2025)](https://arxiv.org/abs/2509.15150) argues for reusing modular type
+  system artifacts across generated editor services. Salicin does not
+  generate its server, but keeps semantic queries transport-neutral so CLI/LSP
+  presentation cannot fork language semantics.
+
 ## Review Gate
 
 Before extending the static language:

@@ -54,8 +54,10 @@ Navigation follows the LSP baseline because it needs long-lived analysis
 snapshots and stable source identities. The implemented semantic occurrence
 index distinguishes declarations, references, overloads, aliases, fields,
 variants, traits, and implementations while omitting generated
-specializations and their compiler-private names. Active work exposes typed
-definition, reference, and hover queries over those facts.
+specializations and their compiler-private names. Definition, reference, and
+hover queries now work across packages, preserve ambiguity, and expose
+dependency ownership. Active work uses those identities for safe rename edits
+or a precise refusal.
 
 Exit conditions:
 

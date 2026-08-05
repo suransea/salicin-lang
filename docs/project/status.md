@@ -58,6 +58,11 @@ current capability inventory. It does not record release history; see the
   and UTF-16 declaration/reference ranges; explicit zero/one/many reference
   candidates; cross-module identity; no partial index on invalid snapshots;
   and no compiler-generated specialization names;
+- typed definition, reference, and hover queries over accepted snapshot facts,
+  with exact cross-module/package locations, source-backed hover headers,
+  named-overload narrowing, explicit ambiguity, and dependency ownership;
+  `salic lsp` advertises all three capabilities and rejects dependency document
+  synchronization as read-only;
 - an editor-independent LSP acceptance boundary with concurrent protocol
   reading, a coalescing analysis worker, stale-completion suppression,
   `RequestCancelled`/`ContentModified` request completion, recorded JSONL
@@ -81,9 +86,9 @@ current capability inventory. It does not record release history; see the
   package providers and aliases, module paths, source bytes, corrupt entries,
   failed compilation, concurrent writers, and concurrent warm readers.
 
-The LSP transport does not provide incremental range edits, completion,
-hover, or rename. Its diagnostics, tokens, synchronization, cancellation, and
-protocol acceptance baseline is complete.
+The LSP transport does not provide incremental range edits, completion, or
+rename. Its diagnostics, tokens, semantic navigation, synchronization,
+cancellation, and protocol acceptance baseline is complete.
 Persistent storage is invoked only by LLVM-emitting commands. `check` still
 performs complete source analysis. Per-package reuse, remote caching, native
 artifact caching, and eviction policy remain outside the implemented

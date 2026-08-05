@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Semantic Navigation
 
-- [ ] **NAV-2 — Definition, references, and hover.** Expose cross-module and
-  cross-package navigation while keeping dependency-owned source read-only and
-  generated specialization names private.
-
 - [ ] **NAV-3 — Safe rename.** Produce complete non-overlapping workspace edits
   with explicit refusal for ambiguous, generated, foreign-symbol, or
   dependency-owned targets.

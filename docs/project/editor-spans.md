@@ -59,5 +59,6 @@ Regression coverage verifies:
 
 The source-backed occurrence table is specified by the
 [semantic occurrence index contract](semantic-occurrence-index.md). Definition,
-reference, hover, rename, completion, and partial-program queries remain later
-LSP work.
+reference, and hover behavior is specified by the
+[semantic navigation contract](semantic-navigation.md). Rename, completion,
+and partial-program queries remain later LSP work.

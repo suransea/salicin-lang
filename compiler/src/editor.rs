@@ -6,7 +6,10 @@ use crate::ast::{
     EnumDef, ExtendDef, ExtendMember, Item, Program, SourceLocation, TraitMember, VariantFields,
 };
 use crate::lexer::{lex, Token, TokenKind};
-use crate::modules::{resolve_sources_diagnostics, ResolverDiagnostic, SourceUnit};
+use crate::modules::{
+    resolve_packages_diagnostics, resolve_sources_diagnostics, PackageId, ResolverDiagnostic,
+    SourcePackage, SourceUnit,
+};
 use crate::{codegen, parser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +75,12 @@ pub struct EditorSource<'a> {
     pub is_root: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SemanticPosition {
+    pub line: u32,
+    pub utf16_character: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceDocumentAnalysis {
     pub path: String,
@@ -117,6 +126,12 @@ pub struct SemanticSymbol {
     pub kind: SemanticSymbolKind,
     pub document: String,
     pub range: EditorRange,
+    /// False for a declaration owned by a dependency package. Navigation may
+    /// enter that source, but edit-producing operations must not modify it.
+    pub editable: bool,
+    /// Source-backed declaration header suitable for a concise hover. It
+    /// never contains generated specialization or native-linker names.
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +150,153 @@ pub struct SemanticIndex {
     pub occurrences: Vec<SemanticOccurrence>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticQueryResult<T> {
+    NotFound,
+    Ambiguous(Vec<SemanticSymbolId>),
+    Found(T),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinitionResult {
+    pub symbol: SemanticSymbolId,
+    pub document: String,
+    pub range: EditorRange,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceResult {
+    pub symbol: SemanticSymbolId,
+    pub locations: Vec<SemanticLocation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLocation {
+    pub document: String,
+    pub range: EditorRange,
+    pub declaration: bool,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoverResult {
+    pub symbol: SemanticSymbolId,
+    pub kind: SemanticSymbolKind,
+    pub detail: String,
+    pub range: EditorRange,
+    pub editable: bool,
+}
+
+impl SemanticIndex {
+    pub fn definition(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+    ) -> SemanticQueryResult<DefinitionResult> {
+        self.select_symbol(document, position).map(|id| {
+            let symbol = &self.symbols[id.0 as usize];
+            DefinitionResult {
+                symbol: id,
+                document: symbol.document.clone(),
+                range: symbol.range,
+                editable: symbol.editable,
+            }
+        })
+    }
+
+    pub fn references(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+        include_declaration: bool,
+    ) -> SemanticQueryResult<ReferenceResult> {
+        self.select_symbol(document, position).map(|id| {
+            let editable = self.symbols[id.0 as usize].editable;
+            let locations = self
+                .occurrences
+                .iter()
+                .filter(|occurrence| {
+                    occurrence.symbols.contains(&id)
+                        && (include_declaration
+                            || occurrence.role != SemanticOccurrenceRole::Declaration)
+                })
+                .map(|occurrence| SemanticLocation {
+                    document: occurrence.document.clone(),
+                    range: occurrence.range,
+                    declaration: occurrence.role == SemanticOccurrenceRole::Declaration,
+                    editable,
+                })
+                .collect();
+            ReferenceResult {
+                symbol: id,
+                locations,
+            }
+        })
+    }
+
+    pub fn hover(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+    ) -> SemanticQueryResult<HoverResult> {
+        self.select_symbol(document, position).map(|id| {
+            let symbol = &self.symbols[id.0 as usize];
+            HoverResult {
+                symbol: id,
+                kind: symbol.kind,
+                detail: symbol.detail.clone(),
+                range: self
+                    .occurrence_at(document, position)
+                    .map_or(symbol.range, |occurrence| occurrence.range),
+                editable: symbol.editable,
+            }
+        })
+    }
+
+    fn select_symbol(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+    ) -> SemanticQueryResult<SemanticSymbolId> {
+        let Some(occurrence) = self.occurrence_at(document, position) else {
+            return SemanticQueryResult::NotFound;
+        };
+        match occurrence.symbols.as_slice() {
+            [] => SemanticQueryResult::NotFound,
+            [symbol] => SemanticQueryResult::Found(*symbol),
+            symbols => SemanticQueryResult::Ambiguous(symbols.to_vec()),
+        }
+    }
+
+    fn occurrence_at(
+        &self,
+        document: &str,
+        position: SemanticPosition,
+    ) -> Option<&SemanticOccurrence> {
+        self.occurrences.iter().find(|occurrence| {
+            occurrence.document == document && range_contains(occurrence.range, position)
+        })
+    }
+}
+
+impl<T> SemanticQueryResult<T> {
+    fn map<U>(self, map: impl FnOnce(T) -> U) -> SemanticQueryResult<U> {
+        match self {
+            Self::NotFound => SemanticQueryResult::NotFound,
+            Self::Ambiguous(symbols) => SemanticQueryResult::Ambiguous(symbols),
+            Self::Found(value) => SemanticQueryResult::Found(map(value)),
+        }
+    }
+}
+
+fn range_contains(range: EditorRange, position: SemanticPosition) -> bool {
+    let point = (position.line, position.utf16_character);
+    let start = (range.start.line, range.start.utf16_character);
+    let end = (range.end.line, range.end.utf16_character);
+    start <= point && point < end
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceSnapshotId {
     pub session: u64,
@@ -149,6 +311,18 @@ pub struct WorkspaceSnapshotDocument {
     pub is_root: bool,
     /// The client version for an open overlay, or `None` for baseline text.
     pub version: Option<i64>,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshotPackage {
+    pub id: PackageId,
+    pub name: String,
+    pub version: String,
+    pub identity: String,
+    pub is_primary: bool,
+    pub dependencies: std::collections::BTreeMap<String, PackageId>,
+    pub documents: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +330,7 @@ pub struct WorkspaceSnapshot {
     pub id: WorkspaceSnapshotId,
     pub target: DocumentTarget,
     pub documents: Vec<WorkspaceSnapshotDocument>,
+    pub packages: Vec<WorkspaceSnapshotPackage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,6 +346,7 @@ pub enum WorkspaceSessionError {
     UnknownDocument(String),
     DocumentAlreadyOpen(String),
     DocumentNotOpen(String),
+    ReadOnlyDocument(String),
     StaleDocumentVersion {
         document: String,
         current: i64,
@@ -193,6 +369,9 @@ impl fmt::Display for WorkspaceSessionError {
             }
             Self::DocumentNotOpen(document) => {
                 write!(formatter, "workspace document `{document}` is not open")
+            }
+            Self::ReadOnlyDocument(document) => {
+                write!(formatter, "dependency-owned document `{document}` is read-only")
             }
             Self::StaleDocumentVersion {
                 document,
@@ -217,6 +396,7 @@ struct SessionDocument {
     module_path: Vec<String>,
     baseline: String,
     is_root: bool,
+    editable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +416,7 @@ pub struct WorkspaceSession {
     documents: Vec<SessionDocument>,
     document_indexes: HashMap<String, usize>,
     open_documents: HashMap<String, OpenDocument>,
+    packages: Vec<WorkspaceSnapshotPackage>,
 }
 
 static NEXT_WORKSPACE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -245,23 +426,63 @@ impl WorkspaceSession {
         sources: &[EditorSource<'_>],
         target: DocumentTarget,
     ) -> Result<Self, WorkspaceSessionError> {
-        let mut document_indexes = HashMap::with_capacity(sources.len());
-        let mut documents = Vec::with_capacity(sources.len());
-        for source in sources {
-            let index = documents.len();
-            if document_indexes
-                .insert(source.path.to_owned(), index)
-                .is_some()
-            {
-                return Err(WorkspaceSessionError::DuplicateDocument(
-                    source.path.to_owned(),
-                ));
+        let package = SourcePackage {
+            id: PackageId(0),
+            name: "source".to_owned(),
+            version: "0.0.0".to_owned(),
+            identity: "source@0.0.0".to_owned(),
+            is_primary: true,
+            dependencies: Default::default(),
+            sources: sources
+                .iter()
+                .map(|source| SourceUnit {
+                    path: source.path.to_owned(),
+                    module_path: source.module_path.to_vec(),
+                    source: source.source.to_owned(),
+                    is_root: source.is_root,
+                })
+                .collect(),
+        };
+        Self::new_packages(&[package], target)
+    }
+
+    pub fn new_packages(
+        packages: &[SourcePackage],
+        target: DocumentTarget,
+    ) -> Result<Self, WorkspaceSessionError> {
+        let source_count = packages.iter().map(|package| package.sources.len()).sum();
+        let mut document_indexes = HashMap::with_capacity(source_count);
+        let mut documents = Vec::with_capacity(source_count);
+        let mut snapshot_packages = Vec::with_capacity(packages.len());
+        for package in packages {
+            let mut package_documents = Vec::with_capacity(package.sources.len());
+            for source in &package.sources {
+                let index = documents.len();
+                if document_indexes
+                    .insert(source.path.to_owned(), index)
+                    .is_some()
+                {
+                    return Err(WorkspaceSessionError::DuplicateDocument(
+                        source.path.to_owned(),
+                    ));
+                }
+                documents.push(SessionDocument {
+                    path: source.path.to_owned(),
+                    module_path: source.module_path.to_vec(),
+                    baseline: source.source.to_owned(),
+                    is_root: source.is_root,
+                    editable: package.is_primary,
+                });
+                package_documents.push(source.path.clone());
             }
-            documents.push(SessionDocument {
-                path: source.path.to_owned(),
-                module_path: source.module_path.to_vec(),
-                baseline: source.source.to_owned(),
-                is_root: source.is_root,
+            snapshot_packages.push(WorkspaceSnapshotPackage {
+                id: package.id,
+                name: package.name.clone(),
+                version: package.version.clone(),
+                identity: package.identity.clone(),
+                is_primary: package.is_primary,
+                dependencies: package.dependencies.clone(),
+                documents: package_documents,
             });
         }
         Ok(Self {
@@ -271,6 +492,7 @@ impl WorkspaceSession {
             documents,
             document_indexes,
             open_documents: HashMap::new(),
+            packages: snapshot_packages,
         })
     }
 
@@ -287,7 +509,7 @@ impl WorkspaceSession {
         version: i64,
         source: impl Into<String>,
     ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
-        self.require_document(document)?;
+        self.require_editable_document(document)?;
         if self.open_documents.contains_key(document) {
             return Err(WorkspaceSessionError::DocumentAlreadyOpen(
                 document.to_owned(),
@@ -310,7 +532,7 @@ impl WorkspaceSession {
         version: i64,
         source: impl Into<String>,
     ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
-        self.require_document(document)?;
+        self.require_editable_document(document)?;
         let current = self
             .open_documents
             .get(document)
@@ -338,7 +560,7 @@ impl WorkspaceSession {
         &mut self,
         document: &str,
     ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
-        self.require_document(document)?;
+        self.require_editable_document(document)?;
         if !self.open_documents.contains_key(document) {
             return Err(WorkspaceSessionError::DocumentNotOpen(document.to_owned()));
         }
@@ -354,7 +576,7 @@ impl WorkspaceSession {
         document: &str,
         source: Option<&str>,
     ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
-        let index = self.require_document(document)?;
+        let index = self.require_editable_document(document)?;
         let overlay = self
             .open_documents
             .get(document)
@@ -372,7 +594,7 @@ impl WorkspaceSession {
         document: &str,
         source: impl Into<String>,
     ) -> Result<WorkspaceSnapshotId, WorkspaceSessionError> {
-        let index = self.require_document(document)?;
+        let index = self.require_editable_document(document)?;
         self.bump_revision()?;
         self.documents[index].baseline = source.into();
         Ok(self.snapshot_id())
@@ -392,6 +614,7 @@ impl WorkspaceSession {
                         .unwrap_or_else(|| document.baseline.clone()),
                     is_root: document.is_root,
                     version: overlay.map(|overlay| overlay.version),
+                    editable: document.editable,
                 }
             })
             .collect();
@@ -399,6 +622,7 @@ impl WorkspaceSession {
             id: self.snapshot_id(),
             target: self.target,
             documents,
+            packages: self.packages.clone(),
         }
     }
 
@@ -415,6 +639,14 @@ impl WorkspaceSession {
             .ok_or_else(|| WorkspaceSessionError::UnknownDocument(document.to_owned()))
     }
 
+    fn require_editable_document(&self, document: &str) -> Result<usize, WorkspaceSessionError> {
+        let index = self.require_document(document)?;
+        self.documents[index]
+            .editable
+            .then_some(index)
+            .ok_or_else(|| WorkspaceSessionError::ReadOnlyDocument(document.to_owned()))
+    }
+
     fn bump_revision(&mut self) -> Result<(), WorkspaceSessionError> {
         self.revision = self
             .revision
@@ -426,14 +658,33 @@ impl WorkspaceSession {
 
 impl WorkspaceSnapshot {
     pub fn analyze(&self) -> WorkspaceSnapshotAnalysis {
-        let sources = self
-            .documents
+        let packages = self
+            .packages
             .iter()
-            .map(|document| EditorSource {
-                path: &document.path,
-                module_path: &document.module_path,
-                source: &document.source,
-                is_root: document.is_root,
+            .map(|package| SourcePackage {
+                id: package.id,
+                name: package.name.clone(),
+                version: package.version.clone(),
+                identity: package.identity.clone(),
+                is_primary: package.is_primary,
+                dependencies: package.dependencies.clone(),
+                sources: package
+                    .documents
+                    .iter()
+                    .map(|path| {
+                        let document = self
+                            .documents
+                            .iter()
+                            .find(|document| &document.path == path)
+                            .expect("snapshot package documents are validated at construction");
+                        SourceUnit {
+                            path: document.path.clone(),
+                            module_path: document.module_path.clone(),
+                            source: document.source.clone(),
+                            is_root: document.is_root,
+                        }
+                    })
+                    .collect(),
             })
             .collect::<Vec<_>>();
         WorkspaceSnapshotAnalysis {
@@ -443,7 +694,7 @@ impl WorkspaceSnapshot {
                 .iter()
                 .map(|document| (document.path.clone(), document.version))
                 .collect(),
-            analysis: analyze_workspace(&sources, self.target),
+            analysis: analyze_workspace_packages(&packages, self.target),
         }
     }
 }
@@ -557,6 +808,33 @@ pub fn analyze_workspace(
     sources: &[EditorSource<'_>],
     target: DocumentTarget,
 ) -> WorkspaceAnalysis {
+    analyze_workspace_impl(sources, target, None)
+}
+
+/// Analyze a complete resolved package graph. Dependency source participates
+/// in navigation but remains read-only in the resulting semantic facts.
+pub fn analyze_workspace_packages(
+    packages: &[SourcePackage],
+    target: DocumentTarget,
+) -> WorkspaceAnalysis {
+    let sources = packages
+        .iter()
+        .flat_map(|package| package.sources.iter())
+        .map(|source| EditorSource {
+            path: &source.path,
+            module_path: &source.module_path,
+            source: &source.source,
+            is_root: source.is_root,
+        })
+        .collect::<Vec<_>>();
+    analyze_workspace_impl(&sources, target, Some(packages))
+}
+
+fn analyze_workspace_impl(
+    sources: &[EditorSource<'_>],
+    target: DocumentTarget,
+    packages: Option<&[SourcePackage]>,
+) -> WorkspaceAnalysis {
     let indexes = sources
         .iter()
         .map(|source| SourceIndex::new(source.source))
@@ -620,16 +898,21 @@ pub fn analyze_workspace(
         };
     }
 
-    let units = sources
-        .iter()
-        .map(|source| SourceUnit {
-            path: source.path.to_owned(),
-            module_path: source.module_path.to_vec(),
-            source: source.source.to_owned(),
-            is_root: source.is_root,
-        })
-        .collect::<Vec<_>>();
-    let program = match resolve_sources_diagnostics(&units) {
+    let resolved = if let Some(packages) = packages {
+        resolve_packages_diagnostics(packages)
+    } else {
+        let units = sources
+            .iter()
+            .map(|source| SourceUnit {
+                path: source.path.to_owned(),
+                module_path: source.module_path.to_vec(),
+                source: source.source.to_owned(),
+                is_root: source.is_root,
+            })
+            .collect::<Vec<_>>();
+        resolve_sources_diagnostics(&units)
+    };
+    let program = match resolved {
         Ok(program) => program,
         Err(errors) => {
             diagnostics.extend(
@@ -671,7 +954,7 @@ pub fn analyze_workspace(
         });
     }
     let semantic_index = if diagnostics.is_empty() {
-        build_semantic_index(sources, &indexes, &source_tokens, &program)
+        build_semantic_index(sources, &indexes, &source_tokens, &program, packages)
     } else {
         SemanticIndex::default()
     };
@@ -695,6 +978,7 @@ fn build_semantic_index(
     indexes: &[SourceIndex<'_>],
     tokens: &[Vec<Token>],
     program: &Program,
+    packages: Option<&[SourcePackage]>,
 ) -> SemanticIndex {
     let mut pending = Vec::new();
     let mut overload_counts = HashMap::<String, usize>::new();
@@ -829,6 +1113,16 @@ fn build_semantic_index(
             kind: pending.kind,
             document: sources[pending.document_index].path.to_owned(),
             range,
+            editable: packages.is_none_or(|packages| {
+                packages.iter().any(|package| {
+                    package.is_primary
+                        && package
+                            .sources
+                            .iter()
+                            .any(|source| source.path == sources[pending.document_index].path)
+                })
+            }),
+            detail: hover_detail(sources[pending.document_index].source, token),
         });
     }
 
@@ -866,6 +1160,23 @@ fn build_semantic_index(
                         == Some(token.line.saturating_sub(1))
                     && symbol.range.start.byte < token.start_byte)
             });
+            if targets.len() > 1
+                && targets
+                    .iter()
+                    .all(|target| symbols[target.0 as usize].kind == SemanticSymbolKind::Overload)
+            {
+                if let Some(label) = first_call_label(document_tokens, token_index) {
+                    let marker = format!("({label}:");
+                    let labeled = targets
+                        .iter()
+                        .copied()
+                        .filter(|target| symbols[target.0 as usize].detail.contains(&marker))
+                        .collect::<Vec<_>>();
+                    if !labeled.is_empty() {
+                        targets = labeled;
+                    }
+                }
+            }
             targets.sort_unstable();
             targets.dedup();
             occurrences.push(SemanticOccurrence {
@@ -891,6 +1202,30 @@ fn build_semantic_index(
         symbols,
         occurrences,
     }
+}
+
+fn first_call_label(tokens: &[Token], name: usize) -> Option<&str> {
+    let open = tokens.get(name + 1)?;
+    if open.kind != TokenKind::LParen {
+        return None;
+    }
+    let label = tokens.get(name + 2)?;
+    let colon = tokens.get(name + 3)?;
+    (colon.kind == TokenKind::Colon)
+        .then(|| identifier_text(&label.kind))
+        .flatten()
+}
+
+fn hover_detail(source: &str, token: &Token) -> String {
+    let line = source
+        .lines()
+        .nth(token.line.saturating_sub(1))
+        .unwrap_or_default()
+        .trim();
+    line.split_once(" = {")
+        .map_or(line, |(header, _)| header)
+        .trim_end_matches(" {")
+        .to_owned()
 }
 
 fn item_identity(item: &Item) -> Option<(&str, &str)> {
@@ -1536,8 +1871,8 @@ mod tests {
         assert_eq!(choose_references.len(), 1);
         assert_eq!(
             choose_references[0].symbols.len(),
-            2,
-            "overload ambiguity must remain explicit"
+            1,
+            "a unique named argument label must narrow the overload set"
         );
 
         let repeated = analyze_workspace(
@@ -1652,6 +1987,164 @@ mod tests {
                 .iter()
                 .all(|occurrence| occurrence.symbols.is_empty()),
             "a local parameter must never bind to the same-spelled top-level declaration"
+        );
+    }
+
+    #[test]
+    fn navigation_queries_cross_packages_and_preserve_read_only_ownership() {
+        use std::collections::BTreeMap;
+
+        let root_source = "let main(): i32 = { dep.answer() }\n";
+        let dependency_source = "pub let answer(): i32 = { 42 }\n";
+        let packages = [
+            SourcePackage {
+                id: PackageId(0),
+                name: "app".into(),
+                version: "0.1.0".into(),
+                identity: "workspace:app@0.1.0".into(),
+                is_primary: true,
+                dependencies: BTreeMap::from([("dep".into(), PackageId(1))]),
+                sources: vec![SourceUnit {
+                    path: "src/main.sc".into(),
+                    module_path: Vec::new(),
+                    source: root_source.into(),
+                    is_root: true,
+                }],
+            },
+            SourcePackage {
+                id: PackageId(1),
+                name: "dep".into(),
+                version: "1.0.0".into(),
+                identity: "path:dep@1.0.0".into(),
+                is_primary: false,
+                dependencies: BTreeMap::new(),
+                sources: vec![SourceUnit {
+                    path: "deps/dep/src/lib.sc".into(),
+                    module_path: Vec::new(),
+                    source: dependency_source.into(),
+                    is_root: true,
+                }],
+            },
+        ];
+        let mut session =
+            WorkspaceSession::new_packages(&packages, DocumentTarget::Binary).unwrap();
+        let analysis = session.snapshot().analyze().analysis;
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
+        let answer_byte = root_source.find("answer").unwrap();
+        let position = SemanticPosition {
+            line: 0,
+            utf16_character: u32::try_from(answer_byte).unwrap(),
+        };
+        let definition = analysis.semantic_index.definition("src/main.sc", position);
+        let SemanticQueryResult::Found(definition) = definition else {
+            panic!("expected one dependency definition, got {definition:?}");
+        };
+        assert_eq!(definition.document, "deps/dep/src/lib.sc");
+        assert!(!definition.editable);
+
+        let SemanticQueryResult::Found(references) =
+            analysis
+                .semantic_index
+                .references("src/main.sc", position, true)
+        else {
+            panic!("expected references");
+        };
+        assert_eq!(references.locations.len(), 2);
+        assert!(references
+            .locations
+            .iter()
+            .all(|location| !location.editable));
+
+        let SemanticQueryResult::Found(hover) =
+            analysis.semantic_index.hover("src/main.sc", position)
+        else {
+            panic!("expected hover");
+        };
+        assert_eq!(hover.detail, "pub let answer(): i32");
+        assert!(!hover.editable);
+        assert_eq!(hover.range.start.utf16_character, position.utf16_character);
+
+        assert_eq!(
+            session.open_document("deps/dep/src/lib.sc", 1, dependency_source),
+            Err(WorkspaceSessionError::ReadOnlyDocument(
+                "deps/dep/src/lib.sc".into()
+            ))
+        );
+        assert_eq!(session.snapshot_id().revision, 0);
+    }
+
+    #[test]
+    fn navigation_queries_refuse_overload_ambiguity_and_unknown_positions() {
+        let source = "let choose(value: i32): i32 = { value }\nlet choose(other: u64): u64 = { other }\nlet use_choose(): i32 = { choose(value: 1) }\n";
+        let analysis = analyze_workspace(
+            &[EditorSource {
+                path: "src/lib.sc",
+                module_path: &[],
+                source,
+                is_root: true,
+            }],
+            DocumentTarget::Library,
+        );
+        assert!(analysis.diagnostics.is_empty());
+        let reference = source.rfind("choose").unwrap();
+        let prefix = &source[..reference];
+        let result = analysis.semantic_index.definition(
+            "src/lib.sc",
+            SemanticPosition {
+                line: u32::try_from(prefix.matches('\n').count()).unwrap(),
+                utf16_character: u32::try_from(
+                    reference - prefix.rfind('\n').map_or(0, |newline| newline + 1),
+                )
+                .unwrap(),
+            },
+        );
+        assert!(matches!(result, SemanticQueryResult::Found(_)));
+
+        let mut ambiguous = analysis.semantic_index.clone();
+        let overloads = ambiguous
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.kind == SemanticSymbolKind::Overload)
+            .map(|symbol| symbol.id)
+            .collect::<Vec<_>>();
+        let occurrence = ambiguous
+            .occurrences
+            .iter_mut()
+            .find(|occurrence| {
+                occurrence.document == "src/lib.sc"
+                    && occurrence.range.start.line == 2
+                    && occurrence.range.start.utf16_character
+                        == u32::try_from(
+                            reference - prefix.rfind('\n').map_or(0, |newline| newline + 1),
+                        )
+                        .unwrap()
+            })
+            .unwrap();
+        let occurrence_character = occurrence.range.start.utf16_character;
+        occurrence.symbols = overloads;
+        let ambiguous_result = ambiguous.definition(
+            "src/lib.sc",
+            SemanticPosition {
+                line: 2,
+                utf16_character: occurrence_character,
+            },
+        );
+        assert!(
+            matches!(ambiguous_result, SemanticQueryResult::Ambiguous(ref ids) if ids.len() == 2)
+        );
+        assert_eq!(
+            analysis.semantic_index.hover(
+                "src/lib.sc",
+                SemanticPosition {
+                    line: 2,
+                    utf16_character: 0,
+                }
+            ),
+            SemanticQueryResult::NotFound
         );
     }
 

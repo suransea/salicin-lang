@@ -1,0 +1,13 @@
+{"send":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"expect":{"id":1,"result":{"capabilities":{"definitionProvider":true,"referencesProvider":true,"hoverProvider":true}}}}
+{"send":{"jsonrpc":"2.0","method":"initialized","params":{}}}
+{"expect":{"method":"textDocument/publishDiagnostics","params":{"uri":"$ROOT_URI"}}}
+{"send":{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27}}}}
+{"expect":{"id":2,"result":{"uri":"$MODULE_URI","range":{"start":{"line":0,"character":8},"end":{"line":0,"character":13}}}}}
+{"send":{"jsonrpc":"2.0","id":3,"method":"textDocument/references","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27},"context":{"includeDeclaration":true}}}}
+{"expect":{"id":3,"result":[{"uri":"$ROOT_URI"},{"uri":"$MODULE_URI"}]}}
+{"send":{"jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{"textDocument":{"uri":"$ROOT_URI"},"position":{"line":0,"character":27}}}}
+{"expect":{"id":4,"result":{"contents":{"kind":"markdown"},"range":{"start":{"line":0,"character":27},"end":{"line":0,"character":32}}}}}
+{"send":{"jsonrpc":"2.0","id":5,"method":"shutdown"}}
+{"expect":{"id":5,"result":null}}
+{"send":{"jsonrpc":"2.0","method":"exit"}}

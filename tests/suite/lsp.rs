@@ -55,10 +55,7 @@ fn workspace() -> (TestDirectory, PathBuf, PathBuf) {
         "salicin.toml",
         "[package]\nname = \"lsp-acceptance\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    let root = workspace.write(
-        "src/main.sc",
-        "pub let root_value(): i32 = { helper.value() }\n",
-    );
+    let root = workspace.write("src/main.sc", "let main(): i32 = { helper.value() }\n");
     let module = workspace.write("src/helper.sc", "pub let value(): i32 = { 42 }\n");
     (
         workspace,
@@ -137,6 +134,15 @@ fn recorded_transcripts_cover_restart_unicode_multiple_documents_and_stale_versi
                 .as_str()
                 .is_some_and(|message| message.contains("stale version 8"))
     }));
+
+    let navigation = replay("navigation.jsonl", &workspace.0, &root, &module);
+    assert!(navigation
+        .iter()
+        .any(|message| { message["id"] == 2 && message["result"]["uri"] == path_to_uri(&module) }));
+}
+
+fn path_to_uri(path: &Path) -> String {
+    salicin_lang::lsp::path_to_file_uri(&path.display().to_string())
 }
 
 fn framed(value: &Value) -> Vec<u8> {

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::fd::FromRawFd;
 
-use salicin_lang::editor::{DocumentTarget, EditorSource, WorkspaceSession};
+use salicin_lang::editor::{DocumentTarget, WorkspaceSession};
 use salicin_lang::lockfile::{
     generate_lockfile_at, generate_workspace_lockfile, parse_lockfile, portable_relative_path,
     write_lockfile_if_changed, LOCKFILE_NAME,
@@ -809,22 +809,12 @@ fn run_lsp(
         Ok(packages) => packages,
         Err(()) => return 1,
     };
-    let sources = packages
-        .iter()
-        .flat_map(|package| package.sources.iter())
-        .map(|source| EditorSource {
-            path: &source.path,
-            module_path: &source.module_path,
-            source: &source.source,
-            is_root: source.is_root,
-        })
-        .collect::<Vec<_>>();
     let document_target = if target.is_library {
         DocumentTarget::Library
     } else {
         DocumentTarget::Binary
     };
-    let session = match WorkspaceSession::new(&sources, document_target) {
+    let session = match WorkspaceSession::new_packages(&packages, document_target) {
         Ok(session) => session,
         Err(error) => {
             eprintln!("salic: could not create LSP workspace: {error}");
