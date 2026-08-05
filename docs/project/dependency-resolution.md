@@ -1,7 +1,8 @@
 # Reproducible Dependency Resolution
 
-Status: implemented for workspace, path, and immutable-snapshot registry
-provider selection; verified registry source materialization remains pending
+Status: implemented for workspace, path, immutable-snapshot registry provider
+selection, and verified registry source materialization; CLI lock-mode wiring
+remains PKG-4
 
 Dependency resolution produces one exact provider graph before source
 compilation. The graph is serialized in canonical `salicin.lock` format 3 and
@@ -67,16 +68,18 @@ errors. Input ordering cannot change the solution or serialized lock graph.
 Because the accepted constraint language is NP-complete, resolution has a
 fixed compiler-owned limit of 100,000 candidate attempts; exhaustion is a
 stable error rather than an unbounded search or a silently greedy answer.
-The resolver does not read manifests from archives; PKG-3 must verify the
-archive checksum and package identity before sources enter compilation.
+The resolver itself does not read manifests from archives. The separate
+verified source store authenticates exact compressed bytes, validates the
+bounded archive and manifest/index identity, and returns sources only after
+atomic publication.
 
 Default mode may refresh the index and cache. `--locked` may fetch only the
 already selected exact provider and may not change it. `--frozen` may read
 only verified local index and archive cache entries. Registry credentials,
 mirrors, transport, publishing, and the public service remain outside the
 language and are not yet implemented. CLI compilation still refuses registry
-requests until PKG-3 can materialize verified sources; the implemented
-resolver and lock builder are transport-independent APIs.
+requests until PKG-4 connects exact transport/cache availability and lock modes
+to the implemented transport-independent resolver and verified source store.
 
 ## Failure Atomicity
 

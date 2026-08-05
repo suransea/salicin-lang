@@ -22,10 +22,6 @@ status and changelog instead of remaining as a checked archive.
 
 ## P0: Registry Source Dependencies
 
-- [ ] **PKG-3 — Verified source cache.** Download or load archives into an
-  atomic checksum-addressed cache, reject traversal and identity mismatch, and
-  expose sources only after verification.
-
 - [ ] **PKG-4 — Locked and frozen acceptance.** Prove that `--locked` cannot
   change selection and `--frozen` performs no network access, including
   yanked locks, missing entries, corrupt archives, conflicts, and cycles.

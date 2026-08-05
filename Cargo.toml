@@ -1,6 +1,6 @@
 [package]
 name = "salicin-lang"
-version = "0.255.0"
+version = "0.256.0"
 edition = "2021"
 description = "The compiler and language specification for the Salicin programming language"
 license = "MIT"
@@ -14,12 +14,14 @@ name = "salic"
 path = "compiler/src/main.rs"
 
 [dependencies]
+flate2 = "1"
 libc = "0.2"
 same-file = "1"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+tar = "0.4"
 toml = "0.9"
 unicode-ident = "1"
 unicode-normalization = "0.1"

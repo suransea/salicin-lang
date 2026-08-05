@@ -1,7 +1,7 @@
 # Registry Source Input Contract
 
-Status: PKG-1 input and PKG-2 resolution implemented; verified fetching and
-extraction remain PKG-3/PKG-4
+Status: PKG-1 input, PKG-2 resolution, and PKG-3 verified source cache
+implemented; transport and locked/frozen CLI acceptance remain PKG-4
 
 This contract fixes the source-visible and on-disk inputs for registry packages
 without defining a public registry service. Registry inputs are strict and
@@ -27,9 +27,9 @@ fallbacks are rejected.
 
 The manifest loader preserves an unresolved typed request. The implemented
 registry solver can collect those requests across the complete local graph and
-produce exact providers, but ordinary compilation still refuses registry
-requests before writing a lockfile or build output until PKG-3 materializes
-verified sources.
+produce exact providers. The source-store API materializes selected bytes and
+returns a source root only after verification; ordinary CLI compilation still
+refuses registry requests until PKG-4 wires transport and lock modes to it.
 
 ## Registry Identity and Configuration
 
@@ -114,11 +114,14 @@ accepted archive path:
 archives/<package>/<version>/<package>-<version>.tar.gz
 ```
 
-PKG-3 will require one top-level `<package>-<version>/` directory containing
-`salicin.toml`; only regular files and directories will be extractable.
+The verified source store requires one top-level `<package>-<version>/`
+directory containing `salicin.toml`; only regular files and directories are
+extractable.
 Absolute paths, traversal, links, devices, duplicate normalized paths,
 identity mismatch, and bounded-size violations will fail before source
-publication. Attestations and transparency proofs may later supplement this
+publication. Compressed archives are limited to 64 MiB, individual files to
+16 MiB, expanded regular-file bytes to 256 MiB, and entries to 16,384.
+Attestations and transparency proofs may later supplement this
 digest, but never replace local digest verification.
 
 ## Cache and Fixture Protocol
@@ -140,6 +143,21 @@ The implemented fixture loader reads only the requested digest path and then
 rechecks its bytes. It does not scan a mutable directory or choose a “latest”
 file, which makes offline, corruption, and restart tests deterministic.
 
+The source store verifies the compressed SHA-256 before parsing, validates the
+entire archive into a bounded in-memory tree, then writes a private staging
+directory. It rejects absolute or non-NFC paths, traversal, backslashes,
+links, special files, duplicates, and file/directory conflicts. The extracted
+manifest must match the selected package/version, provide a library target,
+contain no path dependencies, and repeat exactly the immutable index
+dependencies. Only then are archive and source entries published atomically.
+
+Each published source contains canonical compiler-owned metadata with its
+provider identity, bounds, and a deterministic tree digest. Lookup reads with
+no link following and recomputes the tree digest and manifest identity every
+time; corrupt entries are never returned and can be replaced from the already
+verified archive bytes. Empty or partial staging directories never occupy the
+content address.
+
 ## Research Basis
 
 The 2025 lockfile survey separates exact versions, integrity, and temporal
@@ -157,10 +175,12 @@ leaves signatures, transparency, and hosted policy outside this milestone.
 - [Go Modules Reference](https://go.dev/ref/mod)
 - [TUF roles and metadata](https://theupdateframework.io/docs/metadata/)
 - [Securing Packages in npm, Homebrew, PyPI, Maven Central, and RubyGems (USENIX Security 2025)](https://www.usenix.org/conference/usenixsecurity25/presentation/steindler)
+- [Wormholes in the File System: Understanding the Misunderstanding of Symlinks (USENIX Security 2026)](https://www.usenix.org/conference/usenixsecurity26/presentation/liu-yongheng)
+- [Securing the Software Package Supply Chain for Critical Systems (2025)](https://arxiv.org/abs/2505.22023)
 
 ## Non-goals
 
 The current registry subsystem does not refresh an index, access a network,
-parse an archive, publish a cache entry, distribute trust roots, or standardize
-a public service. Those boundaries remain explicit work for PKG-3/PKG-4 rather
-than partially enabled behavior.
+wire registry packages into CLI compilation, distribute trust roots, or
+standardize a public service. Those boundaries remain explicit PKG-4 or later
+work rather than partially enabled behavior.

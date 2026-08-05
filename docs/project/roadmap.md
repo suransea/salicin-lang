@@ -57,11 +57,13 @@ registry selection algorithm. The implemented
 [registry source input contract](registry-source-contract.md) now fixes strict
 manifest requests, registry configuration, immutable content-addressed index
 snapshots, archive identities, cache roots, and relocatable fixture loading.
-Provider selection is now implemented as a globally backtracking,
-version-unique graph with exact format-3 lock identities. Active work verifies
-and materializes the selected source archives, followed by locked/frozen
-acceptance. This milestone does not create or standardize a public registry
-service.
+Provider selection is implemented as a globally backtracking, version-unique
+graph with exact format-3 lock identities. Selected tar.gz bytes can now be
+verified, bounded, materialized into private staging, and atomically published
+under their archive digest; every cache hit revalidates the source tree and
+manifest/index identity. Active work connects that boundary to locked/frozen
+CLI acceptance. This milestone does not create or standardize a public
+registry service.
 
 Exit conditions:
 

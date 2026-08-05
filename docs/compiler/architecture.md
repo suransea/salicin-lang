@@ -69,8 +69,11 @@ The implementation lives under `compiler/src`:
   unresolved manifest requests, immutable checksum-addressed index snapshots,
   archive identities, cache roots, and deterministic local-fixture reads. It
   also collects registry roots and resolves a stable, globally compatible,
-  transitively closed provider graph with exact immutable identities; source
-  verification and materialization remain the next package phase.
+  transitively closed provider graph with exact immutable identities.
+- `registry_cache.rs` authenticates selected tar.gz bytes before parsing,
+  validates a bounded link-free portable source tree and its manifest/index
+  identity, then atomically publishes private archive and source cache entries.
+  Lookup recomputes the tree digest and never exposes corrupt entries.
 - `core.rs`, `alloc.rs`, and `standard.rs` load edition-matched library
   sources. `standard.rs` admits ordinary unprivileged `std` definitions,
   rejects mirror aliases so each declaration retains one canonical module

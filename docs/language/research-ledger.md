@@ -8,6 +8,30 @@ implementation, and measurement.
 
 ## Current Decisions
 
+### Registry Archives Are Data, Not Filesystem Instructions
+
+Reviewed on 2026-08-05. A selected archive is authenticated as exact compressed
+bytes before parsing, then interpreted into a bounded portable tree rather
+than extracted through a general-purpose filesystem API. Salicin rejects all
+links and special entries instead of attempting to make link targets safe;
+paths, expanded sizes, package identity, and immutable index dependencies are
+validated before a private staging directory is atomically published.
+
+This stricter policy follows recent evidence that lexical destination checks
+are insufficient around symlink and hardlink semantics. The 2026 USENIX study
+found recurring path-validation misunderstandings across widely used systems,
+while current archive vulnerability reports continue to show link-mediated
+root escape. The source cache therefore also treats publication as only one
+step: every lookup walks without following links, recomputes a deterministic
+tree digest, and revalidates manifest/provider identity before returning a
+source root. Signatures and attestations remain possible provenance layers,
+not substitutes for this local byte and tree verification boundary.
+
+- [Wormholes in the File System: Understanding the Misunderstanding of Symlinks (USENIX Security 2026)](https://www.usenix.org/conference/usenixsecurity26/presentation/liu-yongheng)
+- [Apache Commons Compress COMPRESS-727: secure concurrent extraction (2026)](https://issues.apache.org/jira/browse/COMPRESS-727)
+- [Securing the Software Package Supply Chain for Critical Systems (2025)](https://arxiv.org/abs/2505.22023)
+- [Go Modules Reference: module zip files](https://go.dev/ref/mod#zip-files)
+
 ### Registry Resolution Separates Constraints, Providers, and Verified Bytes
 
 Reviewed on 2026-08-05. Registry identity is an explicit namespace on every
@@ -53,8 +77,8 @@ implicit part of PKG-1's SHA-256 integrity contract.
 The implementation now includes strict format-1 inputs, deterministic global
 backtracking, exact prior-lock yanked eligibility, cycle rejection, and
 format-3 lock identities containing registry, snapshot, package, version, and
-archive checksum. Archive verification remains a separate PKG-3 boundary:
-selection never makes unverified source compilable. Signatures, transparency,
+archive checksum. Archive verification is implemented as a separate PKG-3
+boundary: selection alone never makes unverified source compilable. Signatures, transparency,
 publishing, credentials, and public-service policy remain separate possible
 layers rather than fields with no verifier.
 

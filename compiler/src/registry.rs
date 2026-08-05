@@ -59,6 +59,10 @@ impl Sha256Digest {
         Self(format!("{:x}", Sha256::digest(bytes)))
     }
 
+    pub(crate) fn from_sha256(hasher: Sha256) -> Self {
+        Self(format!("{:x}", hasher.finalize()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

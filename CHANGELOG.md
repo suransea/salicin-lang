@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+## 0.256.0 - 2026-08-05
+
+- Completed PKG-3 with a transport-independent verified registry source store.
+  Exact compressed SHA-256 is checked before tar.gz parsing; extraction rejects
+  traversal, non-portable paths, links, special files, duplicates,
+  file/directory conflicts, and fixed entry, file, expanded, and compressed
+  bounds.
+- Added private staging and atomic checksum-addressed archive/source
+  publication. Cache lookup recomputes a deterministic source-tree digest and
+  revalidates manifest package/version, library target, and exact immutable
+  index dependencies; corrupted entries are withheld and repairable.
+- Added success, restart, cache-hit, mutation/repair, checksum, symlink,
+  traversal, identity, and dependency-mismatch coverage. Updated the registry
+  contract, dependency semantics, architecture/status, research ledger,
+  roadmap, and TODO using current secure-extraction and supply-chain research.
+
 ## 0.255.0 - 2026-08-05
 
 - Completed PKG-2 with deterministic global registry resolution over one

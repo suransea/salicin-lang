@@ -39,8 +39,13 @@ current capability inventory. It does not record release history; see the
   identity, descending highest-compatible selection, exact-lock-only yanked
   eligibility, conflict backtracking, cycle rejection, stable ordering, and
   complete registry/snapshot/version/archive identities in strict lockfile
-  format 3. CLI compilation still refuses registry requests until verified
-  source materialization is implemented;
+  format 3;
+- a verified registry source store that checks exact compressed SHA-256 bytes,
+  rejects traversal, links, special files, non-portable paths, size-bound
+  violations, and manifest/index identity mismatch, then atomically publishes
+  private checksum-addressed archive and source entries. Every source lookup
+  recomputes its deterministic tree digest before exposure; CLI compilation
+  still refuses registry requests until PKG-4 lock-mode wiring;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, structured document identity, phase, severity, stable
   code, optional exact ranges, and multi-document routing; resolver origins
