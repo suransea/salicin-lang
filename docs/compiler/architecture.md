@@ -82,6 +82,9 @@ The implementation lives under `compiler/src`:
   sources. `standard.rs` admits ordinary unprivileged `std` definitions,
   rejects mirror aliases so each declaration retains one canonical module
   identity, and enforces the native target boundary.
+- `static_semantics.rs` owns the edition static-sort registry, complete
+  fragment descriptors, structural budgets, fragment validation, and the
+  consuming normalization boundary from syntax constraints to solver goals.
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.

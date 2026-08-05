@@ -1848,7 +1848,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
 }
 
 fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<String>) {
-    for name in ["constraint"] {
+    let static_sorts = crate::static_semantics::StaticSortModel::edition_2026();
+    let descriptor = static_sorts
+        .descriptor(&StaticFragmentKind::constraint())
+        .expect("edition 2026 registers constraint fragments");
+    for name in [descriptor.kind.as_str()] {
         let fragments = program
             .items
             .iter()
@@ -1857,19 +1861,21 @@ fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<S
             .collect::<Vec<_>>();
         if fragments.len() != 1 {
             diagnostics.push(format!(
-                "core must declare exactly one `pub let {name}: sort(2)` contract"
+                "core must declare exactly one `pub let {name}: sort({})` contract",
+                descriptor.universe_level
             ));
             continue;
         }
         let (index, Item::Sort(definition)) = fragments[0] else {
             unreachable!()
         };
-        if definition.level != 2
+        if definition.level != descriptor.universe_level
             || definition.members.is_some()
             || program.item_visibilities[index] != Visibility::Public
         {
             diagnostics.push(format!(
-                "compile-time {name} fragment sort must have shape `pub let {name}: sort(2)`"
+                "compile-time {name} fragment sort must have shape `pub let {name}: sort({})`",
+                descriptor.universe_level
             ));
         }
     }
@@ -1969,7 +1975,7 @@ fn validate_constraint_query_contract(program: &Program, diagnostics: &mut Vec<S
                                     },
                                     CompileParam {
                                         name: "right".to_owned(),
-                                        kind: Sort::Fragment(StaticFragmentKind::Constraint),
+                                        kind: Sort::Fragment(StaticFragmentKind::constraint()),
                                         default: None,
                                     },
                                 ]]

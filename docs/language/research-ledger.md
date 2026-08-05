@@ -8,6 +8,31 @@ implementation, and measurement.
 
 ## Current Decisions
 
+### Static Fragment Extensibility Requires a Complete Context Contract
+
+Reviewed on 2026-08-05 for META-1. Compiler-owned static fragment kinds now
+come from an edition registry rather than a closed implementation enum. A
+future kind cannot be recognized until one descriptor fixes its universe,
+producer set, compilation phase, scope discipline, equality, normal form, and
+node/depth/binding budgets. The registry currently contains only the existing
+`constraint` consumer; there is deliberately no `declaration` or generic
+syntax fragment.
+
+Contextual MetaML's explicit free-variable contexts and the 2026 environment-
+classifier results make context-free open code an unsound default. Salicin's
+constraint fragments therefore use the stricter immediate-context policy:
+the elaborator produces and consumes them into solver IR without storage or
+substitution. The scope-check literature leaves explicit classifiers as the
+entry requirement for any future fragment that genuinely needs to cross that
+boundary. Recent staged-evaluator work also reinforces that normalization and
+let insertion must be named semantics, not incidental AST rewriting.
+
+- [Contextual MetaML: Syntax and Full Abstraction (LICS 2026)](https://doi.org/10.4230/LIPIcs.LICS.2026.83)
+- [Taming Scope Extrusion in Gradual Imperative Metaprogramming (2026)](https://arxiv.org/abs/2602.19951)
+- [Handling Scope Checks (POPL 2026)](https://arxiv.org/abs/2601.18793)
+- [Contextual Metaprogramming for Session Types (ESOP 2026)](https://arxiv.org/abs/2601.15180)
+- [Let It Be Optimized: Building Multi-Stage Evaluators with Let-Insertion and Optimizations in Small Pieces (ICFP 2026)](https://icfp26.sigplan.org/details/icfp-2026-icfp-papers/4/Let-It-Be-Optimized-Building-Multi-Stage-Evaluators-with-Let-Insertion-and-Optimizat)
+
 ### Frozen Means Cache-Closed, Locked Means Selection-Closed
 
 Reviewed on 2026-08-05. Salicin separates three properties that lockfile tools
@@ -635,8 +660,9 @@ implemented `declaration` sort was removed: `test` needs a static string and
 typed closure, function-body `requires` needs a compile-time boolean and
 closure, and trait/extension requirements are labeled boolean header
 parameters. Only the solver-owned `constraint` fragment remains. General
-declaration or syntax fragments are deferred to META-1 rather than reserved
-without a consumer.
+declaration or syntax fragments were deferred rather than reserved without a
+consumer. META-1 has since supplied the extensible descriptor contract, but
+still registers no such fragment without a concrete feature.
 
 - [Localizing Type Errors for Syntactic Sugar by Lifting (OOPSLA
   2026)](https://2026.splashcon.org/details/oopsla-2026/53/Localizing-Type-Errors-for-Syntactic-Sugar-by-Lifting)
@@ -645,16 +671,16 @@ without a consumer.
   not participate in elaboration.
 - [When Do Staging Annotations Preserve Semantics? (2026)](https://arxiv.org/abs/2606.30854)
   tracks staged let insertion as an effect to preserve evaluation semantics.
-  Any future META-1 fragment design must likewise prevent runtime effects or
-  values from crossing into syntax metadata.
+  Any future fragment feature must likewise prevent runtime effects or values
+  from crossing into syntax metadata.
 - [First-Class Constrained Types: Elaboration, Type Inference, Approximation,
   and a Characterization (ICFP
   2026)](https://icfp26.sigplan.org/details/icfp-2026-icfp-papers/29/First-Class-Constrained-Types-Elaboration-Type-Inference-Approximation-and-a-Char)
   separates the surface representation of constraints from their elaborated
   typing meaning. Salicin adopts the narrower compiler-owned boundary:
   `constraint` fragments normalize into solver IR. The paper remains relevant
-  to META-1, but does not justify adding a declaration classifier before a
-  reflection feature consumes it.
+  to the static-fragment design, but does not justify adding a declaration
+  classifier before a reflection feature consumes it.
 
 ### Minimal Boolean Guards Before General Reflection
 
@@ -668,19 +694,19 @@ is needed for today's fixed boolean guards.
 
 - [Contextual Metaprogramming for Session Types
   (2026)](https://arxiv.org/abs/2601.15180) demonstrates why future code
-  fragments need an explicit typing context. Salicin therefore defers new
-  reflection sorts to META-1 instead of treating today's fixed declaration
-  forms as context-free fragments.
+  fragments need an explicit typing context. Salicin therefore treats today's
+  fixed declaration forms as ordinary surface forms and requires future
+  reflection fragments to carry an explicit classifier contract.
 - [Taming Scope Extrusion in Gradual Imperative Metaprogramming
   (2026)](https://arxiv.org/abs/2602.19951) makes scope safety a first-class
-  metaprogramming obligation. META-1 must establish that invariant before a
-  declaration or syntax sort becomes source-visible.
+  metaprogramming obligation. META-1 established the registry invariant; a
+  declaration or syntax sort still needs a concrete scoped producer and
+  consumer before becoming source-visible.
 - [Handling Scope Checks
   (2026)](https://arxiv.org/abs/2601.18793) compares static environment
-  classifiers with dynamic scope-extrusion checks. Salicin postpones choosing
-  either discipline until reflection has concrete fragment producers and
-  consumers instead of predeclaring a classifier with no enforceable scope
-  contract.
+  classifiers with dynamic scope-extrusion checks. Salicin's registry supports
+  explicit classifiers, while choosing and exposing a concrete fragment still
+  waits for real producers and consumers.
 - [When Do Staging Annotations Preserve Semantics?
   (2026)](https://arxiv.org/abs/2606.30854) shows that fragment manipulation
   can alter evaluation order. The minimal `requires(condition, body)` contract

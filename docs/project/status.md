@@ -50,6 +50,11 @@ current capability inventory. It does not record release history; see the
   checksum-cache-only `--frozen` operation. Registry libraries receive
   cache-path-independent identities, and missing/corrupt frozen inputs fail
   before output or lockfile mutation;
+- an edition-owned extensible static-sort registry. Every compiler fragment
+  descriptor fixes universe, producer, phase, scope, equality, normal form,
+  and structural budgets together. The implemented `constraint` fragment is
+  immediate-context, opaque, elaborator-only, solver-normalized, and bounded;
+  no `declaration` or general syntax fragment is registered;
 - token and diagnostic editor analysis with UTF-8 byte ranges, zero-based
   UTF-16 positions, structured document identity, phase, severity, stable
   code, optional exact ranges, and multi-document routing; resolver origins

@@ -361,9 +361,21 @@ pub enum Sort {
     Named(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StaticFragmentKind {
-    Constraint,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct StaticFragmentKind(String);
+
+impl StaticFragmentKind {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn constraint() -> Self {
+        Self::new("constraint")
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

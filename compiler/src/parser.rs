@@ -1939,8 +1939,10 @@ impl Parser {
                 "effect" => Some(Sort::Effect),
                 "effects" => Some(Sort::Effects),
                 "parameters" => Some(Sort::Parameters),
-                "constraint" => Some(Sort::Fragment(crate::ast::StaticFragmentKind::Constraint)),
-                _ => Some(Sort::Named(kind)),
+                _ => crate::static_semantics::StaticSortModel::edition_2026()
+                    .fragment_kind(&kind)
+                    .map(Sort::Fragment)
+                    .or(Some(Sort::Named(kind))),
             };
             if let Some(parameter_kind) = parameter_kind {
                 self.advance();
@@ -2166,7 +2168,7 @@ impl Parser {
             Sort::Fragment(kind) => {
                 return Err(self.error_here(format!(
                     "defaults for {} fragments are not supported",
-                    static_fragment_name(kind)
+                    static_fragment_name(&kind)
                 )));
             }
             Sort::ParameterPack => {
@@ -5316,10 +5318,8 @@ impl Parser {
     }
 }
 
-fn static_fragment_name(kind: crate::ast::StaticFragmentKind) -> &'static str {
-    match kind {
-        crate::ast::StaticFragmentKind::Constraint => "constraint",
-    }
+fn static_fragment_name(kind: &crate::ast::StaticFragmentKind) -> &str {
+    kind.as_str()
 }
 
 fn contextual_spelling(kind: &TokenKind) -> Option<&'static str> {

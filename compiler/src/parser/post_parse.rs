@@ -511,8 +511,8 @@ fn validate_function_scopes(
         .compile_groups
         .iter()
         .flatten()
-        .filter_map(|parameter| match parameter.kind {
-            Sort::Fragment(kind) => Some((parameter.name.clone(), kind)),
+        .filter_map(|parameter| match &parameter.kind {
+            Sort::Fragment(kind) => Some((parameter.name.clone(), kind.clone())),
             _ => None,
         })
         .collect::<HashMap<_, _>>();
@@ -932,9 +932,7 @@ fn validate_type_static_fragments(
         Type::Named(name, arguments) => {
             if arguments.is_empty() {
                 if let Some(kind) = fragments.get(name) {
-                    let sort = match kind {
-                        StaticFragmentKind::Constraint => "constraint",
-                    };
+                    let sort = kind.as_str();
                     return Err(format!(
                         "{sort} fragment parameter `{name}` cannot be used as a runtime type"
                     ));
@@ -947,9 +945,7 @@ fn validate_type_static_fragments(
         Type::NamedArgs(name, arguments) => {
             if arguments.is_empty() {
                 if let Some(kind) = fragments.get(name) {
-                    let sort = match kind {
-                        StaticFragmentKind::Constraint => "constraint",
-                    };
+                    let sort = kind.as_str();
                     return Err(format!(
                         "{sort} fragment parameter `{name}` cannot be used as a runtime type"
                     ));

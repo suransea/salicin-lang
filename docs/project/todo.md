@@ -20,13 +20,10 @@ Priority meanings:
 Task IDs are stable. A completed item leaves this queue and is recorded in the
 status and changelog instead of remaining as a checked archive.
 
-## P0: Compile-Time Metaprogramming Foundations
+## P0: No Active Tasks
 
-- [ ] **META-1 — Extensible static sort model.** Design additional sorts for
-  compile-time reflection and metaprogramming only after defining scope
-  safety, phase separation, equality/normalization, permitted producers,
-  resource limits, and diagnostics. Do not predeclare an unused
-  `declaration` sort.
+All accepted implementation tasks are complete. New work enters this queue
+only after its contract and roadmap position pass the change gate below.
 
 ## Definition of Done
 
@@ -55,7 +52,7 @@ A task is complete only when:
 - unsupported async and executor shapes;
 - non-host targets and broader C ABI lowering;
 - precompiled package distribution;
-- analyzer decomposition not required by an active outcome.
+- analyzer decomposition not required by an active outcome;
 - typed compile-time reflection and syntax/declaration fragment sorts.
 
 ## Deferred
@@ -64,6 +61,7 @@ A task is complete only when:
 - implicit I/O or allocation effects;
 - garbage collection;
 - runtime trait objects and open-world dispatch;
-- macros or general compile-time execution before META-1;
+- macros or general compile-time execution without a separately accepted
+  staging and reflection contract;
 - a public registry service;
 - a stable ABI or 1.0 compatibility promise.

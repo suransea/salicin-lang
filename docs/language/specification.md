@@ -194,7 +194,12 @@ Finite members are named through their Sort, as in `optimization.release`.
 abstract compile-time sorts. `constraint` is an erased static fragment sort
 produced only by syntax elaboration: source cannot construct, default,
 explicitly pass, compare, store, or use it as a runtime type. Constraint
-fragments normalize into solver goals. There is no `declaration` sort.
+fragments normalize into solver goals in their producing lexical context and
+are bounded to 4,096 structural nodes, depth 128, and 512 associated bindings.
+Compiler-owned fragment recognition comes from the edition's complete
+[static-sort registry](../project/static-sort-model.md); each registered sort
+must declare phase, scope, equality, normal form, producers, and budgets.
+Edition 2026 registers no `declaration` sort.
 `string` is an ordinary runtime type accepted by
 CTFE. `access` is the finite sort `sort(1) { shared mut }`. `bool` remains an ordinary
 closed runtime enum whose values can also classify compile-time parameters. Any other closed enum
@@ -252,8 +257,10 @@ compile-time `bool` and a delayed parameterless closure to `core.requires`.
 Trait and extension requirements instead occupy their declaration header as
 the labeled compile-time boolean parameter `(requires: condition)`. `extend`
 itself is parser-owned syntax: there is no decorative `extend` callable or
-language item. Additional reflection and metaprogramming sorts remain deferred
-until META-1 defines their phase, scope, equality, and resource contracts.
+language item. META-1 now defines the registry contract for phase, scope,
+equality, normalization, producers, and resource bounds, but additional
+reflection and metaprogramming sorts remain deferred until a concrete feature
+defines its producer, consumer, and failure behavior.
 
 ## 4. Types and Compile-Time Parameters
 

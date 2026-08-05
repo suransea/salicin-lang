@@ -48,13 +48,15 @@ Completed milestones are removed from this file. Their behavior is recorded
 in [status](status.md), their contracts remain under `docs/project`, and their
 history remains in the changelog.
 
-## Now: Compile-Time Metaprogramming Foundations
+## Now: No Accepted Implementation Milestone
 
-With the daily-development milestones complete, Salicin may add more static
-sorts for typed reflection and metaprogramming. META-1 must first define scope safety,
-phase separation, equality and normalization, permitted fragment producers,
-resource limits, and source diagnostics. No unused `declaration` sort is
-reserved in advance.
+The daily-development sequence and META-1 static-sort foundation are complete.
+The [static sort model](static-sort-model.md) now requires every future
+compiler-owned fragment sort to declare scope, phase, equality, normalization,
+producers, and resource budgets together. No unused `declaration` sort or
+general quotation surface is reserved. New implementation work starts only
+when one of the design candidates below gains a concrete producer, consumer,
+failure contract, and acceptance plan.
 
 ## Design Candidates
 
@@ -75,7 +77,7 @@ the executable queue:
 - non-host targets and a target-aware ABI;
 - broader by-value C interoperability;
 - precompiled package interfaces and distribution artifacts;
-- analyzer decomposition along the existing semantic phase boundaries.
+- analyzer decomposition along the existing semantic phase boundaries;
 - typed compile-time reflection and syntax/declaration fragment classifiers.
 
 Refactoring may accompany an active milestone when it creates a narrow
@@ -90,7 +92,8 @@ The following remain intentionally outside the accepted roadmap:
 - implicit ambient I/O or allocation authority;
 - garbage collection as a second ownership model;
 - runtime trait objects and open-world dispatch;
-- macros and general compile-time execution before META-1;
+- macros and general compile-time execution without a separately accepted
+  staging and reflection contract;
 - a public package registry service;
 - a stable ABI or 1.0 compatibility promise.
 

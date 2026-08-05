@@ -131,7 +131,9 @@ foreign_initializer =
 ```
 
 `let name: type` declares an opaque nominal type. Compiler-owned sources may declare an abstract
-sort with `let name: sort(2)`; user sources must declare finite sorts.
+sort with `let name: sort(2)`; user sources must declare finite sorts. The
+edition static-sort registry, rather than a source declaration or open-ended
+name lookup, determines which compiler-owned fragment classifiers are valid.
 `let name = sort(1) { ... }` declares a sort with a known member set. Bare `sort`, `= type`,
 and `= type { ... }` are not productions.
 

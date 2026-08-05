@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.258.0 - 2026-08-05
+
+- Completed META-1 with an edition-owned extensible static-sort registry.
+  Compiler fragments now use stable dynamic keys, and every descriptor must
+  declare universe, source/runtime exposure, producer, phase, scope, equality,
+  normal form, and structural resource budgets together.
+- Registered only the existing `constraint` consumer: syntax-elaborator-only,
+  immediate-context, opaque, solver-normalized, and limited to 4,096 nodes,
+  depth 128, and 512 bindings. Constraint validation now runs before solver IR
+  construction and reports deterministic budget failures.
+- Kept `declaration` and general syntax/code fragments unregistered. Added
+  registry extension, duplicate/invalid policy, producer, phase, scope,
+  equality, runtime-lowering, budget, parser, core-contract, and normalization
+  coverage; completed the executable TODO and updated the roadmap, spec,
+  architecture, status, and research ledger from current contextual
+  metaprogramming and scope-safety research.
+
 ## 0.257.0 - 2026-08-05
 
 - Completed PKG-4 by wiring immutable registry snapshots, global provider

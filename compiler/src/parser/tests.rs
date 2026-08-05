@@ -2304,7 +2304,7 @@ fn parses_compiler_owned_constraint_fragments_and_rejects_defaults() {
     };
     assert_eq!(
         function.compile_groups[0][0].kind,
-        Sort::Fragment(crate::ast::StaticFragmentKind::Constraint)
+        Sort::Fragment(crate::ast::StaticFragmentKind::constraint())
     );
 
     let constraint = parse("let bad(comptime c: constraint = value)(): () = { () }\n").unwrap_err();
@@ -2318,6 +2318,15 @@ fn parses_compiler_owned_constraint_fragments_and_rejects_defaults() {
             .contains("constraint fragment parameter `c` cannot be used as a runtime type"),
         "{}",
         runtime.message
+    );
+
+    let ordinary = parse("let inspect(comptime d: declaration)(): () = { () }\n").unwrap();
+    let Item::Function(function) = &ordinary.items[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(
+        function.compile_groups[0][0].kind,
+        Sort::Named("declaration".into())
     );
 }
 

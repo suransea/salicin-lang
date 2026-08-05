@@ -1272,7 +1272,14 @@ impl Analyzer {
         let function = self.diagnostic_function_name(function);
         let mut valid = true;
         for predicate in predicates {
-            let goal = Goal::new([], Constraint::from(predicate));
+            let Ok(constraint) = Constraint::try_from(predicate) else {
+                self.error(format!(
+                    "where predicate exceeds the compiler-owned static constraint budget while instantiating `{function}`"
+                ));
+                valid = false;
+                continue;
+            };
+            let goal = Goal::new([], constraint);
             if self.solve_concrete_goal(&goal) == GoalResult::Proven {
                 continue;
             }
@@ -1291,7 +1298,10 @@ impl Analyzer {
     }
 
     fn concrete_where_predicate_holds(&mut self, predicate: &crate::ast::WherePredicate) -> bool {
-        self.solve_concrete_goal(&Goal::new([], Constraint::from(predicate))) == GoalResult::Proven
+        let Ok(constraint) = Constraint::try_from(predicate) else {
+            return false;
+        };
+        self.solve_concrete_goal(&Goal::new([], constraint)) == GoalResult::Proven
     }
 
     fn solve_concrete_goal(&mut self, goal: &Goal) -> GoalResult {
@@ -1491,7 +1501,7 @@ fn compile_parameter_sort_label(kind: &Sort) -> String {
         Sort::Effect => "effect".to_owned(),
         Sort::Effects => "effects".to_owned(),
         Sort::Parameters => "parameters".to_owned(),
-        Sort::Fragment(kind) => describe_compile_sort(Sort::Fragment(*kind)),
+        Sort::Fragment(kind) => describe_compile_sort(Sort::Fragment(kind.clone())),
         Sort::ParameterPack => "parameter pack".to_owned(),
         Sort::ParameterModifier => "parameter modifier".to_owned(),
         Sort::TypeConstructor { parameter_groups } => {
